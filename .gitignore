@@ -1,0 +1,69 @@
+# ============================================================
+#  AI-CryptoGuard .gitignore
+#
+#  这个文件不是"顺手加的"，它挡的是两件会出事的东西：
+#    1) 第三方工具体积过大 —— CrySentry 解包后 444MB、便携 JDK 190MB。
+#       一旦 git add 进去，仓库基本就废了，而且历史里删不掉。
+#    2) 方案 §19 的安全红线 —— workspace/ 与 .env 永不入库；
+#       扫描产物里带绝对路径，还可能含明文凭据。
+#  改这个文件之前请先看懂上面两行。
+# ============================================================
+
+# ---------- 1. 第三方工具与下载物：绝不入库 ----------
+# 工具用 setup/ 里的说明自行下载，仓库只存"怎么下"
+tools/
+_smoke/
+CrySentry/
+cryptoscan/
+cbom-scan/
+jdk/
+jdk-*/
+jdk17/
+*.zip
+*.tar.gz
+*.jar
+*.exe
+
+# ---------- 2. 方案 §19 硬性要求 ----------
+workspace/
+.env
+.env.*
+!.env.example
+
+# ---------- 3. 扫描产物 ----------
+# 含绝对路径（信息泄露），凭据类结果可能含明文，默认不入库
+*-output/
+crypto-output/
+cbom-out*/
+*.cbom.json
+
+# ---------- 4. Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------- 5. Node ----------
+node_modules/
+npm-debug.log*
+
+# ---------- 6. Java / Gradle ----------
+build/
+.gradle/
+target/
+*.class
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---------- 7. IDE / 操作系统 ----------
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Rant-yang/AI-CryptoGuard/core/schema/finding.v0.1.json",
+  "title": "AI-CryptoGuard 统一 Finding 格式 v0.1",
+  "description": "三个扫描工具的输出统一到本格式。计数单位=(file, algorithm_normalized, usage)，即同一文件里同一算法的同一用途算一条，多处命中收进 evidence[].lines。",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": [
+    "schema_version",
+    "finding_id",
+    "file",
+    "line",
+    "algorithm",
+    "risk",
+    "severity",
+    "evidence"
+  ],
+
+  "properties": {
+
+    "schema_version": {
+      "const": "0.1",
+      "description": "格式版本。升级时改这里，别偷偷加字段。"
+    },
+
+    "finding_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{6,64}$",
+      "description": "稳定且确定性的 ID，必须可复现：sha1(file|algorithm_normalized|usage)[:12]。同一份代码重复扫描必须得到同样的 ID，否则无法 diff。"
+    },
+
+    "file": {
+      "type": "string",
+      "description": "项目内相对路径，正斜杠。**不要绝对路径** —— 上游给的是绝对路径，转换时必须剥掉（信息泄露 + 结果不可移植）。",
+      "examples": ["src/auth/session.py"]
+    },
+
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "代表性行号（通常取首次命中）。全部命中行号见 evidence[].lines。"
+    },
+
+    "algorithm": {
+      "type": "string",
+      "description": "算法名，保留上游原始写法。",
+      "examples": ["RSA", "AES-128", "Ed25519 / X25519", "MD5"]
+    },
+
+    "algorithm_normalized": {
+      "type": "string",
+      "description": "归一化后的算法名，用于跨工具对齐与去重。三个工具对同一算法的叫法不同，必须归一。缺失时退化为 algorithm。",
+      "examples": ["RSA", "AES", "ED25519", "MD5"]
+    },
+
+    "usage": {
+      "enum": [
+        "signing",
+        "encryption",
+        "key_exchange",
+        "hashing",
+        "authentication",
+        "tls_configuration",
+        "unknown"
+      ],
+      "default": "unknown",
+      "description": "用途。**这个字段决定 PQC 迁移路线，是 AI 模块的核心产出。** AI 的职责是复核/纠正上游给的用途，不是从零判断。判不出来必须填 unknown，不许猜。"
+    },
+
+    "risk": {
+      "enum": ["shor", "broken", "grover", "review", "safe"],
+      "description": "量子风险，五档。**以我方规则库判定为准，不透传上游。** 分类口径对齐 cbom-scan（三个工具里唯一分类正确的）：shor=量子可完全攻破 / broken=已被经典攻击攻破（与量子无关）/ grover=量子下强度减半 / review=需人工确认 / safe=安全。注意 CryptoScan 会把 broken 误标为 VULNERABLE。"
+    },
+
+    "severity": {
+      "enum": ["critical", "high", "medium", "low", "info"],
+      "description": "严重程度。上游表示法不统一（CryptoScan 是整数 0-4，且同一份 JSON 里 finding 与 summary 还是两套），转换时统一成本字段。"
+    },
+
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "置信度 0-1。上游是枚举（HIGH/MEDIUM/LOW），转换时映射：HIGH=0.9, MEDIUM=0.6, LOW=0.3。"
+    },
+
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "证据列表。**一条 finding 可以挂多个工具的证据 —— 这是我们区别于单个工具的地方，也是方案「≥3 类证据」的落地方式。**",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "kind", "lines"],
+        "properties": {
+          "tool": {
+            "enum": ["cbom-scan", "cryptoscan", "crysentry", "python-ast", "credential-scan", "manual"],
+            "description": "证据来源工具。自研模块也要如实填写，不要伪装成第三方。"
+          },
+          "kind": {
+            "enum": ["pattern", "taint", "ast", "entropy", "dependency", "manual"],
+            "description": "证据类型。pattern=正则模式命中 / taint=数据流污点链 / ast=语法树分析 / entropy=熵检测 / dependency=依赖清单。"
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "integer", "minimum": 1 },
+            "description": "该工具在本文件中命中的所有行号。这就是「110 条变 45 条」的收口点。"
+          },
+          "raw": {
+            "type": "object",
+            "description": "上游原始记录，逐字保留，便于溯源与答辩时举证。不要在这里做加工。"
+          }
+        }
+      }
+    },
+
+    "explanation": {
+      "type": ["string", "null"],
+      "description": "AI 生成的人话解释。**必须能对应到 evidence 里的具体证据**，不许脱离证据自由发挥。未生成时为 null。"
+    },
+
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "修复/迁移建议。**确定性密码事实由规则库回答，不由大模型生成**（方案 §8）。",
+      "required": ["decided"],
+      "properties": {
+        "decided": {
+          "type": "boolean",
+          "description": "是否已给出确定结论。**false = 用途未判定，明确不给具体算法（方案 §9.1 禁止固定映射）。** 前端与报告必须把这个状态显示出来，不许静默填一个默认算法。"
+        },
+        "action": {
+          "type": ["string", "null"],
+          "description": "具体建议。decided=true 时是确定的替换方案；decided=false 时写清「为什么还不能给」以及「需要先确认什么」。"
+        },
+        "source": {
+          "enum": ["rule-base", "ai", "none"],
+          "description": "这条建议从哪来。密码学确定事实必须来自 rule-base；来自 ai 的要打个问号。"
+        },
+        "references": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "标准依据，如 FIPS 203 / SP 800-131A。答辩时用得上。"
+        }
+      }
+    },
+
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "自由标签，用于筛选与统计。"
+    }
+  }
+}

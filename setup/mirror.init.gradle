@@ -1,0 +1,36 @@
+// Gradle init script: route artifact resolution through Chinese mirrors.
+//
+// Why: on this network repo1.maven.org (Gradle's mavenCentral() default host)
+// stalls — ~20 s for a single jar and then hangs outright — while
+// repo.maven.apache.org and maven.aliyun.com answer in ~3 s. The mirror is
+// added ahead of mavenCentral(), so it is tried first and mavenCentral stays
+// as a fallback for anything the mirror lacks.
+//
+// Use with:  ./gradlew <task> -I /path/to/mirror.init.gradle
+//
+// Nothing here modifies the CrySentry checkout, so it stays clean for the
+// THIRD_PARTY_NOTICES / commit-hash record.
+
+def mirrors = [
+    'https://maven.aliyun.com/repository/public',
+    'https://maven.aliyun.com/repository/central',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+]
+
+settingsEvaluated { settings ->
+    settings.pluginManagement {
+        repositories {
+            mirrors.each { m -> maven { url m } }
+            gradlePluginPortal()
+        }
+    }
+}
+
+allprojects { p ->
+    p.buildscript.repositories {
+        mirrors.each { m -> maven { url m } }
+    }
+    p.repositories {
+        mirrors.each { m -> maven { url m } }
+    }
+}
