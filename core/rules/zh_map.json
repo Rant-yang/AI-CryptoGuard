@@ -1,0 +1,247 @@
+{
+  "_comment": "中文渲染映射表。这是方案 section 4.2 规则库的最初种子：确定性密码事实由本表回答，不由大模型回答。",
+  "_source": "取值集合来自 CryptoScan 1.4.0 对 crypto-samples 的实际输出，25 个 type 为封闭集合。",
+
+  "severity": {
+    "0": "提示",
+    "1": "低",
+    "2": "中",
+    "3": "高",
+    "4": "严重"
+  },
+
+  "confidence": {
+    "HIGH": "高",
+    "MEDIUM": "中",
+    "LOW": "低"
+  },
+
+  "quantumRisk": {
+    "VULNERABLE": "量子脆弱（Shor 算法可破）",
+    "PARTIAL": "部分削弱（Grover 算法减半强度）",
+    "SAFE": "量子安全",
+    "UNKNOWN": "未知"
+  },
+
+  "migrationStatus": {
+    "CRITICAL": "严重",
+    "VULNERABLE": "脆弱",
+    "PARTIAL": "部分安全",
+    "HYBRID": "混合",
+    "SAFE": "安全"
+  },
+
+  "purpose": {
+    "general": "通用",
+    "signing": "数字签名",
+    "encryption": "加密",
+    "hashing": "哈希",
+    "authentication": "消息认证",
+    "key-exchange": "密钥交换/封装",
+    "tls-configuration": "TLS 配置"
+  },
+
+  "_quantum_class_note": "规则库自有的量子风险判定，用于纠正上游工具。CryptoScan 的 quantumRisk 把「需要迁移」与「量子脆弱」混为一谈：MD5/SHA-1/DES/3DES 被标成 VULNERABLE，但它们是被经典攻击攻破，与 Shor 无关。直接采信会得出「MD5 受 Shor 威胁」这种错误结论。",
+  "quantum_class": {
+    "label": {
+      "shor": "受 Shor 算法威胁 —— 公钥密码，量子计算机成熟后可被完全攻破",
+      "grover": "受 Grover 算法削弱 —— 对称密码，量子下强度大致减半",
+      "classical_broken": "与量子无关 —— 已被经典攻击攻破，须立即替换",
+      "safe": "量子安全"
+    },
+    "by_type": {
+      "MD5 Hash Function": "classical_broken",
+      "SHA-1 Hash Function": "classical_broken",
+      "DES Algorithm": "classical_broken",
+      "Triple DES Algorithm": "classical_broken",
+      "RSA Algorithm": "shor",
+      "RSA-1024 Key Size": "classical_broken",
+      "Elliptic Curve Cryptography": "shor",
+      "TLS Configuration": "shor",
+      "AES-GCM Authenticated Encryption": "grover",
+      "ChaCha20-Poly1305": "grover",
+      "Poly1305": "grover",
+      "KMAC": "grover",
+      "HKDF": "grover",
+      "PBKDF2": "grover",
+      "bcrypt": "grover",
+      "Argon2": "grover",
+      "Hardcoded Key Size": "grover",
+      "ML-KEM Key Encapsulation": "safe",
+      "ML-DSA Digital Signature": "safe",
+      "SLH-DSA Hash-Based Signature": "safe",
+      "XMSS Stateful Signature": "safe",
+      "LMS/HSS Stateful Signature": "safe",
+      "Post-Quantum Crypto Library": "safe",
+      "Hybrid Key Exchange": "safe",
+      "Composite Digital Signature": "safe"
+    }
+  },
+
+  "category": {
+    "Asymmetric Encryption": "非对称加密",
+    "Post-Quantum Cryptography": "后量子密码",
+    "Key Derivation Function": "密钥派生函数",
+    "PQC Library Import": "PQC 库引用",
+    "Symmetric Encryption": "对称加密",
+    "Broken Hash": "已攻破哈希",
+    "Deprecated Hash": "废弃哈希",
+    "Deprecated Algorithm": "废弃算法",
+    "Message Authentication Code": "消息认证码",
+    "Hybrid Cryptography": "混合密码",
+    "TLS/SSL": "TLS/SSL",
+    "Weak Key Size": "密钥长度不足",
+    "Configuration": "配置问题"
+  },
+
+  "_purpose_dependent_note": "公钥类算法（RSA / ECC）的迁移建议必须由用途决定，不能固定映射。见 report_cn.py 的 resolve_remediation()。",
+
+  "type": {
+    "MD5 Hash Function": {
+      "zh": "MD5 哈希函数",
+      "desc": "使用 MD5。MD5 已被实际碰撞攻击攻破，不具备抗碰撞性。",
+      "rem": "完整性校验改用 SHA-256 或 SHA-3；认证场景改用 HMAC。"
+    },
+    "SHA-1 Hash Function": {
+      "zh": "SHA-1 哈希函数",
+      "desc": "使用 SHA-1。SHAttered 攻击已实现实际碰撞，NIST 已废弃。",
+      "rem": "改用 SHA-256 或 SHA-3。"
+    },
+    "DES Algorithm": {
+      "zh": "DES 算法",
+      "desc": "使用 DES（56 位密钥）。DES 已被完全攻破，禁止使用。",
+      "rem": "立即改用 AES-256-GCM。"
+    },
+    "Triple DES Algorithm": {
+      "zh": "3DES 算法",
+      "desc": "使用 3DES。NIST 已废弃，实际安全强度仅 112 位，且存在 Sweet32 风险。",
+      "rem": "改用 AES-256-GCM。"
+    },
+    "RSA-1024 Key Size": {
+      "zh": "RSA-1024 密钥长度",
+      "desc": "RSA-1024 即使对抗经典攻击也已偏弱，NIST 自 2013 年起不再批准。",
+      "rem": "立即升至 RSA-3072 以上；更优做法是迁移到 ML-KEM。"
+    },
+    "RSA Algorithm": {
+      "zh": "RSA 算法",
+      "desc": "使用 RSA。RSA 可被 Shor 算法攻破，量子计算机成熟后将失效。",
+      "rem": null,
+      "purpose_dependent": true
+    },
+    "Elliptic Curve Cryptography": {
+      "zh": "椭圆曲线密码（ECC）",
+      "desc": "使用椭圆曲线密码。ECC 可被 Shor 算法攻破，量子计算机成熟后将失效。",
+      "rem": null,
+      "purpose_dependent": true
+    },
+    "AES-GCM Authenticated Encryption": {
+      "zh": "AES-GCM 认证加密",
+      "desc": "使用 AES-GCM AEAD（SP 800-38D），NIST 批准的认证加密。",
+      "rem": "推荐 AES-256-GCM，同时提供机密性与完整性。"
+    },
+    "ChaCha20-Poly1305": {
+      "zh": "ChaCha20-Poly1305",
+      "desc": "使用 ChaCha20-Poly1305 AEAD（RFC 8439），快速且安全的认证加密。",
+      "rem": "优秀选择，已被 TLS 1.3 采纳。"
+    },
+    "Poly1305": {
+      "zh": "Poly1305 消息认证码",
+      "desc": "使用 Poly1305 一次性 MAC（RFC 8439），配合 ChaCha20 构成 AEAD。",
+      "rem": "作为一次性 MAC 与 ChaCha20 配合使用时是安全的。"
+    },
+    "KMAC": {
+      "zh": "KMAC 消息认证码",
+      "desc": "使用 KMAC（SP 800-185），基于 SHA-3 的 NIST 批准 MAC，KMAC-256 量子安全。",
+      "rem": "优秀选择，KMAC-256 提供量子安全的认证。"
+    },
+    "HKDF": {
+      "zh": "HKDF 密钥派生",
+      "desc": "使用 HKDF（SP 800-56C），面向高熵输入的 NIST 批准 KDF。",
+      "rem": "适用于从高熵密钥派生密钥，不适用于口令。"
+    },
+    "PBKDF2": {
+      "zh": "PBKDF2 密钥派生",
+      "desc": "使用 PBKDF2（SP 800-132），NIST 批准的口令派生函数。",
+      "rem": "确保迭代次数 ≥ 600,000（OWASP 2024）；新系统建议改用 Argon2id。"
+    },
+    "bcrypt": {
+      "zh": "bcrypt 口令哈希",
+      "desc": "使用 bcrypt，业界标准口令哈希函数。",
+      "rem": "cost ≥ 12 时可接受；新应用建议优先 Argon2id。"
+    },
+    "Argon2": {
+      "zh": "Argon2 口令哈希",
+      "desc": "使用 Argon2（RFC 9106），口令哈希竞赛获胜者。",
+      "rem": "推荐 Argon2id 变体，内存 ≥ 64MB、迭代 ≥ 3、并行度 ≥ 4。"
+    },
+    "Hardcoded Key Size": {
+      "zh": "硬编码密钥长度",
+      "desc": "检测到硬编码的密钥长度，需人工确认是否满足安全强度要求。",
+      "rem": "确认密钥长度满足当前要求，并改用配置项以增强灵活性。"
+    },
+    "Post-Quantum Crypto Library": {
+      "zh": "后量子密码库引用",
+      "desc": "引用了后量子密码库，是量子安全迁移的良好实践。",
+      "rem": "继续使用，并确认采用的是 NIST 批准算法（ML-KEM / ML-DSA / SLH-DSA）。"
+    },
+    "ML-KEM Key Encapsulation": {
+      "zh": "ML-KEM 密钥封装",
+      "desc": "使用 ML-KEM（FIPS 203）后量子密钥封装，量子安全。",
+      "rem": "ML-KEM 为 NIST 批准且量子安全，推荐用于密钥交换。"
+    },
+    "ML-DSA Digital Signature": {
+      "zh": "ML-DSA 数字签名",
+      "desc": "使用 ML-DSA（FIPS 204）后量子数字签名，量子安全。",
+      "rem": "ML-DSA 为 NIST 批准且量子安全，推荐用于数字签名。"
+    },
+    "SLH-DSA Hash-Based Signature": {
+      "zh": "SLH-DSA 哈希签名",
+      "desc": "使用 SLH-DSA（FIPS 205）无状态哈希签名，量子安全。",
+      "rem": "SLH-DSA 为 NIST 批准且量子安全，可作为 ML-DSA 的备份方案。"
+    },
+    "XMSS Stateful Signature": {
+      "zh": "XMSS 有状态哈希签名",
+      "desc": "使用 XMSS 有状态哈希签名（SP 800-208），量子安全但需谨慎管理状态。",
+      "rem": "XMSS 为 NIST 批准（SP 800-208），须确保状态管理正确以防密钥复用。"
+    },
+    "LMS/HSS Stateful Signature": {
+      "zh": "LMS/HSS 有状态哈希签名",
+      "desc": "使用 LMS/HSS 有状态哈希签名（SP 800-208），量子安全但需谨慎管理状态。",
+      "rem": "LMS 为 NIST 批准（SP 800-208），须确保状态管理正确以防密钥复用。"
+    },
+    "Composite Digital Signature": {
+      "zh": "复合数字签名",
+      "desc": "使用复合/混合数字签名，同时结合经典与后量子签名。",
+      "rem": "复合签名是 PQC 过渡期的优秀方案，须保证两种签名均验证通过。"
+    },
+    "Hybrid Key Exchange": {
+      "zh": "混合密钥交换",
+      "desc": "使用混合密钥交换（经典 + PQC），是优秀的过渡策略。",
+      "rem": "PQC 过渡期推荐混合方案，可同时获得经典与后量子两方面的安全性。"
+    },
+    "TLS Configuration": {
+      "zh": "TLS 配置",
+      "desc": "检测到 TLS 1.2/1.3。使用 ECDHE 的 TLS 1.3 密码套件在密钥交换环节量子脆弱。",
+      "rem": "关注支持 ML-KEM 的混合 TLS 实现，可用后及时切换。"
+    }
+  },
+
+  "_crysentry_note": "CrySentry 的判定类型与消息文本。其输出为 source→sink 污点流证据，比 CryptoScan 的正则命中多一层数据流证明。",
+
+  "crysentry": {
+    "judgeType": {
+      "Predictable Source": "可预测来源",
+      "Pattern Match": "模式匹配"
+    },
+    "message": {
+      "The algorithm used in this API call, is insecure and may lead to data leakage due to vulnerability to attacks.":
+        "该 API 调用使用的算法不安全，存在被攻击并导致数据泄露的风险。",
+      "The value of the API is not well randomized":
+        "传入该 API 的值随机性不足，攻击者可预测。"
+    },
+    "judgeType_explain": {
+      "Predictable Source": "污点分析发现：一个随机性不足、可被攻击者预测的值，流入了密码学敏感 API。",
+      "Pattern Match": "在调用点匹配到已知不安全的算法常量或参数。"
+    }
+  }
+}
