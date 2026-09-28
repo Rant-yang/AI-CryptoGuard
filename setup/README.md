@@ -21,11 +21,32 @@
 
 预编译的二进制，**不需要装 Go**。
 
+**默认就是 text 格式、实时流式打印到屏幕**（每个发现一条，会有几千行）：
+
 ```cmd
-cryptoscan.exe scan <源码目录> -o out.json
+cryptoscan.exe scan <源码目录>
 ```
 
-25 个检测类型，输出 JSON。
+**要 JSON 才加 `--format json --output`** —— 注意是 `--output`，**不是 `-o`**：
+
+```cmd
+cryptoscan.exe scan <源码目录> --format json --output out.json
+```
+
+> ⚠️ 加了 `--output` 之后**屏幕上什么都不显示是正常的**，内容全进文件了。
+
+其他格式：`text`（默认）/ `json` / `csv` / `sarif` / `cbom`
+
+### 🔴 退出码陷阱：只要有发现就返回 1
+
+| 扫描对象 | 退出码 |
+|---|---|
+| 有密码发现的目录 | **1** |
+| 有文件、但零密码发现 | 0 |
+| 空目录 | 0 |
+
+**没设 `--fail-on` 也这样。** 脚本里**不要**用退出码判断成败 ——
+改用"输出文件是否存在 + JSON 能否解析"。详见 `scanner/README.md`。
 
 ---
 

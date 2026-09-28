@@ -60,7 +60,44 @@ CryptoScan 补充它没有的：25 个 `type` 每个都带 `description/remediat
 
 ---
 
-## 转换时的坑（实测踩过）
+## 调用时的坑（实测踩过，第一个就会中）
+
+### 0. 🔴 CryptoScan 只要有发现就返回 exit 1
+
+实测（已验证）：
+
+| 扫描对象 | 退出码 |
+|---|---|
+| 有密码发现的目录 | **1** |
+| 有文件、但零密码发现 | 0 |
+| 空目录 | 0 |
+
+**它没设 `--fail-on` 也这样** —— 和 `--help` 里写的不一致。
+
+所以**不能**这么写：
+
+```python
+result = subprocess.run([...])
+if result.returncode != 0:
+    raise RuntimeError("scan failed")     # ❌ 每次成功扫描都会被判成失败
+```
+
+**正确做法**：忽略退出码，改为检查**输出文件是否存在 + JSON 能否解析**。
+
+```python
+subprocess.run([...], check=False)        # 明确忽略退出码
+data = json.load(open(out))               # 用这个判断成败
+```
+
+> cbom-scan 没有这个问题，**永远返回 0**。
+> 两个工具行为不一致 —— 这正是需要 adapter 层的原因之一。
+
+### 0b. `--output` 一加，屏幕就没输出了
+
+CryptoScan 默认 `--format text`、输出到 stdout、**实时流式**打印每一条发现。
+一旦加了 `--output`，内容全部进文件，**屏幕上静默** —— 这不是卡住了。
+
+调试时想看得见，就不加 `--output`。
 
 ### 1. 路径必须转相对
 
