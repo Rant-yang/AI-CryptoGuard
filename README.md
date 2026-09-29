@@ -140,24 +140,65 @@ LLM 只判断用途（签名？加密？密钥交换？）
 
 ## 团队协作
 
+### 分支已经建好了，直接切过去
+
 ```
-main                     ← 只有 C 能合并
+main                ← 随时能跑。**只有 C 能往这里合**
  ↑
- ├── feature/scanner     ← A
- ├── feature/ai          ← B
- └── feature/core        ← C
+ ├── feat/scanner   ← A 在这里写
+ └── feat/ai        ← B 在这里写
 ```
 
-各自在自己分支写 → push → C 看过没问题再合并到 `main`。
+| 谁 | 分支 | 只动这个目录 |
+|---|---|---|
+| **A** | `feat/scanner` | `scanner/` |
+| **B** | `feat/ai` | `ai/` |
+| **C** | `main` | `core/` `benchmark/` `docs/` |
 
-**不搞复杂 CI/CD。** 这个阶段流程越轻越好。
+### A 和 B 的开场动作
+
+```bash
+git clone https://github.com/Rant-yang/AI-CryptoGuard.git
+cd AI-CryptoGuard
+git checkout feat/scanner        # B 换成 feat/ai
+```
+
+之后就是普通的：写代码 → `git add scanner/` → `git commit -m "..."` → `git push`。
+
+**每次开工前先 `git pull`。** 这一条能避免绝大多数冲突。
+
+### 🔴 三条不能破的规矩
+
+**1. 永远不要往 `main` 推。**
+
+你推上去的半成品，别人 pull 下来一跑就崩 —— 而 `main` 是 10-22 之后要拿去演示的版本。
+
+**2. 不要用 GitHub 网页版的「新建文件 / 上传文件」按钮。**
+
+网页版建的文件**直接进 main，绕过分支**，这是最容易犯的错。
+（2026-09-29 已经有两位同学这么干过，建了两个空文件。）
+
+**3. `core/` 和 `docs/` 顶层只有 C 能改。**
+
+`core/schema/` 是三个人共同的契约，而且刻意开了 `additionalProperties: false` ——
+**谁偷偷加一个字段，所有人的校验全部失败。**
+
+觉得字段不够用 → 告诉 C → **由 C 改**。
+
+> 这一条不定死，分支开再多也没用：冲突会全部集中爆发在 `core/`。
+
+**不搞 PR、不搞 review、不搞 CI/CD。** 这个阶段流程越轻越好。
+C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.py`
+和 `core/rules/pqc_routing.py`（后者自带自检，退出码 0 = 通过）。
 
 ---
 
-## 当前状态（2026-09-28）
+## 当前状态（2026-09-29）
 
 - ✅ 三个工具 smoke test 全部通过（跑通方式见 `setup/README.md`）
 - ✅ 统一 Finding 格式 v0.1 草案已定（`core/schema/`）
+- ✅ 规则库雏形：PQC 用途分派（`core/rules/pqc_routing.py`，自带自检）
+- ✅ 协作分支 `feat/scanner` / `feat/ai` 已建好并推送
 - ⬜ scanner 模块 —— 待 A
 - ⬜ ai 模块 —— 待 B
 - ⬜ benchmark 数据集 —— **当前 0 个标注样本，是最大瓶颈**
