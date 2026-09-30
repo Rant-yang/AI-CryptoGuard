@@ -90,10 +90,16 @@ def merge(all_groups):
             risks = [RISK_BY_TYPE[t] for t in types if t in RISK_BY_TYPE]
         risk = most_severe_risk(risks)
 
-        # ---- severity / confidence：取最大；severity 用 risk 兜底（cbom 无此字段）
+        # ---- severity / confidence
+        # 「取最大」只作用于**上游给出的** severity（真实使用不该被注释提及拉低）。
+        # risk->severity 兜底仅在整桶都没有上游 severity（cbom-only）时使用，
+        # 不参与 max 竞争 —— 否则会把 CryptoScan 按上下文给出的打分系统性抬高
+        # （实测: TLS 配置线索被它打 info，兜底 medium 会把整条抬到 medium）。
         severities = [g['severity'] for g in groups if g.get('severity')]
-        severities.append(SEVERITY_FROM_RISK[risk])
-        severity = max_severity(severities)
+        if severities:
+            severity = max_severity(severities)
+        else:
+            severity = SEVERITY_FROM_RISK[risk]
 
         confidences = [g['confidence'] for g in groups
                        if g.get('confidence') is not None]

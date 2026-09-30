@@ -145,6 +145,7 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 scanner/
 ├── README.md          本文件
 ├── scan.py            主入口（CLI：目标目录 -> findings.json）
+├── selftest.py        自检（外部行为断言，退出码 0 = 通过；合并前跑）
 ├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
 ├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
 ├── coverage.py        覆盖差异审计（一家报一家没报 -> 漏报复核线索）
@@ -168,6 +169,16 @@ scanner/
 - 覆盖差异审计（coverage.py）：按**行级**对比两家原始命中（不受算法粒度影响，
   是漏报复核的主要线索）+ 算法级覆盖对比（受粒度干扰，仅参考）。
   crypto-samples 实测：双方同报 67 行、仅 cbom-scan 94 行、仅 CryptoScan 30 行
+- **自检**：`python scanner/selftest.py`（约 60 条外部行为断言：归一化映射、
+  融合规则、行号吸收、X25519 行级细分、CBOM 结构与确定性，退出码 0 = 通过）。
+  建议合并前与 `core/schema/validate.py` 一起跑
+- severity 裁决：**取最大只作用于上游给出的 severity**；`risk -> severity`
+  兜底（表见 normalize.py）仅在没有上游 severity 的 cbom-only 条目使用，
+  口径按 CryptoScan 实际打分校准（grover 类它打 info/low、broken/shor 类打
+  high 居多），不会把上游按上下文的打分系统性抬高
+- cbom-scan 把 `Ed25519 / X25519` 捆成一个 asset 且 prim=signature ——
+  adapter 按 occurrence 的 match 命中词做**行级细分**（ed25519 行 -> signing、
+  x25519 行 -> key_exchange），判不出的回落组级映射，不硬判
 - 对 crypto-samples 实测：171 处命中 + 110 条 finding → 融合为 91 条
   （72 个 (file, 算法) 组，因 usage 不同拆分），双源证据 16 条，
   上游量子风险被我方裁决推翻 14 条（如 MD5 的「Shor 可破」错标）
@@ -182,7 +193,8 @@ scanner/
 2. 行号吸收只做**精确行号匹配**（两个工具都是逐行扫描，行号对不上就是
    证据对不上，不做 ±1 模糊）。
 3. cbom-scan 无 severity / confidence：severity 用
-   `risk -> severity` 兜底映射（与 CryptoScan 实际打分高度一致），
+   `risk -> severity` 兜底映射（仅 cbom-only 条目使用；口径按 CryptoScan
+   实际打分校准，但兜底分不出「真实调用」与「提及」，不越权打 critical），
    confidence 无来源时不填（不猜）。
 4. `usage` 透传上游（CryptoScan purpose 优先，其次 cbom prim），
    确定性矛盾（如 RSA/hashing、MD5/encryption 这类实测上游误判）打

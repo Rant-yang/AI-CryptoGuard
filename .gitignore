@@ -36,6 +36,9 @@ workspace/
 crypto-output/
 cbom-out*/
 *.cbom.json
+# scanner/README.md 验收命令的默认输出目录（findings.json + _raw/ + meta）。
+# 只匹配仓库根的 out/，不影响子目录里同名的源码目录。（A 加，C 可复核）
+/out/
 
 # ---------- 4. Python ----------
 __pycache__/

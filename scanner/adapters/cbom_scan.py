@@ -24,6 +24,21 @@ from scanner.normalize import (
 
 TOOL_NAME = 'cbom-scan'
 
+#: cbom-scan 把 Ed25519 / X25519 捆成一个 asset 且 prim=signature ——
+#: 对 Ed25519（签名）那半是对的，对 X25519（密钥交换）那半是错的。
+#: occurrence 的 match 是命中的具体词，**行级可确定细分**，不需要猜：
+#:     ed25519 -> signing     x25519 -> key_exchange     其他 -> 保持组级映射
+#: 这是唯一做行级细分的捆绑 asset；判不出的 match 一律回落，不硬判。
+_ED25519_ASSET_NORM = 'ED25519X25519'
+_MATCH_REFINED_USAGE = {'ED25519': 'signing', 'X25519': 'key_exchange'}
+
+
+def _refine_usage_by_match(alg_norm, usage, match):
+    if alg_norm != _ED25519_ASSET_NORM:
+        return usage
+    token = ''.join(ch for ch in str(match or '').upper() if ch.isalnum())
+    return _MATCH_REFINED_USAGE.get(token, usage)
+
 
 class ToolError(RuntimeError):
     """工具没找到 / 没跑起来 / 输出无法解析。"""
@@ -91,20 +106,23 @@ def to_groups(data, target):
         # cbom raw 口径一致；repl / why 等 asset 级长文本不重复塞进每条证据）
         raw = {k: asset.get(k) for k in ('id', 'algo', 'prim', 'risk')}
 
-        by_file = {}
+        # 分组键是 (file, usage)：Ed25519/X25519 这类捆绑 asset 会被 match
+        # 细分拆成不同用途的组 —— 与 schema 计数单位 (file, alg, usage) 对齐
+        by_group = {}
         for occ in asset.get('occurrences', []):
             rel = to_relative_path(occ.get('file'), target)
             if not rel:
                 continue
-            by_file.setdefault(rel, []).append(occ.get('line'))
+            occ_usage = _refine_usage_by_match(alg_norm, usage, occ.get('match'))
+            by_group.setdefault((rel, occ_usage), []).append(occ.get('line'))
 
-        for rel, lines in by_file.items():
+        for (rel, occ_usage), lines in by_group.items():
             groups.append({
                 'tool': TOOL_NAME,
                 'file': rel,
                 'alg_norm': alg_norm,
                 'algorithm': algo_raw,
-                'usage': usage,
+                'usage': occ_usage,
                 'lines': sorted({ln for ln in lines if isinstance(ln, int) and ln >= 1}),
                 'severity': None,           # cbom-scan 没有 severity 概念
                 'confidence': None,

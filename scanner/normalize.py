@@ -89,10 +89,12 @@ CONFIDENCE_MAP = {
 SEVERITY_ORDER = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
 
 #: 只有 cbom-scan 证据、拿不到上游 severity 时的兜底推断。
-#: 该映射与 CryptoScan 对同类发现的实际打分高度一致
-#: （RSA=3/high, MD5 真实调用=4/critical, ML-KEM=0/info）。
+#: 口径对齐 CryptoScan 对同类发现的实际打分（实测 crypto-samples 63 个双源条目）:
+#:   shor/broken 类打 3(high) 居多; grover 类全打 0-1（量子仅折半安全位，非紧急）。
+#: 故 grover 从 medium 下调 low; critical 只留给上下文明确的真实调用
+#: （cs 对真实调用的 MD5 打 4），兜底分不出真实调用与提及，不越权打 critical。
 SEVERITY_FROM_RISK = {
-    'shor': 'high', 'broken': 'critical', 'grover': 'medium',
+    'shor': 'high', 'broken': 'high', 'grover': 'low',
     'review': 'low', 'safe': 'info',
 }
 
@@ -173,6 +175,10 @@ def max_severity(severities):
 #: 纯哈希类算法的归一名 / 前缀 —— 它们不承担签名/加密/密钥交换
 _HASH_ALGO_PREFIXES = ('MD5', 'SHA')
 
+#: 对称密码的归一名 / 前缀 —— 数字签名需要非对称密钥，对称密码做不了签名
+#: （它们能做的对称认证是 authentication / MAC，不是 signing）
+_SYM_ALGO_PREFIXES = ('AES', 'DES', '3DES', 'CHACHA20', 'RC4', 'BLOWFISH')
+
 #: 公钥类算法的归一名 / 前缀 —— 它们不承担哈希用途
 _PUBKEY_ALGO_PREFIXES = (
     'RSA', 'ECC', 'ECDSA', 'ECDH', 'ED25519', 'X25519', 'EDDSA', 'DSA', 'DH',
@@ -187,9 +193,10 @@ def usage_contradicts_algorithm(alg_norm, usage):
     上游的 purpose 判定会出错（实测: import 语句被 CryptoScan 判成
     RSA/hashing）。usage 的**复核**是 ai/ 模块的职责，scanner 不改值，
     但确定性的矛盾可以由规则判出 —— 打 needs-usage-review 让 AI 优先处理。
-    只放两条确定无疑的规则，不搞启发式：
+    只放确定无疑的密码学事实，不搞启发式：
         公钥/后量子公钥算法 x hashing        （公钥算法不做哈希）
         纯哈希算法   x signing/encryption/key_exchange（哈希不签名不加密）
+        对称密码     x signing               （数字签名需要非对称密钥）
     """
     if not alg_norm:
         return False
@@ -197,6 +204,8 @@ def usage_contradicts_algorithm(alg_norm, usage):
         return True
     if usage in ('signing', 'encryption', 'key_exchange') \
             and alg_norm.startswith(_HASH_ALGO_PREFIXES):
+        return True
+    if usage == 'signing' and alg_norm.startswith(_SYM_ALGO_PREFIXES):
         return True
     return False
 
