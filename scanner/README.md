@@ -204,7 +204,7 @@ scanner/
 5. CryptoScan 的 `algorithm` 为空的 finding（TLS Configuration /
    Hardcoded Key Size / PQC Library Import）退化为用 `type` 当算法名。
 6. `raw` 里不保留 CryptoScan 的 `sourceContext`（每条 7 行源码上下文，
-   180KB 输出的大头，调试走 `_raw/` 留档）与 description / remediation
+   180KB 输出的大头，调试走 `<输出名>_raw/` 留档）与 description / remediation
    等 type 级元数据（按定位搬进 `core/rules/`，不在 110 条里重复 110 份）。
 7. **`RISK_BY_TYPE` 只覆盖 zh_map 初版的 25 个 type；CryptoScan 实际 type
    值域 78 种**（冒烟真实仓库实测）。未覆盖的（证书运维类、凭据暴露类、

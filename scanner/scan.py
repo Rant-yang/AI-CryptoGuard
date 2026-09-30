@@ -15,8 +15,9 @@
     3  所有选用的工具都失败
 
 注意:
-    - 扫描产物（findings.json / _raw/ / meta）**绝不能 git add** —— 含绝对
-      路径与上游抓到的原文（方案 §19）。out/ 目录已按此约定使用。
+    - 扫描产物（findings.json / <输出名>_raw/ / meta 等）**绝不能 git add**
+      —— 含绝对路径与上游抓到的原文（方案 §19）。out/ 已按此约定使用并
+      被 .gitignore 忽略。
 """
 import argparse
 import json

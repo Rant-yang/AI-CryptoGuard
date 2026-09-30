@@ -177,12 +177,13 @@ _HASH_ALGO_PREFIXES = ('MD5', 'SHA')
 
 #: 对称密码的归一名 / 前缀 —— 数字签名需要非对称密钥，对称密码做不了签名
 #: （它们能做的对称认证是 authentication / MAC，不是 signing）
-_SYM_ALGO_PREFIXES = ('AES', 'DES', '3DES', 'CHACHA20', 'RC4', 'BLOWFISH')
+_SYM_ALGO_PREFIXES = ('AES', 'DES', '3DES', 'CHACHA20', 'XCHACHA20', 'RC4',
+                      'BLOWFISH')
 
 #: 公钥类算法的归一名 / 前缀 —— 它们不承担哈希用途
 _PUBKEY_ALGO_PREFIXES = (
     'RSA', 'ECC', 'ECDSA', 'ECDH', 'ED25519', 'X25519', 'EDDSA', 'DSA', 'DH',
-    'MLKEM', 'MLDSA', 'SLHDSA', 'XMSS', 'LMS', 'HYBRIDKEM',
+    'MLKEM', 'MLDSA', 'FNDSA', 'SLHDSA', 'XMSS', 'LMS', 'HYBRIDKEM',
     'COMPOSITESIGNATURE', 'NISTPQC', 'POSTQUANTUMCRYPTOLIBRARY',
 )
 
@@ -213,16 +214,31 @@ def usage_contradicts_algorithm(alg_norm, usage):
 # ---------------------------------------------------------------- 路径
 
 def to_relative_path(path, target_root):
-    """上游文件路径 -> 项目内相对路径、正斜杠。
+    """上游文件路径 -> 项目内相对路径、正斜杠；目标外/无法归位的返回 ''。
 
     CryptoScan 输出绝对路径（信息泄露 + 不可移植，必须剥）；
     cbom-scan 已经给相对路径 —— 相对输入直接规范斜杠即可，
     千万不能再做一次 relpath（那会相对 cwd 计算，得出错误结果）。
+
+    返回 '' 的两种情形（adapter 侧见 '' 即丢弃该命中）:
+        - 归位后发现以 '..' 开头: 命中在目标目录之外（工具扫到了模块
+          缓存 / 系统路径），'../' 形式照样泄露路径、不可移植，不带进来
+        - relpath 抛 ValueError: Windows 跨盘（C: vs D:）等无法相对化
     """
     import os
     if path is None:
         return ''
     if not os.path.isabs(str(path)):
-        return str(path).replace('\\', '/')
-    rel = os.path.relpath(os.path.abspath(path), os.path.abspath(target_root))
+        p = str(path).replace('\\', '/')
+        # Windows「驱动器相对路径」（D:foo\bar）: isabs 判它为相对，但它
+        # 既不是项目内路径也不可移植 —— 按目标外处理，不带进来
+        if len(p) >= 2 and p[1] == ':':
+            return ''
+        return p
+    try:
+        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(target_root))
+    except ValueError:
+        return ''
+    if rel == '..' or rel.startswith('..' + os.sep) or rel.startswith('../'):
+        return ''
     return rel.replace('\\', '/')

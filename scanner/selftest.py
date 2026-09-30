@@ -18,7 +18,7 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan                       # noqa: E402
+from scanner.adapters import cbom_scan, cryptoscan           # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
 from scanner.merge import merge                              # noqa: E402
@@ -102,6 +102,11 @@ def test_normalize(check):
                        ('PBKDF2', 'authentication'), ('ECC', 'unknown')]:
         check('非矛盾 %s x %s 不打标' % (alg, usage),
               usage_contradicts_algorithm(alg, usage), False)
+    # 78 type 值域冒烟暴露的新算法也要覆盖（FN-DSA / XChaCha20）
+    check('矛盾 FNDSA x hashing（PQC 签名不做哈希）',
+          usage_contradicts_algorithm('FNDSA', 'hashing'), True)
+    check('矛盾 XCHACHA20 x signing（流密码不做签名）',
+          usage_contradicts_algorithm('XCHACHA20', 'signing'), True)
 
 
 def test_relative_path(check):
@@ -118,6 +123,13 @@ def test_relative_path(check):
               to_relative_path('sub/a.go', root), 'sub/a.go')
         check('反斜杠相对路径规范成正斜杠',
               to_relative_path('sub\\a.go', root), 'sub/a.go')
+        # 目标目录之外：'../' 形式照样泄露路径，必须丢弃（返回 ''）
+        check('目标外路径 -> 空串（丢弃，不泄露）',
+              to_relative_path(os.path.join(os.path.dirname(root), 'x.go'), root), '')
+        # Windows 跨盘：relpath 会抛 ValueError —— 不许崩，返回空串
+        other_root = 'C:\\' if root[:1].upper() != 'C' else 'D:\\'
+        check('跨盘路径 -> 空串（不抛 ValueError）',
+              to_relative_path(other_root + 'x\\a.go', root), '')
 
 
 def test_merge_absorb_and_fuse(check):
@@ -201,6 +213,48 @@ def test_ed25519_match_refinement(check):
           2 in usages['signing'], False)
 
 
+def test_malformed_inputs(check):
+    """畸形上游数据不许崩、不许流出脏组（对抗实测抓过 4 个真 bug，此处防回归）。"""
+    # findings/assets 不是数组时（上游格式变化）安全归零，不迭代字符串炸掉
+    check('cbom assets 是字符串 -> []',
+          cbom_scan.to_groups({'assets': 'x'}, 'T'), [])
+    check('cs findings 是字符串 -> []',
+          cryptoscan.to_groups({'findings': 'x'}, 'T'), [])
+    check('cs finding 字段全缺 -> []',
+          cryptoscan.to_groups({'findings': [{}]}, 'T'), [])
+    # file 合法但行号全非法的命中：一个真实命中都没有，不许流出空行组
+    # （空行组会骗过 coverage 的算法级覆盖统计）
+    r = cbom_scan.to_groups({'assets': [{'id': 'x', 'algo': 'RSA',
+        'prim': 'pke', 'risk': 'shor', 'occurrences': [
+            {'file': None, 'line': 5}, {'file': 'a.go', 'line': 0},
+            {'file': 'a.go', 'line': '7'}, {'file': 'a.go'}]}]}, 'T')
+    check('cbom 行号全非法 -> 不产出空行组', r, [])
+    # 值域外的 severity/confidence/purpose/type：忽略未知值，不猜不崩
+    r = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'RSA', 'file': r'D:\p\a.py', 'line': 3, 'severity': 7,
+         'confidence': 'ULTRA', 'purpose': 'time-travel', 'type': None}]}, r'D:\p')
+    check('cs 值域外字段 -> 保守归 unknown/None',
+          (r[0]['usage'], r[0]['severity'], r[0]['confidence'], r[0]['risk_types']),
+          ('unknown', None, None, []))
+    # 目标外 / 驱动器相对路径：丢弃（不泄露路径、不可移植的不带进来）
+    r = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'RSA', 'file': r'D:\elsewhere\a.py', 'line': 1},
+        {'algorithm': 'RSA', 'file': r'D:crypto\b.py', 'line': 2}]}, r'D:\p')
+    check('cs 目标外+驱动器相对路径 -> 全丢弃', r, [])
+    # merge: 空行组剔除、重复行号去重
+    f = merge([
+        {'tool': 'cbom-scan', 'file': 'a.go', 'alg_norm': 'RSA',
+         'algorithm': 'RSA', 'usage': 'unknown', 'lines': [1, 1, 2],
+         'severity': None, 'confidence': None, 'risk': 'shor',
+         'risk_types': [], 'quantum_as_seen': [], 'raw': {}},
+        {'tool': 'cryptoscan', 'file': 'a.go', 'alg_norm': 'RSA',
+         'algorithm': 'RSA', 'usage': 'signing', 'lines': [],
+         'severity': 'high', 'confidence': None, 'risk': None,
+         'risk_types': [], 'quantum_as_seen': [], 'raw': {}}])
+    check('merge 空行组剔除 + 行号去重',
+          (len(f), f[0]['evidence'][0]['lines']), (1, [1, 2]))
+
+
 def test_coverage(check):
     a = [_group('cbom-scan', 'a.go', 'RSA', 'unknown', [1, 2])]
     b = [_group('cryptoscan', 'a.go', 'RSA', 'signing', [2, 3])]
@@ -235,7 +289,7 @@ def main():
 
     for fn in (test_normalize, test_relative_path, test_merge_absorb_and_fuse,
                test_merge_risk_overrides_and_tags, test_ed25519_match_refinement,
-               test_coverage, test_cbom_report):
+               test_malformed_inputs, test_coverage, test_cbom_report):
         fn(check)
 
     if fails:

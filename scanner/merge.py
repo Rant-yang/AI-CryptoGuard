@@ -19,7 +19,9 @@
         行号对不上就是证据对不上，模糊匹配会把不同调用点错误合并。
 
 字段合并规则（schema README 定死，不许改）:
-    severity    取最大   真实使用不该被注释提及拉低
+    severity    取最大   真实使用不该被注释提及拉低。
+                         「取最大」只作用于**上游给出的** severity；risk->severity
+                         兜底仅在整桶都没有上游 severity 时使用（见下方注释）
     risk        取最严重 shor/broken > grover > review > safe（平级取 shor）
     confidence  取最大   有一个高置信源就值得人看
     usage       ——      用途不同根本不会进同一个桶
@@ -76,8 +78,8 @@ def merge(all_groups):
         evidences = [{
             'tool': g['tool'],
             'kind': 'pattern',
-            'lines': sorted(g['lines']),
-            'raw': g['raw'],
+            'lines': sorted(set(g['lines'])),   # 去重设防：adapter 契约已去重，
+            'raw': g['raw'],                    # 但克隆/吸收路径不该带出重复行号
         } for g in groups]
 
         all_lines = sorted(ln for g in groups for ln in g['lines'])
@@ -176,6 +178,7 @@ def _absorb_unknown_lines(by_key):
                 if tg is None:
                     tg = dict(g)          # 克隆元数据，raw 共享（见模块 docstring）
                     tg['lines'] = []
+                    tg['usage'] = u       # 归属已迁到具体用途桶，usage 随之更正
                     usage_map[u].append(tg)
                 tg['lines'] = tg['lines'] + lns
             if stay:

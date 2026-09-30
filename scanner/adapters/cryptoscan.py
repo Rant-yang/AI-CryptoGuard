@@ -2,7 +2,8 @@
 
 CryptoScan 在流水线里的角色（scanner/README.md 的定位）是**补充源**：
 它的 purpose（用途）比 cbom-scan 的 prim 细，severity / confidence 可用，
-25 个 type 的元数据后续由 C 搬进 core/rules/ 规则库。
+type 的元数据（实测值域 78 种，zh_map 初版覆盖 25 种）后续由 C 搬进
+core/rules/ 规则库。
 
 实测踩过的坑（setup/README.md / scanner/README.md，本机 2026-09-30 复测属实）:
     1. 只要有密码发现就返回 exit 1（没设 --fail-on 也这样）——
@@ -24,6 +25,7 @@ from scanner.normalize import (
     CRYPTOSCAN_PURPOSE_TO_USAGE,
     CRYPTOSCAN_QUANTUM_RISK_AS_SEEN,
     CRYPTOSCAN_SEVERITY_TO_ENUM,
+    SEVERITY_ORDER,
     canon_algorithm,
     to_relative_path,
 )
@@ -33,8 +35,9 @@ TOOL_NAME = 'cryptoscan'
 #: finding 级字段里逐字保留进 raw 的部分。
 #: 刻意排除三块（体积与职责，不是加工）:
 #:   - sourceContext: 每条 7 行源码上下文，180KB 输出的大头，调试走 raw 文件
-#:   - description / remediation / impact / effort: 25 个 type 级的公共元数据，
-#:     按 README 的定位由 C 搬进 core/rules/，不该在每条证据里重复 110 份
+#:   - description / remediation / impact / effort: type 级的公共元数据
+#:     （同一 type 的所有 finding 重复同一份），按 README 的定位由 C 搬进
+#:     core/rules/，不在每条证据里重复
 #:   - tags: 工具自家标签，与我们的 tags 语义无关
 RAW_FIELDS = (
     'id', 'type', 'findingType', 'category', 'algorithm', 'primitive',
@@ -76,20 +79,26 @@ def run(target, tools_dir, raw_out=None, timeout=300):
             tempfile.mkdtemp(prefix='acg-cryptoscan-'), 'cryptoscan.json')
     raw_out = os.path.abspath(raw_out)
     os.makedirs(os.path.dirname(raw_out), exist_ok=True)
+    # 同目录重跑时，上次留下的同名文件必须先删：本次工具若失败根本不写文件，
+    # 不删的话下面「文件存在即成功」会把**上一次的旧 JSON**当成本次结果读进来
+    if os.path.isfile(raw_out):
+        os.remove(raw_out)
 
     cmd = [exe, 'scan', os.path.abspath(target),
            '--format', 'json', '--output', raw_out]
     try:
         # check=False 是故意的：有发现时 exit 1，退出码不代表成败
-        subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
+                              check=False)
     except FileNotFoundError:
         raise ToolError('无法执行 %s' % exe)
     except subprocess.TimeoutExpired:
         raise ToolError('cryptoscan 超时（%s 秒）。' % timeout)
 
     if not os.path.isfile(raw_out):
-        raise ToolError('cryptoscan 未产出 JSON（%s 不存在）。stderr: %s'
-                        % (raw_out, ''))
+        raise ToolError('cryptoscan 未产出 JSON（%s 不存在）。exit=%s stderr: %s'
+                        % (raw_out, proc.returncode,
+                           proc.stderr.decode('utf-8', 'replace')[:300]))
     try:
         with open(raw_out, encoding='utf-8') as fh:
             return json.load(fh)
@@ -105,7 +114,11 @@ def to_groups(data, target):
     具体叫什么由 raw 里的 type 溯源。
     """
     buckets = {}
-    for f in data.get('findings', []):
+    findings = data.get('findings') or []
+    if not isinstance(findings, list):
+        # 上游格式变化（findings 不是数组）时安全归零，不迭代字符串炸掉
+        findings = []
+    for f in findings:
         algo_raw = f.get('algorithm') or f.get('type') or ''
         alg_norm = canon_algorithm(algo_raw)
         usage = CRYPTOSCAN_PURPOSE_TO_USAGE.get(f.get('purpose', ''), 'unknown')
@@ -135,7 +148,6 @@ def to_groups(data, target):
         g['lines'].append(line)
         sev = CRYPTOSCAN_SEVERITY_TO_ENUM.get(f.get('severity'))
         if sev is not None:
-            from scanner.normalize import SEVERITY_ORDER
             if g['severity'] is None or SEVERITY_ORDER[sev] > SEVERITY_ORDER[g['severity']]:
                 g['severity'] = sev
         conf = CONFIDENCE_MAP.get(f.get('confidence'))

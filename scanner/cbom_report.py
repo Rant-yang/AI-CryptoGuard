@@ -65,10 +65,14 @@ def render_cbom(findings, target_label):
             ],
         })
 
+    # 指纹必须覆盖**裁决字段**（risk/severity/usages/finding-refs），不只位置:
+    # 规则表更新导致裁决变化时，CBOM 内容变了，serialNumber 必须跟着变
+    #（CycloneDX 语义: serialNumber 标识 BOM 内容版本），否则下游会当成没变。
     fingerprint = hashlib.sha1(
-        '|'.join(c['bom-ref'] + ':' + ','.join(
-            o['location'] for o in c['evidence']['occurrences'])
-            for c in components).encode('utf-8')).hexdigest()
+        '|'.join(c['bom-ref'] + ':' + '|'.join(
+                     p['value'] for p in c['properties']) + ':' + ','.join(
+                     o['location'] for o in c['evidence']['occurrences'])
+                 for c in components).encode('utf-8')).hexdigest()
     return {
         'bomFormat': 'CycloneDX',
         'specVersion': '1.6',

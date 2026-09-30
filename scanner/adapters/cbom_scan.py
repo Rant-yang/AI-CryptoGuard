@@ -98,7 +98,11 @@ def to_groups(data, target):
     字段约定见 merge.py 的 docstring。
     """
     groups = []
-    for asset in data.get('assets', []):
+    assets = data.get('assets') or []
+    if not isinstance(assets, list):
+        # 上游格式变化（assets 不是数组）时安全归零，不迭代字符串炸掉
+        assets = []
+    for asset in assets:
         algo_raw = asset.get('algo', '')
         alg_norm = canon_algorithm(algo_raw)
         usage = CBOM_PRIM_TO_USAGE.get(asset.get('prim', ''), 'unknown')
@@ -117,13 +121,19 @@ def to_groups(data, target):
             by_group.setdefault((rel, occ_usage), []).append(occ.get('line'))
 
         for (rel, occ_usage), lines in by_group.items():
+            clean = sorted({ln for ln in lines
+                            if isinstance(ln, int) and ln >= 1})
+            if not clean:
+                # 该文件全部命中行号非法 —— 一个真实命中都没有的组不许流出：
+                # 空行组会骗过 coverage 的算法级覆盖统计（算法没命中却算覆盖）
+                continue
             groups.append({
                 'tool': TOOL_NAME,
                 'file': rel,
                 'alg_norm': alg_norm,
                 'algorithm': algo_raw,
                 'usage': occ_usage,
-                'lines': sorted({ln for ln in lines if isinstance(ln, int) and ln >= 1}),
+                'lines': clean,
                 'severity': None,           # cbom-scan 没有 severity 概念
                 'confidence': None,
                 'risk': asset.get('risk'),  # 主源：五档直接可用
