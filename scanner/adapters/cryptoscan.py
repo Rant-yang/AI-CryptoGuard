@@ -1,0 +1,157 @@
+"""CryptoScan adapter —— 调用工具并把输出转成 scanner 内部分组。
+
+CryptoScan 在流水线里的角色（scanner/README.md 的定位）是**补充源**：
+它的 purpose（用途）比 cbom-scan 的 prim 细，severity / confidence 可用，
+25 个 type 的元数据后续由 C 搬进 core/rules/ 规则库。
+
+实测踩过的坑（setup/README.md / scanner/README.md，本机 2026-09-30 复测属实）:
+    1. 只要有密码发现就返回 exit 1（没设 --fail-on 也这样）——
+       绝不能用退出码判成败，改为「输出文件存在 + JSON 可解析」。
+    2. 加了 --output 之后屏幕静默是正常的，内容全进了文件。
+    3. file 是绝对路径（反斜杠），必须剥成项目内相对路径。
+    4. findings[].severity 是整数 0-4；summary.bySeverity 的键是字符串 ——
+       只取 findings 一侧，不碰 summary。
+
+调用形态:
+    cryptoscan.exe scan <目标目录> --format json --output <文件>
+"""
+import json
+import os
+import subprocess
+
+from scanner.normalize import (
+    CONFIDENCE_MAP,
+    CRYPTOSCAN_PURPOSE_TO_USAGE,
+    CRYPTOSCAN_QUANTUM_RISK_AS_SEEN,
+    CRYPTOSCAN_SEVERITY_TO_ENUM,
+    canon_algorithm,
+    to_relative_path,
+)
+
+TOOL_NAME = 'cryptoscan'
+
+#: finding 级字段里逐字保留进 raw 的部分。
+#: 刻意排除三块（体积与职责，不是加工）:
+#:   - sourceContext: 每条 7 行源码上下文，180KB 输出的大头，调试走 raw 文件
+#:   - description / remediation / impact / effort: 25 个 type 级的公共元数据，
+#:     按 README 的定位由 C 搬进 core/rules/，不该在每条证据里重复 110 份
+#:   - tags: 工具自家标签，与我们的 tags 语义无关
+RAW_FIELDS = (
+    'id', 'type', 'findingType', 'category', 'algorithm', 'primitive',
+    'migrationStatus', 'file', 'line', 'column', 'match', 'context',
+    'severity', 'quantumRisk', 'confidence', 'purpose', 'language',
+)
+
+
+class ToolError(RuntimeError):
+    """工具没找到 / 没跑起来 / 输出无法解析。"""
+
+
+def find_tool(tools_dir):
+    """定位 cryptoscan 可执行文件。约定布局: <tools_dir>/cryptoscan/cryptoscan.exe。"""
+    cands = [
+        os.path.join(tools_dir, 'cryptoscan', 'cryptoscan.exe'),
+        os.path.join(tools_dir, 'cryptoscan.exe'),
+    ]
+    for cand in cands:
+        if os.path.isfile(cand):
+            return cand
+    raise ToolError(
+        '找不到 cryptoscan。期望位置之一: %s\n'
+        '安装方式见 setup/README.md（工具本体不入库，需自行下载到 tools/）。'
+        % ' ; '.join(cands))
+
+
+def run(target, tools_dir, raw_out=None, timeout=300):
+    """跑一次扫描，返回解析后的 JSON dict。
+
+    JSON 落在 raw_out 指定的文件里（这就是我们传给 --output 的路径），
+    成败判定 = 文件存在且可解析；退出码被显式忽略（见模块 docstring 坑 1）。
+    raw_out 为空时落到临时目录（调用方不想保留原始输出时用）。
+    """
+    exe = find_tool(tools_dir)
+    if raw_out is None:
+        import tempfile
+        raw_out = os.path.join(
+            tempfile.mkdtemp(prefix='acg-cryptoscan-'), 'cryptoscan.json')
+    raw_out = os.path.abspath(raw_out)
+    os.makedirs(os.path.dirname(raw_out), exist_ok=True)
+
+    cmd = [exe, 'scan', os.path.abspath(target),
+           '--format', 'json', '--output', raw_out]
+    try:
+        # check=False 是故意的：有发现时 exit 1，退出码不代表成败
+        subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+    except FileNotFoundError:
+        raise ToolError('无法执行 %s' % exe)
+    except subprocess.TimeoutExpired:
+        raise ToolError('cryptoscan 超时（%s 秒）。' % timeout)
+
+    if not os.path.isfile(raw_out):
+        raise ToolError('cryptoscan 未产出 JSON（%s 不存在）。stderr: %s'
+                        % (raw_out, ''))
+    try:
+        with open(raw_out, encoding='utf-8') as fh:
+            return json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ToolError('cryptoscan 输出无法解析: %s' % exc)
+
+
+def to_groups(data, target):
+    """CryptoScan JSON -> ToolGroup 列表（分组单位与 cbom_scan 相同）。
+
+    algorithm 为空的 finding（TLS Configuration / Hardcoded Key Size /
+    PQC Library Import 等）退化为用 type 作为算法名 —— 保持组可聚合，
+    具体叫什么由 raw 里的 type 溯源。
+    """
+    buckets = {}
+    for f in data.get('findings', []):
+        algo_raw = f.get('algorithm') or f.get('type') or ''
+        alg_norm = canon_algorithm(algo_raw)
+        usage = CRYPTOSCAN_PURPOSE_TO_USAGE.get(f.get('purpose', ''), 'unknown')
+        rel = to_relative_path(f.get('file'), target)
+        line = f.get('line')
+        if not rel or not isinstance(line, int) or line < 1:
+            continue
+        key = (rel, alg_norm, usage)
+        g = buckets.get(key)
+        if g is None:
+            g = {
+                'tool': TOOL_NAME,
+                'file': rel,
+                'alg_norm': alg_norm,
+                'algorithm': algo_raw,
+                'usage': usage,
+                'lines': [],
+                # 组内取最大（schema 合并规则：severity/confidence 取最大值）
+                'severity': None,
+                'confidence': None,
+                'risk': None,             # 不透传 quantumRisk（见 normalize.py）
+                'risk_types': [],         # type 落到 RISK_BY_TYPE 做兜底裁决
+                'quantum_as_seen': [],    # 字面翻译，仅用于打纠正标记
+                'raw': {'records': []},
+            }
+            buckets[key] = g
+        g['lines'].append(line)
+        sev = CRYPTOSCAN_SEVERITY_TO_ENUM.get(f.get('severity'))
+        if sev is not None:
+            from scanner.normalize import SEVERITY_ORDER
+            if g['severity'] is None or SEVERITY_ORDER[sev] > SEVERITY_ORDER[g['severity']]:
+                g['severity'] = sev
+        conf = CONFIDENCE_MAP.get(f.get('confidence'))
+        if conf is not None and (g['confidence'] is None or conf > g['confidence']):
+            g['confidence'] = conf
+        if f.get('type'):
+            g['risk_types'].append(f['type'])
+        qr = CRYPTOSCAN_QUANTUM_RISK_AS_SEEN.get(f.get('quantumRisk'))
+        if qr:
+            g['quantum_as_seen'].append(qr)
+        g['raw']['records'].append({k: f.get(k) for k in RAW_FIELDS})
+
+    groups = []
+    for g in buckets.values():
+        g['lines'] = sorted(set(g['lines']))
+        g['risk_types'] = sorted(set(g['risk_types']))
+        g['quantum_as_seen'] = sorted(set(g['quantum_as_seen']))
+        groups.append(g)
+    return groups

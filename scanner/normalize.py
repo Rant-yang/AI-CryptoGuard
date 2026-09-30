@@ -1,0 +1,219 @@
+"""归一化与裁决表 —— scanner 的公共基础。
+
+上游两个工具对同一件事的叫法全部不同（算法名 / 用途 / 严重程度 / 置信度 /
+量子风险口径），本模块集中放所有「翻译」规则，adapter 和 merge 都只从这里查表，
+不许各自散落一份映射 —— 改口径时只改这一个文件。
+
+risk 五档的裁决依据（core/schema/finding.v0.1.json 的口径）:
+    以 cbom-scan 为模式证据主源（三个工具里唯一分类正确的），
+    CryptoScan 独有的发现按 core/rules/zh_map.json 的 quantum_class 初版判定，
+    两边都没有的落到 review（不猜）。
+
+关于 RISK_BY_TYPE 的出处: 取值集合 = CryptoScan 1.4.0 的 25 个 type（封闭集合），
+分类口径 = core/rules/zh_map.json quantum_class.by_type（C 的 smoke 阶段初版），
+其中 classical_broken 归一为 schema 的 broken。
+C 后续在 core/rules/ 建立正式规则表后，这里应切换为引用它。
+"""
+
+# ---------------------------------------------------------------- 算法名归一化
+
+def norm_algorithm(name):
+    """算法名归一化：大写、去掉非字母数字。
+
+    三个工具对同一算法的写法不同（'SHA-1' / 'sha1' / 'SHA1'），
+    不归一会导致跨工具对齐与去重全部失效。
+    """
+    if not name:
+        return ''
+    return ''.join(ch for ch in str(name).upper() if ch.isalnum())
+
+
+#: 归一化后的别名表：把跨工具的不同叫法对齐到同一个规范名。
+#: 只收「确定是同一算法」的别名；粒度不同的（如 cbom 的 'NIST PQC' 大类
+#: 对 CryptoScan 的 ML-KEM / ML-DSA 细分）**刻意不合并** —— 融合层不做
+#: 超出证据粒度的合并，那会制造「聪明的错误」。
+ALIASES = {
+    # cbom-scan 'ECDSA / EC'  ==  CryptoScan 'ECC'（椭圆曲线一族）
+    'ECDSAEC': 'ECC',
+    # cbom-scan 'DES / 3DES'  ==  CryptoScan 'DES' / '3DES'（cbom 本来就归一个 asset）
+    'DES3DES': 'DES',
+    '3DES': 'DES',
+}
+
+
+def canon_algorithm(name):
+    """归一化 + 应用别名，返回规范名。"""
+    key = norm_algorithm(name)
+    return ALIASES.get(key, key)
+
+
+# ---------------------------------------------------------------- 用途映射
+
+#: cbom-scan 的 prim -> schema usage enum
+#: pke / kem 刻意映射到 unknown：公钥加密这个粒度分不出签名还是加密，
+#: 而 cbom 的 'NIST PQC'（prim=kem）混含 ML-KEM 和 ML-DSA，判了就是猜。
+CBOM_PRIM_TO_USAGE = {
+    'signature': 'signing',
+    'key-agree': 'key_exchange',
+    'hash': 'hashing',
+    'block-cipher': 'encryption',
+    'stream-cipher': 'encryption',
+    'pke': 'unknown',
+    'kem': 'unknown',
+}
+
+#: CryptoScan 的 purpose -> schema usage enum（'general' 分不出用途，如实 unknown）
+CRYPTOSCAN_PURPOSE_TO_USAGE = {
+    'signing': 'signing',
+    'encryption': 'encryption',
+    'key-exchange': 'key_exchange',
+    'hashing': 'hashing',
+    'authentication': 'authentication',
+    'tls-configuration': 'tls_configuration',
+    'general': 'unknown',
+}
+
+# ---------------------------------------------------------------- 严重程度 / 置信度
+
+#: CryptoScan findings[].severity 整数 -> schema severity
+CRYPTOSCAN_SEVERITY_TO_ENUM = {
+    4: 'critical', 3: 'high', 2: 'medium', 1: 'low', 0: 'info',
+}
+
+#: CryptoScan confidence 枚举 -> 0-1 浮点（schema 规定的映射）
+CONFIDENCE_MAP = {
+    'HIGH': 0.9, 'MEDIUM': 0.6, 'LOW': 0.3,
+}
+
+#: severity 全序（合并取最大用）
+SEVERITY_ORDER = {'info': 0, 'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+
+#: 只有 cbom-scan 证据、拿不到上游 severity 时的兜底推断。
+#: 该映射与 CryptoScan 对同类发现的实际打分高度一致
+#: （RSA=3/high, MD5 真实调用=4/critical, ML-KEM=0/info）。
+SEVERITY_FROM_RISK = {
+    'shor': 'high', 'broken': 'critical', 'grover': 'medium',
+    'review': 'low', 'safe': 'info',
+}
+
+# ---------------------------------------------------------------- 量子风险裁决
+
+#: CryptoScan 25 个 type -> 我们的五档（不透传它的 quantumRisk 字段）。
+#: 出处见模块 docstring。TLS Configuration 按 zh_map 判 shor
+#: （TLS 1.3 的 ECDHE 密钥交换环节量子脆弱）。
+RISK_BY_TYPE = {
+    'MD5 Hash Function': 'broken',
+    'SHA-1 Hash Function': 'broken',
+    'DES Algorithm': 'broken',
+    'Triple DES Algorithm': 'broken',
+    'RSA-1024 Key Size': 'broken',
+    'RSA Algorithm': 'shor',
+    'Elliptic Curve Cryptography': 'shor',
+    'TLS Configuration': 'shor',
+    'AES-GCM Authenticated Encryption': 'grover',
+    'ChaCha20-Poly1305': 'grover',
+    'Poly1305': 'grover',
+    'KMAC': 'grover',
+    'HKDF': 'grover',
+    'PBKDF2': 'grover',
+    'bcrypt': 'grover',
+    'Argon2': 'grover',
+    'Hardcoded Key Size': 'grover',
+    'ML-KEM Key Encapsulation': 'safe',
+    'ML-DSA Digital Signature': 'safe',
+    'SLH-DSA Hash-Based Signature': 'safe',
+    'XMSS Stateful Signature': 'safe',
+    'LMS/HSS Stateful Signature': 'safe',
+    'Post-Quantum Crypto Library': 'safe',
+    'Hybrid Key Exchange': 'safe',
+    'Composite Digital Signature': 'safe',
+}
+
+#: risk 全序（合并取最严重用）。shor 与 broken 同级 —— 都属于「必须处理」，
+#: 平级时取 shor（量子迁移是本作品的主叙事）。
+RISK_ORDER = {'safe': 0, 'review': 1, 'grover': 2, 'broken': 3, 'shor': 3}
+
+#: CryptoScan quantumRisk 的字面翻译，**仅用于与最终裁决对比、打出纠正标记**，
+#: 绝不作为 risk 的取值来源（它把 MD5 这类经典攻破的算法也标 VULNERABLE）。
+CRYPTOSCAN_QUANTUM_RISK_AS_SEEN = {
+    'VULNERABLE': 'shor', 'PARTIAL': 'grover',
+    'SAFE': 'safe', 'UNKNOWN': 'review',
+}
+
+
+def most_severe_risk(risks):
+    """多个 risk 取最严重的一档。shor/broken 平级时取 shor。"""
+    best = None
+    for r in risks:
+        if r not in RISK_ORDER:
+            continue
+        if best is None:
+            best = r
+            continue
+        # 平级且当前 best 是 broken 时，shor 优先
+        if RISK_ORDER[r] > RISK_ORDER[best] or (
+                RISK_ORDER[r] == RISK_ORDER[best] and r == 'shor'):
+            best = r
+    return best or 'review'
+
+
+def max_severity(severities):
+    """多个 severity 取最大值（schema 合并规则：真实使用不被注释提及拉低）。"""
+    vals = [SEVERITY_ORDER[s] for s in severities if s in SEVERITY_ORDER]
+    if not vals:
+        return None
+    for name, order in SEVERITY_ORDER.items():
+        if order == max(vals):
+            return name
+    return None
+
+
+# ---------------------------------------------------------------- 用途矛盾判定
+
+#: 纯哈希类算法的归一名 / 前缀 —— 它们不承担签名/加密/密钥交换
+_HASH_ALGO_PREFIXES = ('MD5', 'SHA')
+
+#: 公钥类算法的归一名 / 前缀 —— 它们不承担哈希用途
+_PUBKEY_ALGO_PREFIXES = (
+    'RSA', 'ECC', 'ECDSA', 'ECDH', 'ED25519', 'X25519', 'EDDSA', 'DSA', 'DH',
+    'MLKEM', 'MLDSA', 'SLHDSA', 'XMSS', 'LMS', 'HYBRIDKEM',
+    'COMPOSITESIGNATURE', 'NISTPQC', 'POSTQUANTUMCRYPTOLIBRARY',
+)
+
+
+def usage_contradicts_algorithm(alg_norm, usage):
+    """用途与算法大类是否构成确定性逻辑矛盾。
+
+    上游的 purpose 判定会出错（实测: import 语句被 CryptoScan 判成
+    RSA/hashing）。usage 的**复核**是 ai/ 模块的职责，scanner 不改值，
+    但确定性的矛盾可以由规则判出 —— 打 needs-usage-review 让 AI 优先处理。
+    只放两条确定无疑的规则，不搞启发式：
+        公钥/后量子公钥算法 x hashing        （公钥算法不做哈希）
+        纯哈希算法   x signing/encryption/key_exchange（哈希不签名不加密）
+    """
+    if not alg_norm:
+        return False
+    if usage == 'hashing' and alg_norm.startswith(_PUBKEY_ALGO_PREFIXES):
+        return True
+    if usage in ('signing', 'encryption', 'key_exchange') \
+            and alg_norm.startswith(_HASH_ALGO_PREFIXES):
+        return True
+    return False
+
+
+# ---------------------------------------------------------------- 路径
+
+def to_relative_path(path, target_root):
+    """上游文件路径 -> 项目内相对路径、正斜杠。
+
+    CryptoScan 输出绝对路径（信息泄露 + 不可移植，必须剥）；
+    cbom-scan 已经给相对路径 —— 相对输入直接规范斜杠即可，
+    千万不能再做一次 relpath（那会相对 cwd 计算，得出错误结果）。
+    """
+    import os
+    if path is None:
+        return ''
+    if not os.path.isabs(str(path)):
+        return str(path).replace('\\', '/')
+    rel = os.path.relpath(os.path.abspath(path), os.path.abspath(target_root))
+    return rel.replace('\\', '/')

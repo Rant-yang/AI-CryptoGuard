@@ -144,8 +144,50 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 ```
 scanner/
 ├── README.md          本文件
-├── scan.py            主入口（待写）
-└── adapters/          每个工具一个转换器
+├── scan.py            主入口（CLI：目标目录 -> findings.json）
+├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
+├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
+└── adapters/          每个工具一个转换器（find_tool / run / to_groups 三同构接口）
     ├── cbom_scan.py
     └── cryptoscan.py
 ```
+
+## 第一版实现说明（2026-09-30，A）
+
+- 调用：`python scanner/scan.py <目标目录> -o out/findings.json`
+  （工具默认在 `<仓库根>/tools/` 下找，可用 `--tools-dir` 或环境变量
+  `ACG_TOOLS_DIR` 覆盖；`--tool` 可单选一个工具）
+- 退出码：0 成功（含零发现；单工具失败降级运行时也返回 0，会打警告）、
+  2 用法/环境错、3 所选工具全部失败
+- 产物：`findings.json`（过 schema 校验的数组）+ 同目录 `_raw/`（两个工具的
+  原始 JSON 留档）+ `*.meta.json`（工具耗时/原始计数/融合统计）
+- 对 crypto-samples 实测：171 处命中 + 110 条 finding → 融合为 91 条
+  （72 个 (file, 算法) 组，因 usage 不同拆分），双源证据 16 条，
+  上游量子风险被我方裁决推翻 14 条（如 MD5 的「Shor 可破」错标）
+
+### 已知局限（如实记录，不装没有）
+
+1. **上游算法粒度不一致时无法合流多源证据**：cbom-scan 把椭圆曲线拆成
+   `Ed25519 / X25519` 和 `ECDSA / EC`，CryptoScan 全归 `ECC`；cbom 的
+   `NIST PQC` 大类对 CryptoScan 的 ML-KEM / ML-DSA 细分同理。
+   别名表只收确定同义（`ECC ↔ ECDSA / EC`、DES 族），**刻意不做粒度
+   强制对齐** —— 那是「聪明的错误」。
+2. 行号吸收只做**精确行号匹配**（两个工具都是逐行扫描，行号对不上就是
+   证据对不上，不做 ±1 模糊）。
+3. cbom-scan 无 severity / confidence：severity 用
+   `risk -> severity` 兜底映射（与 CryptoScan 实际打分高度一致），
+   confidence 无来源时不填（不猜）。
+4. `usage` 透传上游（CryptoScan purpose 优先，其次 cbom prim），
+   确定性矛盾（如 RSA/hashing、MD5/encryption 这类实测上游误判）打
+   `needs-usage-review` 标记，**复核与纠正归 ai/ 模块**。
+5. CryptoScan 的 `algorithm` 为空的 finding（TLS Configuration /
+   Hardcoded Key Size / PQC Library Import）退化为用 `type` 当算法名。
+6. `raw` 里不保留 CryptoScan 的 `sourceContext`（每条 7 行源码上下文，
+   180KB 输出的大头，调试走 `_raw/` 留档）与 description / remediation
+   等 type 级元数据（按定位搬进 `core/rules/`，不在 110 条里重复 110 份）。
+
+### 依赖
+
+- Python 3.8+（标准库即可运行 scan.py 本体）
+- 工具本体按 `setup/README.md` 装到 `tools/`（不入库）
+- `core/schema/validate.py` 校验需要 `pip install jsonschema`
