@@ -206,6 +206,11 @@ scanner/
 6. `raw` 里不保留 CryptoScan 的 `sourceContext`（每条 7 行源码上下文，
    180KB 输出的大头，调试走 `_raw/` 留档）与 description / remediation
    等 type 级元数据（按定位搬进 `core/rules/`，不在 110 条里重复 110 份）。
+7. **`RISK_BY_TYPE` 只覆盖 zh_map 初版的 25 个 type；CryptoScan 实际 type
+   值域 78 种**（冒烟真实仓库实测）。未覆盖的（证书运维类、凭据暴露类、
+   Blowfish/RC4、SHA-3 等 53 种）risk 落 `review`（不猜）。
+   实测值域统计与分档建议见 `out/type_coverage_for_core_rules.json`
+   （线下传给 C，定稿归 core/rules，scanner 随后切换引用）。
 
 ### 依赖
 
