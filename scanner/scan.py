@@ -78,11 +78,11 @@ def main(argv=None):
     parser.add_argument('--timeout', type=int, default=300,
                         help='单个工具的超时秒数（默认 300）')
     parser.add_argument('--no-raw', action='store_true',
-                        help='不保留上游原始 JSON（默认保存在 <输出目录>/_raw/）')
+                        help='不保留上游原始 JSON（默认保存在 <输出文件>_raw/）')
     parser.add_argument('--cbom', action='store_true',
                         help='同时输出融合版 CycloneDX 1.6 CBOM（<输出文件>.cbom.json）')
     parser.add_argument('--no-coverage', action='store_true',
-                        help='不生成覆盖差异报告（默认写 <输出目录>/coverage_diff.json）')
+                        help='不生成覆盖差异报告（默认写 <输出文件>.coverage_diff.json）')
     args = parser.parse_args(argv)
 
     target = os.path.abspath(args.target)
@@ -93,7 +93,7 @@ def main(argv=None):
     out_path = os.path.abspath(args.output)
     out_dir = os.path.dirname(out_path)
     os.makedirs(out_dir, exist_ok=True)
-    raw_dir = None if args.no_raw else os.path.join(out_dir, '_raw')
+    raw_dir = None if args.no_raw else os.path.splitext(out_path)[0] + '_raw'
     if raw_dir:
         os.makedirs(raw_dir, exist_ok=True)
 
@@ -163,10 +163,10 @@ def main(argv=None):
     }
 
     # ---- 覆盖差异审计（两家都成功时才有意义）
-    cov = None
+    cov, cov_path = None, None
     if not args.no_coverage and len(groups_by_tool) >= 2:
         cov = coverage_diff(groups_by_tool)
-        cov_path = os.path.join(out_dir, 'coverage_diff.json')
+        cov_path = os.path.splitext(out_path)[0] + '.coverage_diff.json'
         with open(cov_path, 'w', encoding='utf-8') as fh:
             json.dump(cov, fh, ensure_ascii=False, indent=1)
         meta['coverage'] = cov['summary']
@@ -183,7 +183,8 @@ def main(argv=None):
     with open(meta_path, 'w', encoding='utf-8') as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
 
-    _print_summary(findings, meta, out_path, meta_path, cov, cbom_path)
+    _print_summary(findings, meta, out_path, meta_path, cov, cbom_path,
+                   cov_path)
     return 0
 
 
@@ -194,7 +195,8 @@ def _count_by(findings, field):
     return dict(sorted(counts.items()))
 
 
-def _print_summary(findings, meta, out_path, meta_path, cov=None, cbom_path=None):
+def _print_summary(findings, meta, out_path, meta_path, cov=None, cbom_path=None,
+                   cov_path=None):
     c = meta['counts']
     _print_safe('')
     _print_safe('====== 扫描完成 ======')
@@ -209,8 +211,7 @@ def _print_summary(findings, meta, out_path, meta_path, cov=None, cbom_path=None
         _print_safe('覆盖差异      : 双方同报 %d 行 | 仅 cbom-scan %d 行 | 仅 cryptoscan %d 行'
                     % (s.get('both', 0),
                        s.get('cbom-scan_only', 0), s.get('cryptoscan_only', 0)))
-        _print_safe('差异明细      : %s'
-                    % os.path.join(os.path.dirname(out_path), 'coverage_diff.json'))
+        _print_safe('差异明细      : %s' % (cov_path or ''))
     if cbom_path:
         _print_safe('CBOM 输出     : %s' % cbom_path)
     if meta.get('failures'):

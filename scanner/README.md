@@ -162,10 +162,12 @@ scanner/
   `ACG_TOOLS_DIR` 覆盖；`--tool` 可单选一个工具）
 - 退出码：0 成功（含零发现；单工具失败降级运行时也返回 0，会打警告）、
   2 用法/环境错、3 所选工具全部失败
-- 产物：`findings.json`（过 schema 校验的数组）+ 同目录 `_raw/`（两个工具的
-  原始 JSON 留档）+ `*.meta.json`（工具耗时/原始计数/融合统计/覆盖差异摘要）
-  + `coverage_diff.json`（覆盖差异明细）+ `--cbom` 时另有 `*.cbom.json`
-  （融合版 CycloneDX 1.6，serialNumber 确定性可复现）
+- 产物：`findings.json`（过 schema 校验的数组）+ 同名 `findings_raw/`
+  （两个工具的原始 JSON 留档）+ `findings.meta.json`（工具耗时/原始计数/
+  融合统计/覆盖差异摘要）+ `findings.coverage_diff.json`（覆盖差异明细）
+  + `--cbom` 时另有 `findings.cbom.json`（融合版 CycloneDX 1.6，
+  serialNumber 确定性可复现）。**所有产物文件名都跟随 `-o` 的输出名** ——
+  同目录多次扫描不同目标不会互相覆盖
 - 覆盖差异审计（coverage.py）：按**行级**对比两家原始命中（不受算法粒度影响，
   是漏报复核的主要线索）+ 算法级覆盖对比（受粒度干扰，仅参考）。
   crypto-samples 实测：双方同报 67 行、仅 cbom-scan 94 行、仅 CryptoScan 30 行
