@@ -147,6 +147,8 @@ scanner/
 ├── scan.py            主入口（CLI：目标目录 -> findings.json）
 ├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
 ├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
+├── coverage.py        覆盖差异审计（一家报一家没报 -> 漏报复核线索）
+├── cbom_report.py     融合版 CycloneDX 1.6 CBOM 渲染（--cbom）
 └── adapters/          每个工具一个转换器（find_tool / run / to_groups 三同构接口）
     ├── cbom_scan.py
     └── cryptoscan.py
@@ -160,7 +162,12 @@ scanner/
 - 退出码：0 成功（含零发现；单工具失败降级运行时也返回 0，会打警告）、
   2 用法/环境错、3 所选工具全部失败
 - 产物：`findings.json`（过 schema 校验的数组）+ 同目录 `_raw/`（两个工具的
-  原始 JSON 留档）+ `*.meta.json`（工具耗时/原始计数/融合统计）
+  原始 JSON 留档）+ `*.meta.json`（工具耗时/原始计数/融合统计/覆盖差异摘要）
+  + `coverage_diff.json`（覆盖差异明细）+ `--cbom` 时另有 `*.cbom.json`
+  （融合版 CycloneDX 1.6，serialNumber 确定性可复现）
+- 覆盖差异审计（coverage.py）：按**行级**对比两家原始命中（不受算法粒度影响，
+  是漏报复核的主要线索）+ 算法级覆盖对比（受粒度干扰，仅参考）。
+  crypto-samples 实测：双方同报 67 行、仅 cbom-scan 94 行、仅 CryptoScan 30 行
 - 对 crypto-samples 实测：171 处命中 + 110 条 finding → 融合为 91 条
   （72 个 (file, 算法) 组，因 usage 不同拆分），双源证据 16 条，
   上游量子风险被我方裁决推翻 14 条（如 MD5 的「Shor 可破」错标）

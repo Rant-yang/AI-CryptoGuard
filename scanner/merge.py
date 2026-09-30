@@ -54,9 +54,14 @@ TAG_UPSTREAM_RISK_CORRECTED = 'upstream-risk-corrected'
 
 
 def merge(all_groups):
-    """融合全部 ToolGroup，返回统一 Finding 列表（已排序，输出可复现）。"""
+    """融合全部 ToolGroup，返回统一 Finding 列表（已排序，输出可复现）。
+
+    行号吸收会重排组内行号，因此这里先浅拷贝每个组 ——
+    **不污染调用方手里的原始数据**（coverage 差异审计需要吸收前的原始命中）。
+    """
     by_key = {}
     for g in all_groups:
+        g = dict(g)               # 浅拷贝；lines 后续都是整列替换，不会牵连原组
         by_key.setdefault((g['file'], g['alg_norm'], g['usage']), []).append(g)
 
     _absorb_unknown_lines(by_key)

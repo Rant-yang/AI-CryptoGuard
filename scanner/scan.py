@@ -31,6 +31,8 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from scanner.adapters import cbom_scan, cryptoscan   # noqa: E402
+from scanner.cbom_report import render_cbom          # noqa: E402
+from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
 from scanner.merge import TAG_UPSTREAM_RISK_CORRECTED  # noqa: E402
 
@@ -77,6 +79,10 @@ def main(argv=None):
                         help='单个工具的超时秒数（默认 300）')
     parser.add_argument('--no-raw', action='store_true',
                         help='不保留上游原始 JSON（默认保存在 <输出目录>/_raw/）')
+    parser.add_argument('--cbom', action='store_true',
+                        help='同时输出融合版 CycloneDX 1.6 CBOM（<输出文件>.cbom.json）')
+    parser.add_argument('--no-coverage', action='store_true',
+                        help='不生成覆盖差异报告（默认写 <输出目录>/coverage_diff.json）')
     args = parser.parse_args(argv)
 
     target = os.path.abspath(args.target)
@@ -102,6 +108,7 @@ def main(argv=None):
                      None if raw_dir is None else os.path.join(raw_dir, 'cryptoscan.json')))
 
     all_groups = []
+    groups_by_tool = {}     # 吸收前的原始分组 —— 覆盖差异审计用
     meta_tools = {}
     failures = []
     t_all = time.time()
@@ -116,6 +123,7 @@ def main(argv=None):
             continue
         secs = round(time.time() - t0, 2)
         all_groups.extend(groups)
+        groups_by_tool[name] = groups
         meta_tools[name] = {
             'ok': True,
             'seconds': secs,
@@ -153,12 +161,29 @@ def main(argv=None):
         },
         'seconds_total': round(time.time() - t_all, 2),
     }
+
+    # ---- 覆盖差异审计（两家都成功时才有意义）
+    cov = None
+    if not args.no_coverage and len(groups_by_tool) >= 2:
+        cov = coverage_diff(groups_by_tool)
+        cov_path = os.path.join(out_dir, 'coverage_diff.json')
+        with open(cov_path, 'w', encoding='utf-8') as fh:
+            json.dump(cov, fh, ensure_ascii=False, indent=1)
+        meta['coverage'] = cov['summary']
+
+    # ---- 融合版 CBOM（可选）
+    cbom_path = None
+    if args.cbom:
+        cbom_path = os.path.splitext(out_path)[0] + '.cbom.json'
+        with open(cbom_path, 'w', encoding='utf-8') as fh:
+            json.dump(render_cbom(findings, target), fh,
+                      ensure_ascii=False, indent=1)
     meta_path = os.path.join(out_dir, os.path.splitext(os.path.basename(out_path))[0]
                              + '.meta.json')
     with open(meta_path, 'w', encoding='utf-8') as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
 
-    _print_summary(findings, meta, out_path, meta_path)
+    _print_summary(findings, meta, out_path, meta_path, cov, cbom_path)
     return 0
 
 
@@ -169,7 +194,7 @@ def _count_by(findings, field):
     return dict(sorted(counts.items()))
 
 
-def _print_summary(findings, meta, out_path, meta_path):
+def _print_summary(findings, meta, out_path, meta_path, cov=None, cbom_path=None):
     c = meta['counts']
     _print_safe('')
     _print_safe('====== 扫描完成 ======')
@@ -179,6 +204,15 @@ def _print_summary(findings, meta, out_path, meta_path):
     _print_safe('按用途        : %s' % json.dumps(c['by_usage'], ensure_ascii=True))
     _print_safe('多源证据      : %d 条（同一问题挂了多个工具）' % c['multi_evidence'])
     _print_safe('风险已纠正    : %d 条（上游量子风险判定被我方规则库推翻）' % c['risk_corrected'])
+    if cov is not None:
+        s = cov['summary']
+        _print_safe('覆盖差异      : 双方同报 %d 行 | 仅 cbom-scan %d 行 | 仅 cryptoscan %d 行'
+                    % (s.get('both', 0),
+                       s.get('cbom-scan_only', 0), s.get('cryptoscan_only', 0)))
+        _print_safe('差异明细      : %s'
+                    % os.path.join(os.path.dirname(out_path), 'coverage_diff.json'))
+    if cbom_path:
+        _print_safe('CBOM 输出     : %s' % cbom_path)
     if meta.get('failures'):
         _print_safe('失败工具      : %s' % ', '.join(meta['failures']))
     _print_safe('输出          : %s' % out_path)
