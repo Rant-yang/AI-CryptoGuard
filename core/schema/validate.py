@@ -9,6 +9,7 @@
 依赖 jsonschema（没装会给出安装提示）:
     pip install jsonschema
 """
+import collections
 import json
 import os
 import sys
@@ -63,6 +64,17 @@ def main():
 
     print()
     print('共 %d 条, 合规 %d 条, 不合规 %d 条' % (len(findings), len(findings) - bad, bad))
+
+    # remediation.source 分布 —— 这是 ai/ 层的进度条。
+    # source=='none' 即「尚未增强」（scanner 层产出的占位符，见 schema）。
+    # 只报数，不判错：未增强不是错误状态。
+    src = collections.Counter(
+        (f.get('remediation') or {}).get('source', '(缺失)') for f in findings)
+    known = [k for k in ('rule-base', 'ai', 'none') if k in src]
+    rest = sorted(k for k in src if k not in ('rule-base', 'ai', 'none'))
+    print('remediation.source: ' + '  '.join(
+        ['%s %d' % (k, src[k]) for k in known + rest]))
+
     print('schema: %s' % SCHEMA_PATH)
     return 1 if bad else 0
 

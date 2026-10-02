@@ -14,7 +14,8 @@
     "algorithm",
     "risk",
     "severity",
-    "evidence"
+    "evidence",
+    "remediation"
   ],
 
   "properties": {
@@ -124,8 +125,8 @@
     "remediation": {
       "type": "object",
       "additionalProperties": false,
-      "description": "修复/迁移建议。**确定性密码事实由规则库回答，不由大模型生成**（方案 §8）。",
-      "required": ["decided"],
+      "description": "修复/迁移建议。**本字段必填、任何阶段都不许省略。** 确定性密码事实由规则库回答，不由大模型生成（方案 §8）。尚未增强时填占位符（见 README「remediation 必填」一节），不要留空 —— 留空就无法区分「还没做」和「忘了做」。",
+      "required": ["decided", "source"],
       "properties": {
         "decided": {
           "type": "boolean",
@@ -137,7 +138,7 @@
         },
         "source": {
           "enum": ["rule-base", "ai", "none"],
-          "description": "这条建议从哪来。密码学确定事实必须来自 rule-base；来自 ai 的要打个问号。"
+          "description": "这条建议从哪来。密码学确定事实必须来自 rule-base；来自 ai 的要打个问号。**none = 尚未增强的占位符**（scanner 层产出后、ai 层接手前的状态），统计 source==none 的条数就是 AI 层的进度。"
         },
         "references": {
           "type": "array",

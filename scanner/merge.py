@@ -137,6 +137,8 @@ def merge(all_groups):
             'risk': risk,
             'severity': severity,
             'evidence': evidences,
+            # 必填（2026-10-02 起）。本层只给占位符，理由见 _placeholder_remediation。
+            'remediation': _placeholder_remediation(),
         }
         if confidence is not None:
             finding['confidence'] = confidence
@@ -191,3 +193,22 @@ def _finding_id(file, alg, usage):
     """schema 规定: sha1(file|algorithm_normalized|usage)[:12]，可复现。"""
     basis = '%s|%s|%s' % (file, alg, usage)
     return hashlib.sha1(basis.encode('utf-8')).hexdigest()[:12]
+
+
+def _placeholder_remediation():
+    """尚未增强时的占位 remediation。
+
+    schema 自 2026-10-02 起把 remediation 列为**必填**（见 core/schema/README.md
+    的「remediation 必填」一节，由 C 收紧）。scanner 层因此必须给出这个字段，
+    但**刻意不给具体迁移建议**：本层的 usage 尚未经 ai/ 复核（22 条还挂着
+    needs-usage-review），据此路由会得到「建立在错误用途上的正确算法」——
+    正是方案 §9.1 要避免的。所以如实填占位符，source='none' 让下游能数出
+    「还有多少条没增强」。
+
+    每次返回新对象，避免下游就地修改时互相污染。
+    """
+    return {
+        'decided': False,
+        'action': '尚未增强：用途需先经 ai/ 复核，再由 core/rules/pqc_routing.py 按用途分派算法。',
+        'source': 'none',
+    }
