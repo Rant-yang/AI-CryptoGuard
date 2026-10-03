@@ -38,6 +38,7 @@
     "explanation": "RSA 在公钥密码体系中承担两种完全不同的职责。仅从调用点无法区分这里承担的是签名还是加密/密钥交换 —— 两个工具都没能给出确定用途（CryptoScan 的 purpose 为 general，cbom-scan 的 prim 为 pke，二者均不足以判定）。",
     "remediation": {
       "decided": false,
+      "reason": "usage-undetermined",
       "action": "用途未能判定，暂不给出具体算法。需先确认该 RSA 承担的是签名还是加密/密钥交换：签名 → ML-DSA (FIPS 204) 或 SLH-DSA (FIPS 205)；加密/密钥交换 → ML-KEM (FIPS 203)。两者迁移路线不同，不能套用固定映射。",
       "source": "rule-base",
       "references": ["FIPS 203", "FIPS 204", "FIPS 205", "NIST SP 800-131A Rev 2"]
@@ -84,6 +85,7 @@
     "explanation": "使用 MD5 做哈希。MD5 已被实际碰撞攻击攻破，不具备抗碰撞性。注意：上游 CryptoScan 将其标为「量子脆弱（Shor 算法可破）」，这是错误的 —— MD5 是哈希原语，Shor 算法对它无效，它是被经典攻击攻破的。本条 risk 已按规则库纠正为 broken。",
     "remediation": {
       "decided": true,
+      "reason": "decided",
       "action": "完整性校验改用 SHA-256 或 SHA-3；认证场景改用 HMAC。",
       "source": "rule-base",
       "references": ["NIST SP 800-131A Rev 2"]
