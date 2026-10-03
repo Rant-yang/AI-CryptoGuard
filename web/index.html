@@ -6,196 +6,290 @@
 <title>AI-CryptoGuard —— 密码安全审计</title>
 <!--
   单文件查看器。零依赖、零构建、可离线 —— 演示现场不一定有网，
-  所以这里不用任何 CDN，也不引任何框架。
+  所以这里不用任何 CDN（也不引 web font，字体全部取自系统）。
 
   它同时是**数据契约的验收工具**：契约里要求的字段在这里必须能渲染出来，
   渲染不出来的地方就是契约的缺口。
 
   特别地，schema README 规定「前端与报告必须把 decided:false 显示出来，
-  不许静默填一个默认算法」—— 本页右侧的「结论」区块就是在落实这条。
+  不许静默填一个默认算法」—— 右侧「迁移 / 加固结论」区块就是在落实这条。
   四种「给不出结论」的原因分开显示，不糊成一句「需人工确认」。
+
+  ── 视觉口径 ──
+  浅色：答辩要投影，暗色 UI 在亮房间里暗部被压缩、发灰。
+  等宽体是默认嗓音（算法名/路径/行号/计数都是标识符），中文散文才用无衬线。
+  风险色按**成因**分，不按轻重：shor 与 broken 都是红，靠明度分开，
+  且每个都带中文标签 —— 颜色永远不是唯一通道（色觉障碍/灰度打印下仍可读）。
 -->
 <style>
   :root{
-    --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --line2:#eef0f3;
-    --tx:#1c2024; --tx2:#5b6570; --tx3:#8b959f;
-    --shor:#c0392b; --broken:#8e44ad; --grover:#d97706;
-    --review:#2563eb; --safe:#15803d;
-    --ok:#15803d; --warn:#d97706; --info:#2563eb; --mute:#6b7280;
-    --amber-bg:#fef3c7; --amber-tx:#92400e;
+    /* 纸面：规格文档的冷白，不是米色 */
+    --paper:#f4f6f8; --surface:#fff;
+    --rule:#dde2e8; --rule2:#edf0f3;
+    --ink:#131a22; --ink2:#55606d; --ink3:#8a94a1;
+
+    /* 风险 = 成因。亮/暗区分同为红色的 shor 与 broken。 */
+    /* 都按「配白字 ≥4.5:1」选过 —— 条上要放白字 */
+    --shor:#c93a2b; --broken:#7e2f24; --broken2:#66251b; --grover:#a0670a;
+    --review:#5b6876; --safe:#2c7a55;
+
+    /* 结论状态 */
+    --ok:#2c7a55; --warn:#b57500; --info:#3d5a80; --mute:#6b7683;
+
+    --mono:Consolas,"Cascadia Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC",system-ui,-apple-system,sans-serif;
   }
+
   *{box-sizing:border-box}
   html,body{height:100%}
   body{
-    margin:0; background:var(--bg); color:var(--tx);
-    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    margin:0; background:var(--paper); color:var(--ink);
+    font:14px/1.65 var(--sans);
+    -webkit-font-smoothing:antialiased;
   }
-  code,.mono{font-family:ui-monospace,Consolas,"Cascadia Mono",monospace}
+  .m{font-family:var(--mono)}
+  .num{font-variant-numeric:tabular-nums}
 
-  /* ---------- 顶栏 ---------- */
+  /* ============================ 报头 ============================ */
   header{
-    background:var(--panel); border-bottom:1px solid var(--line);
-    padding:14px 20px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+    background:var(--surface); border-bottom:1px solid var(--rule);
+    padding:16px 22px 14px;
   }
-  header h1{font-size:17px; margin:0; letter-spacing:.2px}
-  header .sub{color:var(--tx2); font-size:13px}
+  .hrow{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
+  header h1{
+    margin:0; font-family:var(--mono); font-size:19px; font-weight:700;
+    letter-spacing:-.3px;
+  }
+  header .role{font-size:13px; color:var(--ink2)}
   header .spacer{flex:1}
-
-  /* ---------- 概览 ---------- */
-  .stats{
-    display:flex; gap:10px; padding:14px 20px; flex-wrap:wrap;
-    background:var(--panel); border-bottom:1px solid var(--line);
+  .hmeta{
+    margin-top:6px; font-family:var(--mono); font-size:12px; color:var(--ink3);
+    display:flex; gap:0; flex-wrap:wrap;
   }
-  .card{
-    background:var(--bg); border:1px solid var(--line); border-radius:8px;
-    padding:10px 14px; min-width:132px;
-  }
-  .card .k{font-size:11px; color:var(--tx3); letter-spacing:.4px; text-transform:uppercase}
-  .card .v{font-size:22px; font-weight:650; line-height:1.25; margin-top:2px}
-  .card .d{font-size:11px; color:var(--tx2)}
-  .bars{display:flex; flex-direction:column; gap:4px; margin-top:4px}
-  .bar{display:flex; align-items:center; gap:7px; font-size:12px}
-  .bar .nm{width:64px; color:var(--tx2); text-align:right}
-  .bar .tr{flex:1; height:7px; background:var(--line2); border-radius:4px; overflow:hidden; min-width:70px}
-  .bar .fl{height:100%; border-radius:4px}
-  .bar .ct{width:26px; color:var(--tx3); font-variant-numeric:tabular-nums}
+  .hmeta b{font-weight:700; color:var(--ink2)}
+  .hmeta span+span::before{content:"/"; margin:0 9px; color:var(--rule)}
 
-  /* ---------- 筛选 ---------- */
+  /* ============================ 威胁构成（hero）============================ */
+  .hero{background:var(--surface); border-bottom:1px solid var(--rule); padding:20px 22px 18px}
+  .hero-top{display:flex; align-items:baseline; gap:10px; margin-bottom:12px}
+  .hero-top h2{
+    margin:0; font-family:var(--mono); font-size:12px; font-weight:600;
+    color:var(--ink3); letter-spacing:.2px;
+  }
+  .hero-top .absent{
+    margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--ink3);
+  }
+  .hero-top .tot{margin-left:16px; font-family:var(--mono); font-size:12px; color:var(--ink3)}
+  .hero-top .tot b{font-size:15px; color:var(--ink)}
+
+  /* 条与下方的机制行用**同一套 flex 比例 + 同一个 gap**，
+     所以文字永远落在它自己那一段下面。改一处就得改两处。 */
+  .strip{display:flex; gap:2px; height:58px; margin-bottom:9px}
+  .seg{
+    display:flex; flex-direction:column; justify-content:center; gap:1px;
+    min-width:0; padding:0 14px; border-radius:2px; color:#fff; cursor:pointer;
+    transform-origin:left center; animation:seg-in .45s cubic-bezier(.2,.7,.3,1) both;
+  }
+  .seg .n{font-family:var(--mono); font-size:21px; font-weight:700; line-height:1.15}
+  .seg .cn{
+    font-size:12.5px; font-weight:600; line-height:1.2;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .seg:hover{filter:brightness(1.09)}
+  .seg:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+  .seg.shor{background:var(--shor)}
+  /* 斜纹：让「经典攻击已破」在灰度打印和色觉障碍下也和「量子直接破解」分得开。
+     两者都是红，靠明度 + 纹理 + 文字三重区分。 */
+  .seg.broken{
+    background:repeating-linear-gradient(45deg,
+      var(--broken) 0 5px, var(--broken2) 5px 10px);
+  }
+  .seg.grover{background:var(--grover)}
+  .seg.review{background:var(--review)}
+  .seg.safe{background:var(--safe)}
+  @keyframes seg-in{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+
+  .mech{display:flex; gap:2px}
+  .mcol{
+    min-width:0; padding:0 14px; font-family:var(--mono); font-size:11.5px;
+    color:var(--ink3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  /* ============================ 统计横条 ============================ */
+  .figs{
+    background:var(--surface); border-bottom:1px solid var(--rule);
+    padding:11px 22px; display:flex; gap:26px; flex-wrap:wrap; align-items:baseline;
+    font-family:var(--mono); font-size:12px; color:var(--ink3);
+  }
+  .fig b{font-size:15px; color:var(--ink); font-weight:700; margin-right:5px}
+  .fig.good b{color:var(--safe)}
+
+  /* ============================ 筛选 ============================ */
   .filters{
-    padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line);
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+    padding:11px 22px; background:var(--surface); border-bottom:1px solid var(--rule);
+    display:flex; gap:16px; align-items:center; flex-wrap:wrap;
   }
   .filters input[type=search]{
-    flex:0 1 260px; padding:6px 10px; border:1px solid var(--line);
-    border-radius:6px; font:inherit; background:var(--bg); color:var(--tx);
+    flex:0 1 230px; padding:6px 9px; border:1px solid var(--rule); border-radius:3px;
+    font:13px var(--mono); background:var(--paper); color:var(--ink);
   }
+  .filters input[type=search]:focus{outline:2px solid var(--info); outline-offset:-1px; background:var(--surface)}
+  .fgroup{display:flex; gap:5px; align-items:center}
+  .fgroup>.lbl{font-family:var(--mono); font-size:11.5px; color:var(--ink3); margin-right:3px}
   .chip{
-    border:1px solid var(--line); background:var(--bg); color:var(--tx2);
-    border-radius:999px; padding:3px 11px; font-size:12px; cursor:pointer;
-    user-select:none; transition:.12s;
+    border:1px solid var(--rule); background:var(--paper); color:var(--ink2);
+    border-radius:3px; padding:3px 9px; font:12px var(--sans); cursor:pointer;
+    user-select:none;
   }
-  .chip:hover{border-color:var(--tx3)}
-  .chip.on{background:var(--tx); color:#fff; border-color:var(--tx)}
-  .chip .n{opacity:.6; margin-left:4px}
-  .fgroup{display:flex; gap:6px; align-items:center}
-  .fgroup>.lbl{font-size:11px; color:var(--tx3); margin-right:2px}
+  .chip:hover{border-color:var(--ink3)}
+  .chip:focus-visible{outline:2px solid var(--info); outline-offset:1px}
+  .chip.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+  .chip .n{font-family:var(--mono); opacity:.55; margin-left:5px}
+  .chip.on .n{opacity:.7}
+  .clearbtn{background:none; border:0; color:var(--ink3); font:12px var(--sans);
+            cursor:pointer; padding:3px 2px; text-decoration:underline}
+  .clearbtn:hover{color:var(--ink)}
 
-  /* ---------- 主体 ---------- */
-  main{display:flex; height:calc(100vh - 218px); min-height:340px}
-  .list{flex:1 1 52%; overflow:auto; border-right:1px solid var(--line); background:var(--panel)}
-  .detail{flex:1 1 48%; overflow:auto; background:var(--bg)}
-  @media (max-width:900px){ main{flex-direction:column; height:auto} .list,.detail{flex:none; max-height:none} }
+  /* ============================ 主体 ============================ */
+  main{display:flex; height:calc(100vh - 300px); min-height:360px}
+  .list{flex:1 1 54%; overflow:auto; border-right:1px solid var(--rule); background:var(--surface)}
+  .detail{flex:1 1 46%; overflow:auto; background:var(--paper)}
+  @media (max-width:1000px){ main{flex-direction:column; height:auto} .list,.detail{flex:none} }
 
   table{width:100%; border-collapse:collapse}
   thead th{
-    position:sticky; top:0; z-index:1; background:var(--panel);
-    border-bottom:1px solid var(--line); padding:8px 10px; text-align:left;
-    font-size:11px; color:var(--tx3); font-weight:600; letter-spacing:.3px;
-    text-transform:uppercase; cursor:pointer; white-space:nowrap;
+    position:sticky; top:0; z-index:1; background:var(--surface);
+    border-bottom:1px solid var(--ink3); padding:7px 9px; text-align:left;
+    font-family:var(--mono); font-size:11.5px; color:var(--ink3); font-weight:600;
+    cursor:pointer; white-space:nowrap;
   }
-  thead th:hover{color:var(--tx)}
-  tbody tr{border-bottom:1px solid var(--line2); cursor:pointer}
-  tbody tr:hover{background:var(--bg)}
-  tbody tr.sel{background:#eef4ff}
-  tbody td{padding:7px 10px; vertical-align:middle}
-  .alg{font-weight:600}
-  .loc{color:var(--tx3); font-size:12px}
-  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:1px}
+  thead th:hover{color:var(--ink)}
+  tbody tr{border-bottom:1px solid var(--rule2); cursor:pointer}
+  tbody tr:hover{background:var(--paper)}
+  tbody tr.sel{background:#eaf1fb; box-shadow:inset 3px 0 0 var(--info)}
+  tbody td{padding:6px 9px; vertical-align:middle; font-size:13px}
+  .alg{font-family:var(--mono); font-weight:600; font-size:12.5px}
+  .loc{font-family:var(--mono); font-size:11.5px; color:var(--ink3)}
 
-  /* ---------- 徽章 ---------- */
-  .badge{
-    display:inline-block; border-radius:4px; padding:1px 7px; font-size:11px;
-    font-weight:600; white-space:nowrap; border:1px solid transparent;
+  /* ============================ 标记 ============================ */
+  /* 风险标记：左侧色块 + 文字。色块用明度区分同为红色的两种成因。 */
+  .rk{display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font-size:12px}
+  .rk i{width:3px; height:14px; border-radius:1px; flex:none; display:block}
+  .rk.shor   i{background:var(--shor)}   .rk.shor   {color:var(--shor)}
+  .rk.broken i{background:var(--broken)} .rk.broken {color:var(--broken); opacity:.92}
+  .rk.grover i{background:var(--grover)} .rk.grover {color:var(--grover)}
+  .rk.review i{background:var(--review)} .rk.review {color:var(--review)}
+  .rk.safe   i{background:var(--safe)}   .rk.safe   {color:var(--safe)}
+
+  .tag{
+    display:inline-block; border:1px solid var(--rule); border-radius:3px;
+    padding:1px 6px; font-size:11.5px; color:var(--ink2); white-space:nowrap;
+    background:var(--paper);
   }
-  .b-shor{background:#fdecea; color:var(--shor); border-color:#f5c6c0}
-  .b-broken{background:#f5ecfa; color:var(--broken); border-color:#ddc7ea}
-  .b-grover{background:#fef3e2; color:var(--grover); border-color:#f3d9ae}
-  .b-review{background:#e8f0fe; color:var(--review); border-color:#c3d6f7}
-  .b-safe{background:#e7f6ec; color:var(--safe); border-color:#bfe4cb}
-  .b-sev-critical{background:#fdecea; color:#a5281b}
-  .b-sev-high{background:#fef0e7; color:#b45309}
-  .b-sev-medium{background:#fef7e0; color:#8a6100}
-  .b-sev-low{background:#eef2f6; color:#4b5563}
-  .b-sev-info{background:#f2f4f6; color:#6b7280}
-  .b-usage{background:#eef2f6; color:#374151; border-color:#dde3e9}
-  .b-ok{background:#e7f6ec; color:var(--ok); border-color:#bfe4cb}
-  .b-undet{background:#e8f0fe; color:var(--info); border-color:#c3d6f7}
-  .b-mute{background:#f2f4f6; color:var(--mute); border-color:#e0e4e8}
-  .b-warn{background:var(--amber-bg); color:var(--amber-tx); border-color:#fcd9a0}
+  .tag.solid{background:var(--ink); color:#fff; border-color:var(--ink)}
+  .tag.ok{color:var(--ok); border-color:#bcdcc9; background:#eef7f1}
+  .tag.undet{color:var(--info); border-color:#c3d2e4; background:#eef3f8}
+  .tag.warn{color:var(--warn); border-color:#e6d3a8; background:#fdf6e7}
+  .tag.mute{color:var(--mute)}
+  .sv{font-family:var(--mono); font-size:11px; padding:1px 5px; border-radius:3px;
+      white-space:nowrap; letter-spacing:.2px}
+  .sv.critical{background:#fbe9e7; color:#a3271a; font-weight:700}
+  .sv.high{background:#fdeee2; color:#9a4a08}
+  .sv.medium{background:#fbf3dc; color:#7a5a06}
+  .sv.low{background:#eef1f5; color:#4d5765}
+  .sv.info{background:#f3f5f7; color:#78828e}
 
-  /* ---------- 详情 ---------- */
-  .dwrap{padding:18px 20px 40px}
-  .dhead h2{margin:0 0 4px; font-size:19px}
-  .dhead .loc{font-size:13px}
-  .drow{display:flex; gap:7px; flex-wrap:wrap; margin:10px 0 0}
-  section.blk{margin-top:20px}
+  /* ============================ 详情 ============================ */
+  .dwrap{padding:20px 22px 48px}
+  .dhead h2{margin:0 0 3px; font-family:var(--mono); font-size:20px; letter-spacing:-.3px}
+  .dhead .path{font-family:var(--mono); font-size:12px; color:var(--ink3); word-break:break-all}
+  .drow{display:flex; gap:6px; flex-wrap:wrap; margin-top:11px; align-items:center}
+
+  section.blk{margin-top:22px}
   section.blk>h3{
-    margin:0 0 8px; font-size:11px; color:var(--tx3); letter-spacing:.5px;
-    text-transform:uppercase; font-weight:650;
+    margin:0 0 9px; padding-bottom:5px; border-bottom:1px solid var(--rule);
+    font-family:var(--mono); font-size:11.5px; font-weight:600; color:var(--ink3);
   }
-  .box{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px}
-  .verdict{border-left:4px solid var(--mute)}
+  .box{background:var(--surface); border:1px solid var(--rule); border-radius:3px; padding:12px 14px}
+
+  .verdict{border-left:3px solid var(--mute); border-radius:0 3px 3px 0}
   .verdict.v-ok{border-left-color:var(--ok)}
   .verdict.v-undet{border-left-color:var(--info)}
   .verdict.v-warn{border-left-color:var(--warn)}
-  .verdict .txt{margin-top:8px}
-  .refs{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px}
-  .ref{background:var(--bg); border:1px solid var(--line); border-radius:4px;
-       padding:1px 7px; font-size:11px; color:var(--tx2)}
-  .ev{margin-top:8px}
-  .ev .top{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-  .ev .tool{font-weight:600}
-  .ev .ln{color:var(--tx3); font-size:12px}
-  .shapes{display:flex; gap:5px; flex-wrap:wrap; margin-top:7px}
-  .shape{
-    background:#f3f6fa; border:1px solid #dfe6ee; border-radius:4px;
-    padding:1px 7px; font-size:11.5px; color:#334155;
+  .verdict .why{font-size:12.5px; color:var(--ink2); margin-top:9px; line-height:1.6}
+  .verdict .txt{margin-top:9px; font-size:14px}
+  .refs{display:flex; gap:5px; flex-wrap:wrap; margin-top:11px}
+  .ref{
+    font-family:var(--mono); font-size:11px; color:var(--ink2);
+    background:var(--paper); border:1px solid var(--rule); border-radius:3px; padding:1px 6px;
   }
+
+  .ev{margin-top:9px}
+  .ev .top{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .ev .tool{font-family:var(--mono); font-weight:600; font-size:12.5px}
+  .ev .ln{font-family:var(--mono); font-size:11.5px; color:var(--ink3)}
+  .shapes{display:flex; gap:5px; flex-wrap:wrap; margin-top:8px}
+  .shape{
+    font-family:var(--mono); font-size:11.5px; color:var(--ink2);
+    background:var(--paper); border:1px solid var(--rule); border-radius:3px; padding:1px 6px;
+  }
+  .shape.hit{font-weight:600; color:var(--ink); background:#eef3f8; border-color:#ccd9e6}
   .ctx{
-    margin-top:7px; background:#2d333b; color:#d7dde5; border-radius:6px;
-    padding:7px 10px; font-size:12px; overflow-x:auto; white-space:pre;
+    margin-top:8px; background:#1b2028; color:#cfd7e0; border-radius:3px;
+    padding:8px 11px; font:12px/1.55 var(--mono); overflow-x:auto; white-space:pre;
   }
   pre.raw{
-    margin:7px 0 0; background:var(--bg); border:1px solid var(--line2);
-    border-radius:6px; padding:8px 10px; font-size:11.5px; color:var(--tx2);
-    overflow-x:auto; max-height:180px;
+    margin:8px 0 0; background:var(--paper); border:1px solid var(--rule2); border-radius:3px;
+    padding:9px 11px; font:11.5px/1.55 var(--mono); color:var(--ink2);
+    overflow-x:auto; max-height:190px;
   }
-  .kv{display:flex; gap:8px; font-size:12.5px; padding:2px 0}
-  .kv .k{color:var(--tx3); min-width:74px}
-  .empty{color:var(--tx3); padding:40px 20px; text-align:center}
-  .fid{font-size:11px; color:var(--tx3); margin-top:16px}
+  .empty{color:var(--ink3); padding:44px 22px; text-align:center; font-size:13px}
+  .fid{
+    font-family:var(--mono); font-size:11px; color:var(--ink3);
+    margin-top:24px; padding-top:10px; border-top:1px solid var(--rule);
+  }
 
-  /* ---------- 载入 ---------- */
+  /* ============================ 拖入数据 ============================ */
   #drop{
-    position:fixed; inset:0; background:rgba(246,247,249,.97); display:none;
-    align-items:center; justify-content:center; z-index:9;
+    position:fixed; inset:0; background:rgba(244,246,248,.97); display:none;
+    align-items:center; justify-content:center; z-index:9; padding:20px;
   }
   #drop.on{display:flex}
   #drop .inner{
-    max-width:520px; text-align:center; padding:36px; background:var(--panel);
-    border:2px dashed var(--line); border-radius:12px;
+    max-width:540px; padding:32px 34px; background:var(--surface);
+    border:1px solid var(--rule); border-radius:3px;
   }
-  #drop h2{margin:0 0 10px; font-size:17px}
-  #drop p{color:var(--tx2); margin:6px 0}
-  #drop code{background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12.5px}
+  #drop h2{margin:0 0 12px; font-size:17px}
+  #drop p{color:var(--ink2); margin:8px 0; font-size:13.5px}
+  #drop code{font-family:var(--mono); background:var(--paper); padding:2px 6px;
+             border-radius:3px; font-size:12.5px; border:1px solid var(--rule)}
   .btn{
-    display:inline-block; margin-top:14px; padding:7px 16px; border-radius:6px;
-    background:var(--tx); color:#fff; cursor:pointer; font-size:13px; border:0;
+    display:inline-block; margin-top:16px; padding:7px 15px; border-radius:3px;
+    background:var(--ink); color:#fff; cursor:pointer; font-size:13px; border:0;
+    font-family:var(--sans);
   }
-  .sortmark{opacity:.45; font-size:9px}
+  .btn:hover{background:#000}
+  .sortmark{font-size:9px; opacity:.6; margin-left:2px}
+
+  @media (prefers-reduced-motion:reduce){
+    .seg{animation:none !important}
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>AI-CryptoGuard</h1>
-  <span class="sub">基于多源证据融合与大模型推理的密码安全审计</span>
-  <span class="spacer"></span>
-  <span class="sub" id="src"></span>
-  <button class="chip" id="reload">换一份数据</button>
+  <div class="hrow">
+    <h1>AI-CryptoGuard</h1>
+    <span class="role">基于多源证据融合与大模型推理的密码安全审计</span>
+    <span class="spacer"></span>
+    <button class="chip" id="reload">换一份数据</button>
+  </div>
+  <div class="hmeta" id="hmeta"></div>
 </header>
 
-<div class="stats" id="stats"></div>
+<div class="hero" id="stats"></div>
+<div class="figs" id="figs"></div>
 <div class="filters" id="filters"></div>
 
 <main>
@@ -210,13 +304,8 @@
     <h2>没有自动读到数据</h2>
     <p>直接打开 HTML 文件时，浏览器不允许读取本地文件 —— 这是浏览器的限制，不是程序出错。</p>
     <p>两种办法，任选一种：</p>
-    <p style="text-align:left">
-      <b>①</b> 在仓库根目录跑 <code>python -m http.server</code>，<br>
-      　 然后打开 <code>http://localhost:8000/web/index.html</code>
-    </p>
-    <p style="text-align:left">
-      <b>②</b> 直接把 <code>findings_ai.json</code> 拖到本窗口
-    </p>
+    <p><b>①</b> 在仓库根目录跑 <code>python web/serve.py</code>，它会自动打开页面。</p>
+    <p><b>②</b> 直接把 <code>findings_ai.json</code> 拖到本窗口。</p>
     <input type="file" id="picker" accept=".json" style="display:none">
     <button class="btn" id="pick">选择 JSON 文件</button>
   </div>
@@ -249,8 +338,13 @@ async function autoLoad(){
 /* ============================ 常 量 ============================ */
 
 const RISKS = ['shor','broken','grover','review','safe'];
-const RISK_CN = {shor:'量子可破', broken:'已被攻破', grover:'强度减半',
-                 review:'需人工确认', safe:'安全'};
+const RISK_CN = {shor:'量子直接破解', broken:'经典攻击已破', grover:'量子加速削弱',
+                 review:'待评估', safe:'无已知威胁'};
+/* 每类成因的机制。broken 那条是本项目的核心主张：
+   上游把 MD5 之流判成「量子脆弱」，但它其实是被经典攻击攻破的，与量子无关。 */
+const RISK_MECH = {shor:'Shor 可恢复私钥', broken:'与量子无关', grover:'Grover 使强度减半',
+                   review:'证据不足以判定', safe:'当前无已知攻击'};
+
 const SEVS = ['critical','high','medium','low','info'];
 const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'提示'};
 
@@ -259,15 +353,15 @@ const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'�
 const REASONS = ['decided','usage-undetermined','not-an-algorithm',
                  'rule-missing','not-enriched'];
 const REASON_META = {
-  'decided':           {cn:'已给结论',   cls:'b-ok',   tone:'v-ok',
+  'decided':           {cn:'已给结论',   cls:'tag ok',   tone:'v-ok',
                         why:'规则库已给出确定的迁移或加固建议。'},
-  'usage-undetermined':{cn:'用途待定',   cls:'b-undet',tone:'v-undet',
+  'usage-undetermined':{cn:'用途待定',   cls:'tag undet',tone:'v-undet',
                         why:'算法用途无法从证据判定。方案 §9.1 明确禁止在用途未知时给出固定映射 —— 这是正确行为，不是缺陷。'},
-  'not-an-algorithm':  {cn:'非算法命中', cls:'b-mute', tone:'v-warn',
+  'not-an-algorithm':  {cn:'非算法命中', cls:'tag mute', tone:'v-warn',
                         why:'上游命中的是密码库名 / Provider 名 / 配置项，不是具体算法。需要展开到实际调用的算法才能判断。'},
-  'rule-missing':      {cn:'规则库未覆盖',cls:'b-warn',tone:'v-warn',
+  'rule-missing':      {cn:'规则库未覆盖',cls:'tag warn',tone:'v-warn',
                         why:'规则库中没有该算法。这是待补的缺口 —— 扩充 core/rules/ 即可，不需要重跑大模型。'},
-  'not-enriched':      {cn:'尚未增强',   cls:'b-mute', tone:'v-warn',
+  'not-enriched':      {cn:'尚未增强',   cls:'tag mute', tone:'v-warn',
                         why:'这一条还没有经 ai/ 层处理（来源是 scanner 的占位符）。'},
 };
 
@@ -298,6 +392,7 @@ const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
 
 function riskRank(r){ return RISKS.indexOf(r) < 0 ? 99 : RISKS.indexOf(r); }
 function sevRank(s){ return SEVS.indexOf(s) < 0 ? 99 : SEVS.indexOf(s); }
+function riskCls(r){ return RISKS.indexOf(r) < 0 ? 'review' : r; }
 
 function countBy(rows, fn){
   const m = new Map();
@@ -305,60 +400,63 @@ function countBy(rows, fn){
   return m;
 }
 
-/* ============================ 概 览 ============================ */
+/* ============================ 威胁构成（hero）============================
+ * 整幅审计按**成因**一次铺开。段宽按条数，标签与机制直接落在段下，
+ * 不另设图例 —— 这张图自己就是自己的键。
+ * 点一段即筛选。
+ */
 
 function renderStats(){
   const rows = S.rows;
-  const decided = rows.filter(f => (f.remediation||{}).decided).length;
+  const total = rows.length;
   const R = countBy(rows, f => f.risk);
-  const V = countBy(rows, f => f.severity);
-  const N = countBy(rows, f => reasonOf(f));
-  const multi = rows.filter(f => (f.evidence||[]).length > 1).length;
-  const files = new Set(rows.map(f => f.file)).size;
+  const present = RISKS.filter(k => R.has(k));
+  const absent  = RISKS.filter(k => !R.has(k));
 
-  const bars = (pairs, total, colors, cn) => pairs.map(([k,n]) => `
-    <div class="bar">
-      <span class="nm">${esc(cn[k]||k)}</span>
-      <span class="tr"><span class="fl" style="width:${total?n/total*100:0}%;background:${colors[k]||'#94a3b8'}"></span></span>
-      <span class="ct">${n}</span>
-    </div>`).join('');
+  // 条与机制行共用同一套 flex 比例，文字才落得准
+  const segs = present.map((k,i) => `
+    <span class="seg ${riskCls(k)}" data-risk="${esc(k)}" tabindex="0"
+          title="只看「${esc(RISK_CN[k])}」"
+          style="flex:${R.get(k)} 1 0;animation-delay:${i*55}ms">
+      <span class="n">${R.get(k)}</span>
+      <span class="cn">${esc(RISK_CN[k])}</span>
+    </span>`).join('');
 
-  const rc = {shor:'var(--shor)',broken:'var(--broken)',grover:'var(--grover)',
-              review:'var(--review)',safe:'var(--safe)'};
-  const nc = {'decided':'var(--ok)','usage-undetermined':'var(--info)',
-              'not-an-algorithm':'#9ca3af','rule-missing':'var(--warn)',
-              'not-enriched':'#d1d5db'};
-
-  const rp = RISKS.filter(k=>R.has(k)).map(k=>[k,R.get(k)]);
-  const vp = SEVS.filter(k=>V.has(k)).map(k=>[k,V.get(k)]);
-  const np = REASONS.filter(k=>N.has(k)).map(k=>[k,N.get(k)]);
+  const mech = present.map(k =>
+    `<span class="mcol" style="flex:${R.get(k)} 1 0">${esc(RISK_MECH[k])}</span>`).join('');
 
   $('#stats').innerHTML = `
-    <div class="card">
-      <div class="k">问题总数</div>
-      <div class="v">${rows.length}</div>
-      <div class="d">${files} 个文件 · 多源交叉 ${multi} 条</div>
+    <div class="hero-top">
+      <h2>威胁构成</h2>
+      ${absent.length
+        ? `<span class="absent">未出现：${absent.map(k=>esc(RISK_CN[k])).join('、')}</span>`
+        : ''}
+      <span class="tot"><b>${total}</b> 条</span>
     </div>
-    <div class="card">
-      <div class="k">已给结论</div>
-      <div class="v" style="color:var(--ok)">${decided}</div>
-      <div class="d">占 ${rows.length?Math.round(decided/rows.length*100):0}%</div>
-    </div>
-    <div class="card" style="min-width:180px">
-      <div class="k">量子风险</div>
-      <div class="bars">${bars(rp, rows.length, rc, RISK_CN)}</div>
-    </div>
-    <div class="card" style="min-width:180px">
-      <div class="k">严重程度</div>
-      <div class="bars">${bars(vp, rows.length,
-        {critical:'#c0392b',high:'#d97706',medium:'#ca8a04',low:'#64748b',info:'#94a3b8'},
-        SEV_CN)}</div>
-    </div>
-    <div class="card" style="min-width:200px">
-      <div class="k">结论状态</div>
-      <div class="bars">${bars(np, rows.length, nc,
-        Object.fromEntries(REASONS.map(k=>[k, REASON_META[k].cn])))}</div>
-    </div>`;
+    <div class="strip">${segs}</div>
+    <div class="mech">${mech}</div>`;
+
+  $('#stats').querySelectorAll('.seg').forEach(el => {
+    el.onclick = () => {
+      S.risk.clear(); S.risk.add(el.dataset.risk);
+      renderFilters(); apply();
+    };
+  });
+}
+
+/* ============================ 统计横条 ============================ */
+
+/* 报头讲**范围与出处**（几条、几个文件、数据来自哪），
+   这一行讲**分析质量** —— 两处不重复同一个数字。 */
+function renderFigs(){
+  const rows = S.rows;
+  const decided = rows.filter(f => (f.remediation||{}).decided).length;
+  const multi = rows.filter(f => (f.evidence||[]).length > 1).length;
+  const pct = rows.length ? Math.round(decided/rows.length*100) : 0;
+
+  $('#figs').innerHTML = `
+    <span class="fig"><b>${multi}</b>条多源交叉</span>
+    <span class="fig good"><b>${decided}</b>条已给结论（${pct}%）</span>`;
 }
 
 /* ============================ 筛 选 ============================ */
@@ -369,26 +467,29 @@ function renderFilters(){
   const U = countBy(S.rows, f => f.usage);
   const N = countBy(S.rows, f => reasonOf(f));
 
-  const group = (lbl, keys, set, cnm) => `
+  const CN = {
+    risk: RISK_CN, sev: SEV_CN, usage: USAGE_CN,
+    reason: Object.fromEntries(REASONS.map(k=>[k, REASON_META[k].cn])),
+  };
+  const SRC = {risk:R, sev:V, usage:U, reason:N};
+  const SET = {risk:S.risk, sev:S.sev, usage:S.usage, reason:S.reason};
+
+  const group = (lbl, keys, set) => `
     <div class="fgroup"><span class="lbl">${lbl}</span>${
-      keys.filter(k => (set==='risk'?R:set==='sev'?V:set==='usage'?U:N).has(k))
-        .map(k => {
-          const m = set==='risk' ? RISK_CN : set==='sev' ? SEV_CN
-                  : set==='usage' ? USAGE_CN : Object.fromEntries(
-                      REASONS.map(x=>[x, REASON_META[x].cn]));
-          const on = (set==='risk'?S.risk:set==='sev'?S.sev:set==='usage'?S.usage:S.reason).has(k);
-          const n = (set==='risk'?R:set==='sev'?V:set==='usage'?U:N).get(k);
-          return `<span class="chip ${on?'on':''}" data-set="${set}" data-k="${esc(k)}">${esc(m[k]||k)}<span class="n">${n}</span></span>`;
-        }).join('')}</div>`;
+      keys.filter(k => SRC[set].has(k)).map(k => {
+        const on = SET[set].has(k);
+        return `<span class="chip${on?' on':''}" data-set="${set}" data-k="${esc(k)}"
+                      tabindex="0">${esc(CN[set][k]||k)}<span class="n">${SRC[set].get(k)}</span></span>`;
+      }).join('')}</div>`;
 
   $('#filters').innerHTML = `
-    <input type="search" id="q" placeholder="搜算法 / 文件名 / 行号…" value="${esc(S.q)}">
+    <input type="search" id="q" placeholder="搜算法 / 文件 / 行号…" value="${esc(S.q)}">
     ${group('风险', RISKS, 'risk')}
     ${group('状态', REASONS, 'reason')}
     ${group('用途', Object.keys(USAGE_CN), 'usage')}
     ${group('严重', SEVS, 'sev')}
     <span class="spacer" style="flex:1"></span>
-    <span class="chip" id="clr">清空筛选</span>`;
+    <button class="clearbtn" id="clr">清空筛选</button>`;
 
   $('#q').oninput = e => { S.q = e.target.value; apply(); };
   $('#clr').onclick = () => {
@@ -397,9 +498,8 @@ function renderFilters(){
   };
   $('#filters').querySelectorAll('.chip[data-set]').forEach(el => {
     el.onclick = () => {
-      const set = el.dataset.set, k = el.dataset.k;
-      const target = set==='risk'?S.risk : set==='sev'?S.sev
-                   : set==='usage'?S.usage : S.reason;
+      const target = SET[el.dataset.set];
+      const k = el.dataset.k;
       target.has(k) ? target.delete(k) : target.add(k);
       renderFilters(); apply();
     };
@@ -439,7 +539,10 @@ function apply(){
   renderList();
 }
 
-/* ============================ 列 表 ============================ */
+/* ============================ 列 表 ============================
+ * 结论状态**在这一层就可见** —— 不藏在详情里。
+ * 通用工具会把「答不上来」藏起来；我们把它摆出来。
+ */
 
 function renderList(){
   const rows = S.view;
@@ -448,29 +551,32 @@ function renderList(){
     return;
   }
   const sm = k => S.sort.key===k ? `<span class="sortmark">${S.sort.dir>0?'▲':'▼'}</span>` : '';
-  const th = (k,label,style) => `<th data-k="${k}"${style?` style="${style}"`:''}>${label} ${sm(k)}</th>`;
+  const th = (k,label,align) =>
+    `<th data-k="${k}"${align?` style="text-align:${align}"`:''}>${label}${sm(k)}</th>`;
+
+  const body = rows.map((f,i) => {
+    const rs = reasonOf(f);
+    const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute'};
+    const sel = S.sel && S.sel.finding_id === f.finding_id;
+    const rk = riskCls(f.risk);
+    return `<tr data-i="${i}" class="${sel?'sel':''}">
+      <td><span class="rk ${rk}"><i></i>${esc(RISK_CN[f.risk]||f.risk||'—')}</span></td>
+      <td class="alg">${esc(f.algorithm||'—')}</td>
+      <td class="loc" title="${esc(f.file)}">${esc((f.file||'').split(/[\\/]/).pop())}:${esc(f.line)}</td>
+      <td><span class="tag">${esc(USAGE_CN[f.usage]||f.usage||'—')}</span></td>
+      <td><span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span></td>
+      <td><span class="${meta.cls}">${esc(meta.cn)}</span></td>
+      <td class="loc" style="text-align:right">${(f.evidence||[]).length}</td>
+    </tr>`;
+  }).join('');
 
   $('#list').innerHTML = `<table>
     <thead><tr>
       ${th('risk','风险')}${th('algorithm','算法')}${th('file','位置')}
       ${th('usage','用途')}${th('severity','严重')}${th('decided','结论')}
-      <th style="text-align:right">证据</th>
+      ${th('evidence','证据','right')}
     </tr></thead>
-    <tbody>${rows.map((f,i) => {
-      const r = f.remediation||{};
-      const rs = reasonOf(f);
-      const meta = REASON_META[rs] || {cn: rs||'—', cls:'b-mute'};
-      const sel = S.sel && S.sel.finding_id === f.finding_id;
-      return `<tr data-i="${i}" class="${sel?'sel':''}">
-        <td><span class="dot" style="background:var(--${f.risk||'review'})"></span><span class="badge b-${esc(f.risk||'review')}">${esc(RISK_CN[f.risk]||f.risk||'—')}</span></td>
-        <td class="alg">${esc(f.algorithm||'—')}</td>
-        <td class="loc mono" title="${esc(f.file)}">${esc((f.file||'').split(/[\\/]/).pop())}:${esc(f.line)}</td>
-        <td><span class="badge b-usage">${esc(USAGE_CN[f.usage]||f.usage||'—')}</span></td>
-        <td><span class="badge b-sev-${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span></td>
-        <td><span class="badge ${meta.cls}">${esc(meta.cn)}</span></td>
-        <td style="text-align:right" class="loc">${(f.evidence||[]).length}</td>
-      </tr>`;
-    }).join('')}</tbody></table>`;
+    <tbody>${body}</tbody></table>`;
 
   $('#list').querySelectorAll('tbody tr').forEach(tr => {
     tr.onclick = () => { S.sel = S.view[+tr.dataset.i]; renderList(); renderDetail(); };
@@ -495,22 +601,22 @@ function renderDetail(){
   }
   const r = f.remediation || {};
   const rs = reasonOf(f);
-  const meta = REASON_META[rs] || {cn: rs||'—', cls:'b-mute', tone:'v-warn', why:''};
-  const ex = f.explanation;
+  const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute', tone:'v-warn', why:''};
+  const rk = riskCls(f.risk);
 
   const evHtml = (f.evidence||[]).map(e => {
     const up = e.raw || {};
     const lines = (e.lines||[]);
-    const shown = lines.slice(0, 40).map(n=>`<span class="shape">${n}</span>`).join('');
-    const more = lines.length > 40 ? `<span class="ln"> …共 ${lines.length} 行</span>` : '';
-    const shapes = (e.call_shape||[]).map(s=>`<span class="shape">${esc(s)}</span>`).join('');
+    const shown = lines.slice(0, 40).map(n=>`<span class="shape">${esc(n)}</span>`).join('');
+    const more = lines.length > 40 ? `<span class="ln">…共 ${esc(lines.length)} 行</span>` : '';
+    const shapes = (e.call_shape||[]).map(s=>`<span class="shape hit">${esc(s)}</span>`).join('');
     const ctx = (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
     return `<div class="box ev">
       <div class="top">
         <span class="tool">${esc(e.tool||'—')}</span>
-        <span class="badge b-mute">${esc(e.kind||'pattern')}</span>
-        <span class="ln">命中 ${lines.length} 处</span>
-        ${up.prim ? `<span class="badge b-usage">prim: ${esc(up.prim)}</span>` : ''}
+        <span class="tag">${esc(e.kind||'pattern')}</span>
+        <span class="ln">命中 ${esc(lines.length)} 处</span>
+        ${up.prim ? `<span class="tag">prim: ${esc(up.prim)}</span>` : ''}
       </div>
       <div class="shapes">${shown}${more}</div>
       ${shapes ? `<div class="shapes">${shapes}</div>` : ''}
@@ -522,23 +628,23 @@ function renderDetail(){
   $('#detail').innerHTML = `<div class="dwrap">
     <div class="dhead">
       <h2>${esc(f.algorithm||'—')}</h2>
-      <div class="loc mono">${esc(f.file)}:${esc(f.line)}</div>
+      <div class="path">${esc(f.file)}:${esc(f.line)}</div>
       <div class="drow">
-        <span class="badge b-${esc(f.risk||'review')}">风险 · ${esc(RISK_CN[f.risk]||f.risk||'—')}</span>
-        <span class="badge b-sev-${esc(f.severity||'info')}">严重 · ${esc(SEV_CN[f.severity]||f.severity||'—')}</span>
-        <span class="badge b-usage">用途 · ${esc(USAGE_CN[f.usage]||f.usage||'—')}</span>
-        ${f.confidence!=null ? `<span class="badge b-mute">置信 ${esc(f.confidence)}</span>` : ''}
-        ${(f.tags||[]).map(t=>`<span class="badge b-mute">${esc(t)}</span>`).join('')}
+        <span class="rk ${rk}"><i></i>${esc(RISK_CN[f.risk]||f.risk||'—')}</span>
+        <span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span>
+        <span class="tag">用途 · ${esc(USAGE_CN[f.usage]||f.usage||'—')}</span>
+        ${f.confidence!=null ? `<span class="tag">置信 ${esc(f.confidence)}</span>` : ''}
+        ${(f.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}
       </div>
     </div>
 
     <section class="blk">
       <h3>迁移 / 加固结论</h3>
       <div class="box verdict ${meta.tone}">
-        <span class="badge ${meta.cls}">${esc(meta.cn)}</span>
-        ${r.decided === false ? '<span class="badge b-mute">decided: false</span>' : ''}
-        ${r.source ? `<span class="badge b-mute">source: ${esc(r.source)}</span>` : ''}
-        ${meta.why ? `<div class="loc" style="margin-top:8px">${esc(meta.why)}</div>` : ''}
+        <span class="${meta.cls}">${esc(meta.cn)}</span>
+        ${r.decided === false ? '<span class="tag mute">decided: false</span>' : ''}
+        ${r.source ? `<span class="tag mute">source: ${esc(r.source)}</span>` : ''}
+        ${meta.why ? `<div class="why">${esc(meta.why)}</div>` : ''}
         <div class="txt">${esc(r.action || '（无建议文本）')}</div>
         ${(r.references||[]).length
           ? `<div class="refs">${r.references.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>`
@@ -548,8 +654,7 @@ function renderDetail(){
 
     <section class="blk">
       <h3>AI 解释</h3>
-      <div class="box">${ex ? esc(ex) :
-        '<span class="loc">尚未生成 —— 这一条还没经 ai/ 层处理。</span>'}</div>
+      <div class="box">${ex_or(f.explanation)}</div>
     </section>
 
     <section class="blk">
@@ -557,8 +662,13 @@ function renderDetail(){
       ${evHtml}
     </section>
 
-    <div class="fid mono">finding_id: ${esc(f.finding_id)} · schema ${esc(f.schema_version)}</div>
+    <div class="fid">finding_id: ${esc(f.finding_id)} / schema ${esc(f.schema_version)}</div>
   </div>`;
+}
+
+/* 没经 ai/ 层处理时要如实说，不能装作有结论 */
+function ex_or(x){
+  return x ? esc(x) : '<span class="loc">尚未生成 —— 这一条还没经 ai/ 层处理。</span>';
 }
 
 /* ============================ 载入入口 ============================ */
@@ -566,9 +676,13 @@ function renderDetail(){
 function boot(rows, from){
   S.rows = rows.filter(f => f && typeof f === 'object');
   S.src = from;
-  $('#src').textContent = `${from} · ${S.rows.length} 条`;
+  const files = new Set(S.rows.map(f => f.file)).size;
+  $('#hmeta').innerHTML =
+    `<span><b>${S.rows.length}</b> 条发现</span>` +
+    `<span><b>${files}</b> 个文件</span>` +
+    `<span>${esc(from)}</span>`;
   $('#drop').classList.remove('on');
-  renderStats(); renderFilters(); apply(); renderDetail();
+  renderStats(); renderFigs(); renderFilters(); apply(); renderDetail();
   if(S.rows.length) { S.sel = S.view[0]; renderList(); renderDetail(); }
 }
 
@@ -591,7 +705,7 @@ function readFile(file){
 
 $('#pick').onclick = () => $('#picker').click();
 $('#picker').onchange = e => { if(e.target.files[0]) readFile(e.target.files[0]); };
-$('#reload').onclick = () => { $('#drop').classList.add('on'); };
+$('#reload').onclick = () => $('#drop').classList.add('on');
 document.addEventListener('dragover', e => { e.preventDefault(); });
 document.addEventListener('drop', e => {
   e.preventDefault();

@@ -145,10 +145,24 @@ setTimeout(() => {
     check('未增强条目不谎称有 AI 解释', d.includes('尚未生成'));
   }
 
-  /* --- 6. 风险色块类名对得上 --- */
+  /* --- 6. 风险配色：类名 → 颜色变量的对应 ---
+   *     原先断言的是「#stats 里出现 var(--shor)」—— 那其实是在断言色值被
+   *     **内联**写进了 HTML。后来配色改由 .seg.<risk> 这条规则给出，内联写法
+   *     没了，断言就跟着失效。真正要守的不变量是**类名与颜色的绑定**，
+   *     所以两头都验：段带对类名，且样式表里该类名确实绑到同名变量。 */
   const risksInData = new Set(S.rows.map(f => f.risk));
-  check('概览用了风险配色',
-        [...risksInData].some(r => stats.includes('var(--' + r + ')')));
+  const cssText = (html.match(/<style>([\s\S]*?)<\/style>/) || ['', ''])[1];
+  check('概览渲染了风险段', [...risksInData].every(r => stats.includes('class="seg ' + r + '"')),
+        [...risksInData].join(','));
+  /* 与数据无关的那一半：凡 RISK_CN 里定义了的风险，样式表都必须有规则 ——
+     否则一旦扫出该类别，那一段会渲染成**没有底色的空白**。
+     当前数据集里 review 是 0 条，这条断言是唯一能发现它的东西：
+     开发时确实就是漏了 .seg.review，是这条断言（而不是眼睛）抓出来的。 */
+  const unbound = Object.keys(api.RISK_CN).filter(r =>
+    !new RegExp('\\.seg\\.' + r + '\\s*\\{[^}]*var\\(--' + r + '\\)').test(cssText) ||
+    !new RegExp('\\.rk\\.' + r + '\\s+i\\s*\\{[^}]*var\\(--' + r + '\\)').test(cssText));
+  check('每种风险在样式表里都有 .seg / .rk 规则（与数据无关）',
+        unbound.length === 0, unbound.join(','));
 
   /* --- 7. XSS 兜底 --- */
   const evil = {
