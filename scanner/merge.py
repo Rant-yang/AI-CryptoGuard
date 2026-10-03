@@ -209,6 +209,9 @@ def _placeholder_remediation():
     """
     return {
         'decided': False,
+        # reason='not-enriched' 与 source='none' 是同一个状态的两个说法：
+        # 前者说「为什么没结论」，后者说「建议从哪来」。两者必须同时出现。
+        'reason': 'not-enriched',
         'action': '尚未增强：用途需先经 ai/ 复核，再由 core/rules/pqc_routing.py 按用途分派算法。',
         'source': 'none',
     }

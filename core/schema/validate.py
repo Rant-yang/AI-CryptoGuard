@@ -75,6 +75,20 @@ def main():
     print('remediation.source: ' + '  '.join(
         ['%s %d' % (k, src[k]) for k in known + rest]))
 
+    # remediation.reason 分布 —— 说明「给不出结论」的到底是哪一种。
+    # usage-undetermined = 用途判不出来（§9.1 的正确行为）
+    # rule-missing       = 规则库确实没这条（应扩充规则库）
+    # not-an-algorithm   = 上游命中的是库名/配置项
+    # 这三个以前都糊成一句「需人工确认」，分开报才看得出该往哪使劲。
+    rsn = collections.Counter(
+        (f.get('remediation') or {}).get('reason', '(缺失)') for f in findings)
+    order = ('decided', 'usage-undetermined', 'not-an-algorithm',
+             'rule-missing', 'not-enriched')
+    known_r = [k for k in order if k in rsn]
+    rest_r = sorted(k for k in rsn if k not in order)
+    print('remediation.reason: ' + '  '.join(
+        ['%s %d' % (k, rsn[k]) for k in known_r + rest_r]))
+
     print('schema: %s' % SCHEMA_PATH)
     return 1 if bad else 0
 
