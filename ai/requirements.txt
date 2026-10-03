@@ -1,0 +1,15 @@
+# ai/ 层依赖
+#
+# 安装:
+#     pip install -r ai/requirements.txt
+#
+# 为什么要有这个文件：原来 ai/ 下没有依赖声明，换一台机器
+# `python ai/enrich.py ...` 直接 ModuleNotFoundError: No module named 'anthropic'。
+# 开发机上装过所以看不出来，别人（和答辩现场的电脑）跑不起来。
+
+anthropic>=0.40
+
+# 不是 ai/ 的运行时依赖，但 ai/ 的验收标准里有一条
+#     python core/schema/validate.py out/findings_ai.json   # 必须退出码 0
+# 所以一并列在这里，免得验收时才发现缺。
+jsonschema>=4.0
