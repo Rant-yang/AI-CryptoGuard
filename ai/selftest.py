@@ -62,9 +62,18 @@ class _Block:
         self.text = text
 
 
+class _ThinkBlock:
+    """思维链块。实测 DeepSeek 会返回它，且它没有 .text。"""
+    type = 'thinking'
+
+    def __init__(self):
+        self.text = ''
+
+
 class _Resp:
-    def __init__(self, text):
-        self.content = [_Block(text)]
+    def __init__(self, text, stop_reason='end_turn', blocks=None):
+        self.content = blocks if blocks is not None else [_Block(text)]
+        self.stop_reason = stop_reason
 
 
 class _Messages:
@@ -84,6 +93,10 @@ class _Messages:
         mode = self.plan(n, alg)
         if mode == 'raise':
             raise RuntimeError('桩：模拟网络错误')
+        if mode == 'truncate':
+            # 实测形态：预算全花在思维链上，stop_reason='max_tokens'，
+            # 只有一个空的 thinking 块。
+            return _Resp('', stop_reason='max_tokens', blocks=[_ThinkBlock()])
         if mode == 'garbage':
             return _Resp('抱歉，我无法回答这个问题。')
         body = json.dumps({'usage': FAKE_USAGE.get(alg, 'unknown'),
@@ -205,6 +218,35 @@ def t_partial_failure_is_survivable():
           sum(f['remediation']['source'] == 'rule-base' for f in resumed), len(resumed))
 
 
+def t_truncation_is_reported_clearly():
+    """截断必须被**明确报出来**，不能伪装成「模型不听话」。
+
+    实测 max_tokens=500 时 16/91 条失败，两种表现（无文本块 / 花括号配不平）
+    根因是同一个：思维链把预算吃光了。不报 stop_reason 的话只会看到
+    「找不到 JSON 对象」，查错方向会完全跑偏。
+    """
+    install_stub(lambda n, alg: 'truncate')
+    finding = json.loads(FINDINGS.read_text(encoding='utf-8'))[0]
+    try:
+        enrich.enrich_finding(dict(finding), 'full')
+        FAILS.append('被截断的响应应该抛异常，却成功返回了')
+    except RuntimeError as exc:
+        check_true('截断错误信息点明 max_tokens', 'max_tokens' in str(exc))
+        check_true('截断错误信息带内容块类型', 'thinking' in str(exc))
+
+    # 截断的条目保持占位符，且不拖垮其余条目
+    install_stub(lambda n, alg: 'truncate' if n == 7 else 'clean')
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / 'ai.json'
+        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        enrich.main()
+        result = json.loads(out.read_text(encoding='utf-8'))
+    check('截断条目保持占位符',
+          sum(f['remediation']['source'] == 'none' for f in result), 1)
+    check('截断条目没有留下半成品 explanation',
+          sum('explanation' in f for f in result), len(result) - 1)
+
+
 def t_no_leak_in_payload():
     """两种模式下，真实 91 条发出去的 payload 都不许含源码/绝对路径。"""
     findings = json.loads(FINDINGS.read_text(encoding='utf-8'))
@@ -282,21 +324,23 @@ def main():
     print('=' * 68)
 
     t_parse_robustness()
-    print('  [1/7] 解析鲁棒性')
+    print('  [1/8] 解析鲁棒性')
     result = t_full_run_clean()
-    print('  [2/7] 干净跑通')
+    print('  [2/8] 干净跑通')
     t_schema_compliance(result)
-    print('  [3/7] schema 合规')
+    print('  [3/8] schema 合规')
     t_fence_does_not_crash()
-    print('  [4/7] 代码围栏不再崩')
+    print('  [4/8] 代码围栏不再崩')
     t_partial_failure_is_survivable()
-    print('  [5/7] 单条失败可存活 + resume')
+    print('  [5/8] 单条失败可存活 + resume')
+    t_truncation_is_reported_clearly()
+    print('  [6/8] 截断被明确报出')
     t_no_leak_in_payload()
     t_redaction_did_not_eat_signal()
-    print('  [6/7] 脱敏：不泄露、也不误伤')
+    print('  [7/8] 脱敏：不泄露、也不误伤')
     t_two_stage_redline()
     t_usage_rewrite_actually_happens()
-    print('  [7/7] §9.1 红线 + usage 改写')
+    print('  [8/8] §9.1 红线 + usage 改写')
 
     print('=' * 68)
     if FAILS:

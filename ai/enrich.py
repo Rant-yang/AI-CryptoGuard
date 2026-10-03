@@ -59,6 +59,15 @@ DEFAULT_CHECKPOINT = 10
 REQUEST_TIMEOUT = 60.0
 MAX_RETRIES = 3
 
+#: 单次响应的 token 上限。
+#:
+#: 原来写的是 500。实测（2026-10-03 全量真跑）这个数会导致 **16/91 条失败**：
+#: 模型是带思维链的，`stop_reason='max_tokens'`、`output_tokens=500`、
+#: 内容块只有一个 `thinking`，**预算被推理阶段整个吃光，一个字都没留给答案**。
+#: 失败的两种表现都源于此 —— 「没有返回文本结果」（全花在思考上）
+#: 和「找不到 JSON 对象」（思考完刚动笔就被截断，花括号配不平）。
+MAX_TOKENS = 4000
+
 
 SYSTEM_PROMPT = """
 你是 AI-CryptoGuard 的密码学代码分析助手。
@@ -202,7 +211,7 @@ def parse_llm_json(raw_text):
                          % (exc, raw_text[:200]))
 
 
-def call_llm(finding, context="full"):
+def call_llm(finding, context="full", max_tokens=None):
     """调用 DeepSeek，返回 usage 和 explanation。
 
     发出去的 payload 由 ai/redact.py 构造 —— **这里不做脱敏，
@@ -216,7 +225,7 @@ def call_llm(finding, context="full"):
 
     response = _client().messages.create(
         model=os.environ["ANTHROPIC_MODEL"],
-        max_tokens=500,
+        max_tokens=max_tokens or MAX_TOKENS,
         system=SYSTEM_PROMPT,
         messages=[
             {
@@ -234,8 +243,21 @@ def call_llm(finding, context="full"):
         if getattr(block, "type", None) == "text"
     ]
 
+    # 截断要**明确报出来**，不要让它伪装成「模型不听话」。
+    # 实测 max_tokens=500 时 16/91 条失败，且两种表现（无文本块 /
+    # 花括号配不平）根因是同一个 —— 思维链把预算吃光了。
+    # 不报 stop_reason 的话，只会看到「找不到 JSON 对象」，查错方向全错。
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        kinds = [getattr(b, "type", "?") for b in response.content]
+        raise RuntimeError(
+            "响应被 max_tokens 截断（%d）。内容块=%s。"
+            "带思维链的模型会把预算花在思考上，调大 --max-tokens。"
+            % (max_tokens or MAX_TOKENS, kinds)
+        )
+
     if not text_parts:
-        raise RuntimeError("LLM 没有返回文本结果。")
+        kinds = [getattr(b, "type", "?") for b in response.content]
+        raise RuntimeError("LLM 没有返回文本结果。内容块=%s" % kinds)
 
     return parse_llm_json("\n".join(text_parts))
 
@@ -259,14 +281,14 @@ def _refresh_tags(finding, usage):
         finding.pop("tags", None)
 
 
-def enrich_finding(finding, context="full"):
+def enrich_finding(finding, context="full", max_tokens=None):
     """增强单个 finding。
 
     先全部算完再落地 —— 保证「要么全改，要么不改」。
     否则 route() 抛异常时会留下「usage 改了但 remediation 还是占位符」
     的半成品，那种条目最难看懂。
     """
-    ai_result = call_llm(finding, context)
+    ai_result = call_llm(finding, context, max_tokens)
 
     usage = ai_result.get("usage", "unknown")
     if usage not in VALID_USAGES:
@@ -321,6 +343,13 @@ def main():
         default="full",
         help="发给云端的内容：full=代码行（剥路径与密钥，默认）；"
              "shape=只发方法链，零源码出网（方案 §19 原样口径）",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=MAX_TOKENS,
+        help="单次响应 token 上限（默认 %d）。带思维链的模型调小了会被截断"
+             % MAX_TOKENS,
     )
     parser.add_argument(
         "--limit",
@@ -408,7 +437,7 @@ def main():
         print("[AI] 正在处理 %d/%d: %s" % (index, len(findings), fid))
 
         try:
-            enriched.append(enrich_finding(finding, args.context))
+            enriched.append(enrich_finding(finding, args.context, args.max_tokens))
         except Exception as exc:                      # noqa: BLE001
             # 单条失败不中断：保持 remediation 占位符（source='none'），
             # 于是进度条天然能数出「还剩几条没增强」，--resume 也会重试它。
