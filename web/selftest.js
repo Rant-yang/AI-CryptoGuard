@@ -1,0 +1,179 @@
+/* 查看器自检 —— 用最小 DOM 桩把 index.html 的脚本跑一遍，喂真实数据。
+ *
+ * 断言的是**渲染出来的 HTML 里有没有该有的东西**，不是「代码能解析」。
+ * 不需要浏览器、不需要装任何依赖（有 node 就行）。
+ *
+ *     node web/selftest.js                  # 默认喂 out/findings_ai.json
+ *     node web/selftest.js findings.json    # 也可以喂 scanner 的原始产出
+ *
+ * 退出码: 0 = 全过, 1 = 有断言失败。
+ *
+ * ── 这个文件自己踩过的一个坑，记在这里 ──
+ * 最初 fetch 桩写的是「哪个候选文件存在就给哪个」，于是 autoLoad 永远先命中
+ * findings_ai.json —— 传 findings.json 时两次渲染的其实是同一份数据，字符数
+ * 一模一样；而断言里的 reason 又是从 argv 文件算的，所以一路 PASS。
+ * **测试在骗自己。**
+ * 现在桩只供应 argv 指定的那一个文件，并且额外断言「渲染用的数据确实来自
+ * argv 文件」。教训：桩比被测代码宽松时，测试就失去证伪能力。
+ */
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.dirname(__dirname);           // web/ 的上一级 = 仓库根
+const TARGET_NAME = process.argv[2] || 'findings_ai.json';
+const TARGET = 'out/' + TARGET_NAME;
+const TARGET_PATH = path.join(ROOT, 'out', TARGET_NAME);
+
+if (!fs.existsSync(TARGET_PATH)) {
+  console.error('找不到数据文件: ' + TARGET_PATH);
+  console.error('先跑一遍 scanner 或 ai/ 生成 out/ 下的产出。');
+  process.exit(2);
+}
+
+const html = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
+const m = html.match(/<script>\n([\s\S]*?)\n<\/script>/);
+if (!m) { console.error('从 index.html 里提取不到 <script>'); process.exit(1); }
+const code = m[1];
+
+const data = JSON.parse(fs.readFileSync(TARGET_PATH, 'utf8'));
+
+/* ------------------------------ DOM 桩 ------------------------------ */
+
+const store = {};
+function mkEl(sel) {
+  if (store[sel]) return store[sel];
+  const el = {
+    _sel: sel, _html: '', textContent: '', onclick: null, oninput: null,
+    onchange: null, dataset: {}, style: {}, files: [],
+    classList: { add() {}, remove() {}, contains() { return false; } },
+    querySelectorAll() { return []; },
+    querySelector(s) { return mkEl(sel + ' ' + s); },
+    click() {},
+  };
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return el._html; },
+    set(v) { el._html = String(v); },
+  });
+  store[sel] = el;
+  return el;
+}
+
+const documentStub = { querySelector: mkEl, addEventListener() {} };
+const windowStub = {};
+const alertStub = msg => { throw new Error('页面弹了 alert: ' + msg); };
+const FileReaderStub = function () {};
+
+// 只供应 TARGET，其余候选一律 404 —— 见文件头那段教训
+const fetchStub = async (url) => {
+  const f = url.replace(/^\.\.\//, '').replace(/^\.\//, '');
+  if (f === TARGET) {
+    return { ok: true, json: async () => JSON.parse(fs.readFileSync(TARGET_PATH, 'utf8')) };
+  }
+  return { ok: false, json: async () => null };
+};
+
+/* ------------------------------ 断言 ------------------------------ */
+
+const FAILS = [];
+const check = (desc, cond, extra) => {
+  if (!cond) FAILS.push(desc + (extra ? '  (' + extra + ')' : ''));
+};
+
+const ARGS = ['document', 'window', 'fetch', 'alert', 'FileReader', 'console'];
+const VALS = [documentStub, windowStub, fetchStub, alertStub, FileReaderStub, console];
+
+function load(exported) {
+  return new Function(...ARGS, code + '\n; return {' + exported.join(',') + '};')(...VALS);
+}
+
+const api = load(['S', 'reasonOf', 'REASON_META', 'RISK_CN', 'USAGE_CN']);
+const htmlOf = sel => (store[sel] ? store[sel].innerHTML : '');
+
+// start() 是异步的，等一拍
+setTimeout(() => {
+  const S = api.S;
+
+  /* --- 1. 载入 --- */
+  check('数据载入成功', S.rows.length === data.length,
+        `rows=${S.rows.length} data=${data.length}`);
+
+  // 证明渲染用的确实是 argv 那个文件，而不是 autoLoad 碰巧先命中的别的文件
+  const ids = new Set(S.rows.map(f => f.finding_id));
+  check('渲染的数据来自 argv 指定的文件',
+        S.rows.length === data.length && data.every(f => ids.has(f.finding_id)),
+        TARGET);
+
+  /* --- 2. 四个区块都渲染了 --- */
+  const stats = htmlOf('#stats'), list = htmlOf('#list');
+  const detail = htmlOf('#detail'), filters = htmlOf('#filters');
+
+  check('概览已渲染', stats.length > 200, `${stats.length} 字符`);
+  check('列表已渲染', list.includes('<table>') && list.includes('<tbody>'), `${list.length} 字符`);
+  check('详情已渲染', detail.includes('迁移 / 加固结论'), `${detail.length} 字符`);
+  check('筛选已渲染', filters.includes('data-set="risk"'), `${filters.length} 字符`);
+  check('概览显示问题总数', stats.includes(String(data.length)));
+  check('列表行数等于数据条数',
+        (list.match(/<tr data-i=/g) || []).length === S.rows.length);
+
+  /* --- 3. 契约：decided=false 必须显示出来，不许静默填默认算法 --- */
+  const undecided = data.filter(f => f.remediation && f.remediation.decided === false);
+  check('数据里确实有 decided=false 的条目', undecided.length > 0, `${undecided.length} 条`);
+
+  const u = undecided.find(f => f.remediation.reason === 'usage-undetermined') || undecided[0];
+  const d2api = load(['S', 'renderDetail']);
+  d2api.S.sel = u;
+  d2api.renderDetail();
+  const d2 = htmlOf('#detail');
+  check('decided=false 在详情里显示出来了', d2.includes('decided: false'));
+  check('reason 有中文表述（不是裸枚举值）',
+        d2.includes(api.REASON_META[u.remediation.reason].cn), u.remediation.reason);
+
+  /* --- 4. 每一档 reason 在 UI 里都要有表述 ---
+   *     断言的是**查看器的完备性**，不是数据的多样性 ——
+   *     早先写成「reason 至少 3 种」，那是在断言数据，喂 scanner 产出时误报。 */
+  const reasons = new Set(S.rows.map(f => api.reasonOf(f)));
+  const unhandled = [...reasons].filter(r => !api.REASON_META[r]);
+  check('所有 reason 取值都有 UI 表述', unhandled.length === 0, unhandled.join(','));
+
+  /* --- 5. 未增强的条目要如实说「尚未增强」，不能装作有结论 --- */
+  const ne = S.rows.find(f => api.reasonOf(f) === 'not-enriched');
+  if (ne) {
+    const a = load(['S', 'renderDetail']);
+    a.S.sel = ne; a.renderDetail();
+    const d = htmlOf('#detail');
+    check('未增强条目显示「尚未增强」', d.includes('尚未增强'));
+    check('未增强条目不谎称有 AI 解释', d.includes('尚未生成'));
+  }
+
+  /* --- 6. 风险色块类名对得上 --- */
+  const risksInData = new Set(S.rows.map(f => f.risk));
+  check('概览用了风险配色',
+        [...risksInData].some(r => stats.includes('var(--' + r + ')')));
+
+  /* --- 7. XSS 兜底 --- */
+  const evil = {
+    finding_id: 'x', file: '<img src=x onerror=alert(1)>', line: 1,
+    algorithm: '<script>bad</script>', usage: 'unknown', risk: 'review',
+    severity: 'info', evidence: [],
+    remediation: { decided: false, reason: 'rule-missing', action: '<b>x</b>', source: 'rule-base' },
+  };
+  const x = load(['S', 'renderDetail', 'renderList']);
+  x.S.sel = evil; x.S.view = [evil];
+  x.renderDetail(); x.renderList();
+  check('详情转义了 HTML', !htmlOf('#detail').includes('<script>bad</script>'));
+  check('action 文本被转义', !htmlOf('#detail').includes('<b>x</b>'));
+  check('列表转义了 HTML', !htmlOf('#list').includes('<script>bad</script>'));
+
+  /* ------------------------------ 结果 ------------------------------ */
+  console.log(`查看器自检  [${TARGET}]`);
+  console.log('='.repeat(60));
+  if (FAILS.length) {
+    console.log(`[FAIL] ${FAILS.length} 项断言未通过:`);
+    FAILS.forEach(f => console.log('  - ' + f));
+    process.exit(1);
+  }
+  console.log('[PASS] 全部断言通过');
+  console.log(`  ${S.rows.length} 条 · 概览 ${stats.length} / 列表 ${list.length} / 详情 ${detail.length} 字符`);
+  console.log(`  reason 取值: ${[...reasons].join(', ')}`);
+  process.exit(0);
+}, 300);

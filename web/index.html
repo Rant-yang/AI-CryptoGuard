@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-CryptoGuard —— 密码安全审计</title>
+<!--
+  单文件查看器。零依赖、零构建、可离线 —— 演示现场不一定有网，
+  所以这里不用任何 CDN，也不引任何框架。
+
+  它同时是**数据契约的验收工具**：契约里要求的字段在这里必须能渲染出来，
+  渲染不出来的地方就是契约的缺口。
+
+  特别地，schema README 规定「前端与报告必须把 decided:false 显示出来，
+  不许静默填一个默认算法」—— 本页右侧的「结论」区块就是在落实这条。
+  四种「给不出结论」的原因分开显示，不糊成一句「需人工确认」。
+-->
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --line2:#eef0f3;
+    --tx:#1c2024; --tx2:#5b6570; --tx3:#8b959f;
+    --shor:#c0392b; --broken:#8e44ad; --grover:#d97706;
+    --review:#2563eb; --safe:#15803d;
+    --ok:#15803d; --warn:#d97706; --info:#2563eb; --mute:#6b7280;
+    --amber-bg:#fef3c7; --amber-tx:#92400e;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--tx);
+    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  code,.mono{font-family:ui-monospace,Consolas,"Cascadia Mono",monospace}
+
+  /* ---------- 顶栏 ---------- */
+  header{
+    background:var(--panel); border-bottom:1px solid var(--line);
+    padding:14px 20px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;
+  }
+  header h1{font-size:17px; margin:0; letter-spacing:.2px}
+  header .sub{color:var(--tx2); font-size:13px}
+  header .spacer{flex:1}
+
+  /* ---------- 概览 ---------- */
+  .stats{
+    display:flex; gap:10px; padding:14px 20px; flex-wrap:wrap;
+    background:var(--panel); border-bottom:1px solid var(--line);
+  }
+  .card{
+    background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    padding:10px 14px; min-width:132px;
+  }
+  .card .k{font-size:11px; color:var(--tx3); letter-spacing:.4px; text-transform:uppercase}
+  .card .v{font-size:22px; font-weight:650; line-height:1.25; margin-top:2px}
+  .card .d{font-size:11px; color:var(--tx2)}
+  .bars{display:flex; flex-direction:column; gap:4px; margin-top:4px}
+  .bar{display:flex; align-items:center; gap:7px; font-size:12px}
+  .bar .nm{width:64px; color:var(--tx2); text-align:right}
+  .bar .tr{flex:1; height:7px; background:var(--line2); border-radius:4px; overflow:hidden; min-width:70px}
+  .bar .fl{height:100%; border-radius:4px}
+  .bar .ct{width:26px; color:var(--tx3); font-variant-numeric:tabular-nums}
+
+  /* ---------- 筛选 ---------- */
+  .filters{
+    padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line);
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  }
+  .filters input[type=search]{
+    flex:0 1 260px; padding:6px 10px; border:1px solid var(--line);
+    border-radius:6px; font:inherit; background:var(--bg); color:var(--tx);
+  }
+  .chip{
+    border:1px solid var(--line); background:var(--bg); color:var(--tx2);
+    border-radius:999px; padding:3px 11px; font-size:12px; cursor:pointer;
+    user-select:none; transition:.12s;
+  }
+  .chip:hover{border-color:var(--tx3)}
+  .chip.on{background:var(--tx); color:#fff; border-color:var(--tx)}
+  .chip .n{opacity:.6; margin-left:4px}
+  .fgroup{display:flex; gap:6px; align-items:center}
+  .fgroup>.lbl{font-size:11px; color:var(--tx3); margin-right:2px}
+
+  /* ---------- 主体 ---------- */
+  main{display:flex; height:calc(100vh - 218px); min-height:340px}
+  .list{flex:1 1 52%; overflow:auto; border-right:1px solid var(--line); background:var(--panel)}
+  .detail{flex:1 1 48%; overflow:auto; background:var(--bg)}
+  @media (max-width:900px){ main{flex-direction:column; height:auto} .list,.detail{flex:none; max-height:none} }
+
+  table{width:100%; border-collapse:collapse}
+  thead th{
+    position:sticky; top:0; z-index:1; background:var(--panel);
+    border-bottom:1px solid var(--line); padding:8px 10px; text-align:left;
+    font-size:11px; color:var(--tx3); font-weight:600; letter-spacing:.3px;
+    text-transform:uppercase; cursor:pointer; white-space:nowrap;
+  }
+  thead th:hover{color:var(--tx)}
+  tbody tr{border-bottom:1px solid var(--line2); cursor:pointer}
+  tbody tr:hover{background:var(--bg)}
+  tbody tr.sel{background:#eef4ff}
+  tbody td{padding:7px 10px; vertical-align:middle}
+  .alg{font-weight:600}
+  .loc{color:var(--tx3); font-size:12px}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:1px}
+
+  /* ---------- 徽章 ---------- */
+  .badge{
+    display:inline-block; border-radius:4px; padding:1px 7px; font-size:11px;
+    font-weight:600; white-space:nowrap; border:1px solid transparent;
+  }
+  .b-shor{background:#fdecea; color:var(--shor); border-color:#f5c6c0}
+  .b-broken{background:#f5ecfa; color:var(--broken); border-color:#ddc7ea}
+  .b-grover{background:#fef3e2; color:var(--grover); border-color:#f3d9ae}
+  .b-review{background:#e8f0fe; color:var(--review); border-color:#c3d6f7}
+  .b-safe{background:#e7f6ec; color:var(--safe); border-color:#bfe4cb}
+  .b-sev-critical{background:#fdecea; color:#a5281b}
+  .b-sev-high{background:#fef0e7; color:#b45309}
+  .b-sev-medium{background:#fef7e0; color:#8a6100}
+  .b-sev-low{background:#eef2f6; color:#4b5563}
+  .b-sev-info{background:#f2f4f6; color:#6b7280}
+  .b-usage{background:#eef2f6; color:#374151; border-color:#dde3e9}
+  .b-ok{background:#e7f6ec; color:var(--ok); border-color:#bfe4cb}
+  .b-undet{background:#e8f0fe; color:var(--info); border-color:#c3d6f7}
+  .b-mute{background:#f2f4f6; color:var(--mute); border-color:#e0e4e8}
+  .b-warn{background:var(--amber-bg); color:var(--amber-tx); border-color:#fcd9a0}
+
+  /* ---------- 详情 ---------- */
+  .dwrap{padding:18px 20px 40px}
+  .dhead h2{margin:0 0 4px; font-size:19px}
+  .dhead .loc{font-size:13px}
+  .drow{display:flex; gap:7px; flex-wrap:wrap; margin:10px 0 0}
+  section.blk{margin-top:20px}
+  section.blk>h3{
+    margin:0 0 8px; font-size:11px; color:var(--tx3); letter-spacing:.5px;
+    text-transform:uppercase; font-weight:650;
+  }
+  .box{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px}
+  .verdict{border-left:4px solid var(--mute)}
+  .verdict.v-ok{border-left-color:var(--ok)}
+  .verdict.v-undet{border-left-color:var(--info)}
+  .verdict.v-warn{border-left-color:var(--warn)}
+  .verdict .txt{margin-top:8px}
+  .refs{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px}
+  .ref{background:var(--bg); border:1px solid var(--line); border-radius:4px;
+       padding:1px 7px; font-size:11px; color:var(--tx2)}
+  .ev{margin-top:8px}
+  .ev .top{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .ev .tool{font-weight:600}
+  .ev .ln{color:var(--tx3); font-size:12px}
+  .shapes{display:flex; gap:5px; flex-wrap:wrap; margin-top:7px}
+  .shape{
+    background:#f3f6fa; border:1px solid #dfe6ee; border-radius:4px;
+    padding:1px 7px; font-size:11.5px; color:#334155;
+  }
+  .ctx{
+    margin-top:7px; background:#2d333b; color:#d7dde5; border-radius:6px;
+    padding:7px 10px; font-size:12px; overflow-x:auto; white-space:pre;
+  }
+  pre.raw{
+    margin:7px 0 0; background:var(--bg); border:1px solid var(--line2);
+    border-radius:6px; padding:8px 10px; font-size:11.5px; color:var(--tx2);
+    overflow-x:auto; max-height:180px;
+  }
+  .kv{display:flex; gap:8px; font-size:12.5px; padding:2px 0}
+  .kv .k{color:var(--tx3); min-width:74px}
+  .empty{color:var(--tx3); padding:40px 20px; text-align:center}
+  .fid{font-size:11px; color:var(--tx3); margin-top:16px}
+
+  /* ---------- 载入 ---------- */
+  #drop{
+    position:fixed; inset:0; background:rgba(246,247,249,.97); display:none;
+    align-items:center; justify-content:center; z-index:9;
+  }
+  #drop.on{display:flex}
+  #drop .inner{
+    max-width:520px; text-align:center; padding:36px; background:var(--panel);
+    border:2px dashed var(--line); border-radius:12px;
+  }
+  #drop h2{margin:0 0 10px; font-size:17px}
+  #drop p{color:var(--tx2); margin:6px 0}
+  #drop code{background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12.5px}
+  .btn{
+    display:inline-block; margin-top:14px; padding:7px 16px; border-radius:6px;
+    background:var(--tx); color:#fff; cursor:pointer; font-size:13px; border:0;
+  }
+  .sortmark{opacity:.45; font-size:9px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AI-CryptoGuard</h1>
+  <span class="sub">基于多源证据融合与大模型推理的密码安全审计</span>
+  <span class="spacer"></span>
+  <span class="sub" id="src"></span>
+  <button class="chip" id="reload">换一份数据</button>
+</header>
+
+<div class="stats" id="stats"></div>
+<div class="filters" id="filters"></div>
+
+<main>
+  <div class="list" id="list"><div class="empty">载入中…</div></div>
+  <div class="detail" id="detail">
+    <div class="empty">从左侧选一条问题，这里显示它的证据、AI 解释与迁移建议。</div>
+  </div>
+</main>
+
+<div id="drop">
+  <div class="inner">
+    <h2>没有自动读到数据</h2>
+    <p>直接打开 HTML 文件时，浏览器不允许读取本地文件 —— 这是浏览器的限制，不是程序出错。</p>
+    <p>两种办法，任选一种：</p>
+    <p style="text-align:left">
+      <b>①</b> 在仓库根目录跑 <code>python -m http.server</code>，<br>
+      　 然后打开 <code>http://localhost:8000/web/index.html</code>
+    </p>
+    <p style="text-align:left">
+      <b>②</b> 直接把 <code>findings_ai.json</code> 拖到本窗口
+    </p>
+    <input type="file" id="picker" accept=".json" style="display:none">
+    <button class="btn" id="pick">选择 JSON 文件</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================ 数据载入 ============================ */
+
+const CANDIDATES = [
+  './findings_ai.json',
+  '../out/findings_ai.json',
+  '../out/findings.json',
+  'findings.json',
+];
+
+async function autoLoad(){
+  for (const url of CANDIDATES){
+    try{
+      const r = await fetch(url, {cache:'no-store'});
+      if(!r.ok) continue;
+      const data = await r.json();
+      if(Array.isArray(data)) return {rows:data, from:url};
+    }catch(e){ /* file:// 会在这里抛，走手动分支 */ }
+  }
+  return null;
+}
+
+/* ============================ 常 量 ============================ */
+
+const RISKS = ['shor','broken','grover','review','safe'];
+const RISK_CN = {shor:'量子可破', broken:'已被攻破', grover:'强度减半',
+                 review:'需人工确认', safe:'安全'};
+const SEVS = ['critical','high','medium','low','info'];
+const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'提示'};
+
+// 四种「给不出结论」分开表述 —— 这是契约要求的核心区分，
+// 不能糊成一句「需人工确认」。
+const REASONS = ['decided','usage-undetermined','not-an-algorithm',
+                 'rule-missing','not-enriched'];
+const REASON_META = {
+  'decided':           {cn:'已给结论',   cls:'b-ok',   tone:'v-ok',
+                        why:'规则库已给出确定的迁移或加固建议。'},
+  'usage-undetermined':{cn:'用途待定',   cls:'b-undet',tone:'v-undet',
+                        why:'算法用途无法从证据判定。方案 §9.1 明确禁止在用途未知时给出固定映射 —— 这是正确行为，不是缺陷。'},
+  'not-an-algorithm':  {cn:'非算法命中', cls:'b-mute', tone:'v-warn',
+                        why:'上游命中的是密码库名 / Provider 名 / 配置项，不是具体算法。需要展开到实际调用的算法才能判断。'},
+  'rule-missing':      {cn:'规则库未覆盖',cls:'b-warn',tone:'v-warn',
+                        why:'规则库中没有该算法。这是待补的缺口 —— 扩充 core/rules/ 即可，不需要重跑大模型。'},
+  'not-enriched':      {cn:'尚未增强',   cls:'b-mute', tone:'v-warn',
+                        why:'这一条还没有经 ai/ 层处理（来源是 scanner 的占位符）。'},
+};
+
+const USAGE_CN = {
+  signing:'签名', encryption:'加密', key_exchange:'密钥交换', hashing:'哈希',
+  authentication:'认证', tls_configuration:'TLS 配置', unknown:'未知',
+};
+
+function reasonOf(f){
+  const r = f.remediation || {};
+  return r.reason || (r.source === 'none' ? 'not-enriched' : null);
+}
+
+/* ============================ 状 态 ============================ */
+
+const S = {
+  rows: [], view: [], sel: null, src: '',
+  q: '',
+  risk: new Set(), sev: new Set(), usage: new Set(), reason: new Set(),
+  sort: {key:'risk', dir:1},
+};
+
+/* ============================ 工 具 ============================ */
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function riskRank(r){ return RISKS.indexOf(r) < 0 ? 99 : RISKS.indexOf(r); }
+function sevRank(s){ return SEVS.indexOf(s) < 0 ? 99 : SEVS.indexOf(s); }
+
+function countBy(rows, fn){
+  const m = new Map();
+  for(const r of rows){ const k = fn(r); m.set(k, (m.get(k)||0)+1); }
+  return m;
+}
+
+/* ============================ 概 览 ============================ */
+
+function renderStats(){
+  const rows = S.rows;
+  const decided = rows.filter(f => (f.remediation||{}).decided).length;
+  const R = countBy(rows, f => f.risk);
+  const V = countBy(rows, f => f.severity);
+  const N = countBy(rows, f => reasonOf(f));
+  const multi = rows.filter(f => (f.evidence||[]).length > 1).length;
+  const files = new Set(rows.map(f => f.file)).size;
+
+  const bars = (pairs, total, colors, cn) => pairs.map(([k,n]) => `
+    <div class="bar">
+      <span class="nm">${esc(cn[k]||k)}</span>
+      <span class="tr"><span class="fl" style="width:${total?n/total*100:0}%;background:${colors[k]||'#94a3b8'}"></span></span>
+      <span class="ct">${n}</span>
+    </div>`).join('');
+
+  const rc = {shor:'var(--shor)',broken:'var(--broken)',grover:'var(--grover)',
+              review:'var(--review)',safe:'var(--safe)'};
+  const nc = {'decided':'var(--ok)','usage-undetermined':'var(--info)',
+              'not-an-algorithm':'#9ca3af','rule-missing':'var(--warn)',
+              'not-enriched':'#d1d5db'};
+
+  const rp = RISKS.filter(k=>R.has(k)).map(k=>[k,R.get(k)]);
+  const vp = SEVS.filter(k=>V.has(k)).map(k=>[k,V.get(k)]);
+  const np = REASONS.filter(k=>N.has(k)).map(k=>[k,N.get(k)]);
+
+  $('#stats').innerHTML = `
+    <div class="card">
+      <div class="k">问题总数</div>
+      <div class="v">${rows.length}</div>
+      <div class="d">${files} 个文件 · 多源交叉 ${multi} 条</div>
+    </div>
+    <div class="card">
+      <div class="k">已给结论</div>
+      <div class="v" style="color:var(--ok)">${decided}</div>
+      <div class="d">占 ${rows.length?Math.round(decided/rows.length*100):0}%</div>
+    </div>
+    <div class="card" style="min-width:180px">
+      <div class="k">量子风险</div>
+      <div class="bars">${bars(rp, rows.length, rc, RISK_CN)}</div>
+    </div>
+    <div class="card" style="min-width:180px">
+      <div class="k">严重程度</div>
+      <div class="bars">${bars(vp, rows.length,
+        {critical:'#c0392b',high:'#d97706',medium:'#ca8a04',low:'#64748b',info:'#94a3b8'},
+        SEV_CN)}</div>
+    </div>
+    <div class="card" style="min-width:200px">
+      <div class="k">结论状态</div>
+      <div class="bars">${bars(np, rows.length, nc,
+        Object.fromEntries(REASONS.map(k=>[k, REASON_META[k].cn])))}</div>
+    </div>`;
+}
+
+/* ============================ 筛 选 ============================ */
+
+function renderFilters(){
+  const R = countBy(S.rows, f => f.risk);
+  const V = countBy(S.rows, f => f.severity);
+  const U = countBy(S.rows, f => f.usage);
+  const N = countBy(S.rows, f => reasonOf(f));
+
+  const group = (lbl, keys, set, cnm) => `
+    <div class="fgroup"><span class="lbl">${lbl}</span>${
+      keys.filter(k => (set==='risk'?R:set==='sev'?V:set==='usage'?U:N).has(k))
+        .map(k => {
+          const m = set==='risk' ? RISK_CN : set==='sev' ? SEV_CN
+                  : set==='usage' ? USAGE_CN : Object.fromEntries(
+                      REASONS.map(x=>[x, REASON_META[x].cn]));
+          const on = (set==='risk'?S.risk:set==='sev'?S.sev:set==='usage'?S.usage:S.reason).has(k);
+          const n = (set==='risk'?R:set==='sev'?V:set==='usage'?U:N).get(k);
+          return `<span class="chip ${on?'on':''}" data-set="${set}" data-k="${esc(k)}">${esc(m[k]||k)}<span class="n">${n}</span></span>`;
+        }).join('')}</div>`;
+
+  $('#filters').innerHTML = `
+    <input type="search" id="q" placeholder="搜算法 / 文件名 / 行号…" value="${esc(S.q)}">
+    ${group('风险', RISKS, 'risk')}
+    ${group('状态', REASONS, 'reason')}
+    ${group('用途', Object.keys(USAGE_CN), 'usage')}
+    ${group('严重', SEVS, 'sev')}
+    <span class="spacer" style="flex:1"></span>
+    <span class="chip" id="clr">清空筛选</span>`;
+
+  $('#q').oninput = e => { S.q = e.target.value; apply(); };
+  $('#clr').onclick = () => {
+    S.q=''; S.risk.clear(); S.sev.clear(); S.usage.clear(); S.reason.clear();
+    renderFilters(); apply();
+  };
+  $('#filters').querySelectorAll('.chip[data-set]').forEach(el => {
+    el.onclick = () => {
+      const set = el.dataset.set, k = el.dataset.k;
+      const target = set==='risk'?S.risk : set==='sev'?S.sev
+                   : set==='usage'?S.usage : S.reason;
+      target.has(k) ? target.delete(k) : target.add(k);
+      renderFilters(); apply();
+    };
+  });
+}
+
+/* ============================ 筛 + 排 ============================ */
+
+function apply(){
+  const q = S.q.trim().toLowerCase();
+  S.view = S.rows.filter(f => {
+    if(S.risk.size   && !S.risk.has(f.risk)) return false;
+    if(S.sev.size    && !S.sev.has(f.severity)) return false;
+    if(S.usage.size  && !S.usage.has(f.usage)) return false;
+    if(S.reason.size && !S.reason.has(reasonOf(f))) return false;
+    if(q){
+      const hay = [f.algorithm, f.algorithm_normalized, f.file, f.line,
+                   f.usage, f.explanation, (f.tags||[]).join(' ')]
+                  .join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const {key, dir} = S.sort;
+  S.view.sort((a,b) => {
+    let x, y;
+    if(key==='risk'){ x=riskRank(a.risk); y=riskRank(b.risk); }
+    else if(key==='severity'){ x=sevRank(a.severity); y=sevRank(b.severity); }
+    else if(key==='algorithm'){ x=a.algorithm||''; y=b.algorithm||''; }
+    else if(key==='file'){ x=(a.file||'')+a.line; y=(b.file||'')+b.line; }
+    else if(key==='decided'){ x=(a.remediation||{}).decided?0:1; y=(b.remediation||{}).decided?0:1; }
+    else { x=a[key]||''; y=b[key]||''; }
+    if(x<y) return -dir; if(x>y) return dir; return 0;
+  });
+
+  renderList();
+}
+
+/* ============================ 列 表 ============================ */
+
+function renderList(){
+  const rows = S.view;
+  if(!rows.length){
+    $('#list').innerHTML = '<div class="empty">没有符合条件的问题。</div>';
+    return;
+  }
+  const sm = k => S.sort.key===k ? `<span class="sortmark">${S.sort.dir>0?'▲':'▼'}</span>` : '';
+  const th = (k,label,style) => `<th data-k="${k}"${style?` style="${style}"`:''}>${label} ${sm(k)}</th>`;
+
+  $('#list').innerHTML = `<table>
+    <thead><tr>
+      ${th('risk','风险')}${th('algorithm','算法')}${th('file','位置')}
+      ${th('usage','用途')}${th('severity','严重')}${th('decided','结论')}
+      <th style="text-align:right">证据</th>
+    </tr></thead>
+    <tbody>${rows.map((f,i) => {
+      const r = f.remediation||{};
+      const rs = reasonOf(f);
+      const meta = REASON_META[rs] || {cn: rs||'—', cls:'b-mute'};
+      const sel = S.sel && S.sel.finding_id === f.finding_id;
+      return `<tr data-i="${i}" class="${sel?'sel':''}">
+        <td><span class="dot" style="background:var(--${f.risk||'review'})"></span><span class="badge b-${esc(f.risk||'review')}">${esc(RISK_CN[f.risk]||f.risk||'—')}</span></td>
+        <td class="alg">${esc(f.algorithm||'—')}</td>
+        <td class="loc mono" title="${esc(f.file)}">${esc((f.file||'').split(/[\\/]/).pop())}:${esc(f.line)}</td>
+        <td><span class="badge b-usage">${esc(USAGE_CN[f.usage]||f.usage||'—')}</span></td>
+        <td><span class="badge b-sev-${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span></td>
+        <td><span class="badge ${meta.cls}">${esc(meta.cn)}</span></td>
+        <td style="text-align:right" class="loc">${(f.evidence||[]).length}</td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+
+  $('#list').querySelectorAll('tbody tr').forEach(tr => {
+    tr.onclick = () => { S.sel = S.view[+tr.dataset.i]; renderList(); renderDetail(); };
+  });
+  $('#list').querySelectorAll('thead th').forEach(el => {
+    el.onclick = () => {
+      const k = el.dataset.k;
+      S.sort = {key:k, dir: S.sort.key===k ? -S.sort.dir : 1};
+      apply();
+    };
+  });
+}
+
+/* ============================ 详 情 ============================ */
+
+function renderDetail(){
+  const f = S.sel;
+  if(!f){
+    $('#detail').innerHTML =
+      '<div class="empty">从左侧选一条问题，这里显示它的证据、AI 解释与迁移建议。</div>';
+    return;
+  }
+  const r = f.remediation || {};
+  const rs = reasonOf(f);
+  const meta = REASON_META[rs] || {cn: rs||'—', cls:'b-mute', tone:'v-warn', why:''};
+  const ex = f.explanation;
+
+  const evHtml = (f.evidence||[]).map(e => {
+    const up = e.raw || {};
+    const lines = (e.lines||[]);
+    const shown = lines.slice(0, 40).map(n=>`<span class="shape">${n}</span>`).join('');
+    const more = lines.length > 40 ? `<span class="ln"> …共 ${lines.length} 行</span>` : '';
+    const shapes = (e.call_shape||[]).map(s=>`<span class="shape">${esc(s)}</span>`).join('');
+    const ctx = (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
+    return `<div class="box ev">
+      <div class="top">
+        <span class="tool">${esc(e.tool||'—')}</span>
+        <span class="badge b-mute">${esc(e.kind||'pattern')}</span>
+        <span class="ln">命中 ${lines.length} 处</span>
+        ${up.prim ? `<span class="badge b-usage">prim: ${esc(up.prim)}</span>` : ''}
+      </div>
+      <div class="shapes">${shown}${more}</div>
+      ${shapes ? `<div class="shapes">${shapes}</div>` : ''}
+      ${ctx}
+      ${Object.keys(up).length ? `<pre class="raw">${esc(JSON.stringify(up, null, 2))}</pre>` : ''}
+    </div>`;
+  }).join('') || '<div class="box"><span class="loc">（无证据）</span></div>';
+
+  $('#detail').innerHTML = `<div class="dwrap">
+    <div class="dhead">
+      <h2>${esc(f.algorithm||'—')}</h2>
+      <div class="loc mono">${esc(f.file)}:${esc(f.line)}</div>
+      <div class="drow">
+        <span class="badge b-${esc(f.risk||'review')}">风险 · ${esc(RISK_CN[f.risk]||f.risk||'—')}</span>
+        <span class="badge b-sev-${esc(f.severity||'info')}">严重 · ${esc(SEV_CN[f.severity]||f.severity||'—')}</span>
+        <span class="badge b-usage">用途 · ${esc(USAGE_CN[f.usage]||f.usage||'—')}</span>
+        ${f.confidence!=null ? `<span class="badge b-mute">置信 ${esc(f.confidence)}</span>` : ''}
+        ${(f.tags||[]).map(t=>`<span class="badge b-mute">${esc(t)}</span>`).join('')}
+      </div>
+    </div>
+
+    <section class="blk">
+      <h3>迁移 / 加固结论</h3>
+      <div class="box verdict ${meta.tone}">
+        <span class="badge ${meta.cls}">${esc(meta.cn)}</span>
+        ${r.decided === false ? '<span class="badge b-mute">decided: false</span>' : ''}
+        ${r.source ? `<span class="badge b-mute">source: ${esc(r.source)}</span>` : ''}
+        ${meta.why ? `<div class="loc" style="margin-top:8px">${esc(meta.why)}</div>` : ''}
+        <div class="txt">${esc(r.action || '（无建议文本）')}</div>
+        ${(r.references||[]).length
+          ? `<div class="refs">${r.references.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>`
+          : ''}
+      </div>
+    </section>
+
+    <section class="blk">
+      <h3>AI 解释</h3>
+      <div class="box">${ex ? esc(ex) :
+        '<span class="loc">尚未生成 —— 这一条还没经 ai/ 层处理。</span>'}</div>
+    </section>
+
+    <section class="blk">
+      <h3>证据（${(f.evidence||[]).length} 个来源）</h3>
+      ${evHtml}
+    </section>
+
+    <div class="fid mono">finding_id: ${esc(f.finding_id)} · schema ${esc(f.schema_version)}</div>
+  </div>`;
+}
+
+/* ============================ 载入入口 ============================ */
+
+function boot(rows, from){
+  S.rows = rows.filter(f => f && typeof f === 'object');
+  S.src = from;
+  $('#src').textContent = `${from} · ${S.rows.length} 条`;
+  $('#drop').classList.remove('on');
+  renderStats(); renderFilters(); apply(); renderDetail();
+  if(S.rows.length) { S.sel = S.view[0]; renderList(); renderDetail(); }
+}
+
+async function start(){
+  const got = await autoLoad();
+  if(got) return boot(got.rows, got.from);
+  $('#drop').classList.add('on');
+}
+
+function readFile(file){
+  const fr = new FileReader();
+  fr.onload = () => {
+    try{
+      const d = JSON.parse(fr.result);
+      boot(Array.isArray(d) ? d : [d], file.name);
+    }catch(e){ alert('这个文件不是合法的 JSON：' + e.message); }
+  };
+  fr.readAsText(file, 'utf-8');
+}
+
+$('#pick').onclick = () => $('#picker').click();
+$('#picker').onchange = e => { if(e.target.files[0]) readFile(e.target.files[0]); };
+$('#reload').onclick = () => { $('#drop').classList.add('on'); };
+document.addEventListener('dragover', e => { e.preventDefault(); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+});
+
+start();
+</script>
+</body>
+</html>

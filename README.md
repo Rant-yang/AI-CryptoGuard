@@ -76,8 +76,8 @@ AI-CryptoGuard/
 │   └── samples/           格式示例
 ├── scanner/               ← A：调用扫描工具，产出统一格式
 ├── ai/                    ← B：LLM 解读，产出解释与建议
+├── web/                   ← C：结果查看器（单文件，可离线）
 ├── benchmark/             ← 测试数据与人工标注（算准确率用）
-├── frontend/              ← 界面（后期）
 ├── setup/                 ← 三个工具怎么装（工具本体不入库）
 └── docs/                  ← 会议纪要、设计文档
 ```
@@ -95,6 +95,25 @@ cd AI-CryptoGuard
 
 **然后读统一格式** —— 见 [`core/schema/README.md`](core/schema/README.md)。
 这是所有人写代码的共同契约，**动手前先看懂它**。
+
+**想看效果** —— 端到端跑一遍（scanner → ai → 界面）：
+
+```bash
+pip install -r ai/requirements.txt
+
+python scanner/scan.py <要扫描的目录> -o out/findings.json     # A：找问题
+python ai/enrich.py out/findings.json -o out/findings_ai.json   # B：讲人话
+python web/serve.py                                             # C：看结果
+```
+
+每一步都有自检，改完代码先跑一遍：
+
+```bash
+python scanner/selftest.py       # A
+python ai/selftest.py            # B（桩 LLM，不花钱）
+node   web/selftest.js           # C
+python core/schema/validate.py out/findings_ai.json
+```
 
 ---
 
