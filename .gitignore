@@ -40,6 +40,14 @@ cbom-out*/
 # 只匹配仓库根的 out/，不影响子目录里同名的源码目录。（A 加，C 可复核）
 /out/
 
+# ---------- 3b. benchmark 派生数据：不入库 ----------
+# 标签与匿名树都是**从第三方 benchmark 派生**的，不是我们的代码。
+# 仓库里只存适配器（benchmark/*.py）；数据靠 `python -m benchmark.adapters` 重新生成。
+# 匿名树的映射表（*.map.json）把匿名名映射回原名，等于另一份答案 —— 更不能入库。
+benchmark/labels/
+benchmark/_anon/
+*.map.json
+
 # ---------- 4. Python ----------
 __pycache__/
 *.py[cod]

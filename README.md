@@ -77,10 +77,18 @@ AI-CryptoGuard/
 ├── scanner/               ← A：调用扫描工具，产出统一格式
 ├── ai/                    ← B：LLM 解读，产出解释与建议
 ├── web/                   ← C：结果查看器（单文件，可离线）
-├── benchmark/             ← 测试数据与人工标注（算准确率用）
+├── benchmark/             ← C：算准确率用。四个模块 + 1411 条公开 benchmark 标签
+│   ├── scope.py           裁定表：benchmark 的类别 → 我方轴（范围内/部分/范围外）
+│   ├── anonymize.py       跑分前匿名化（文件名+目录名+源码内容，否则答案会喂给大模型）
+│   ├── adapters.py        四家 benchmark 标签 → 统一格式
+│   └── eval.py            算 Precision / Recall / F1
 ├── setup/                 ← 三个工具怎么装（工具本体不入库）
-└── docs/                  ← 会议纪要、设计文档
+└── docs/                  ← 会议纪要、进度文档
 ```
+
+> `benchmark/` 的数据（`labels/`、`_anon/`）**不入库** —— 它们是从第三方
+> benchmark 派生的。仓库里只留我们自己的适配代码，数据靠
+> `python -m benchmark.adapters` 重新生成（需先把 benchmark 下到 `../_benchmarks/`）。
 
 ---
 
@@ -212,13 +220,78 @@ C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.
 
 ---
 
-## 当前状态（2026-09-29）
+## 当前状态（2026-10-04）
 
-- ✅ 三个工具 smoke test 全部通过（跑通方式见 `setup/README.md`）
-- ✅ 统一 Finding 格式 v0.1 草案已定（`core/schema/`）
-- ✅ 规则库雏形：PQC 用途分派（`core/rules/pqc_routing.py`，自带自检）
-- ✅ 协作分支 `feat/scanner` / `feat/ai` 已建好并推送
-- ⬜ scanner 模块 —— 待 A
-- ⬜ ai 模块 —— 待 B
-- ⬜ benchmark 数据集 —— **当前 0 个标注样本，是最大瓶颈**
-- ⬜ 主流程串联 —— 待 C
+> ⚠️ **本节是内部进度，不是对外文案。**
+> 10-21~10-22 准备最终材料时要按方案 §20 / §21 重写。
+
+### 一、能跑的（全部已合并 `main`）
+
+- ✅ 三个工具 smoke test 通过（`setup/README.md`）
+- ✅ 统一 Finding 格式 v0.1（`core/schema/`）
+- ✅ **scanner**（A）—— 调工具 → 统一格式
+- ✅ **ai**（B）—— LLM 解读 + 云请求前脱敏（§19）
+- ✅ **规则库**（C）—— PQC 用途分派（`core/rules/`，自带自检）
+- ✅ **结果查看器**（C）—— `web/`
+- ✅ **端到端跑通**：扫描 → AI → 界面
+
+### 二、首次实测的准确率（2026-10-04）
+
+**在这之前，"准不准"这个数根本算不出来** —— 没有标注样本就没法算。
+今天有了（4 个公开 benchmark，1411 条标签），第一次跑出真实数字：
+
+| 指标 | 实测 | 方案 §2.3 要求 |
+|---|---|---|
+| Recall | **37.9%** | ≥ 90% |
+| Precision | **24.8%** | ≥ 85% |
+
+**差距是结构性的，不是调参能解决的。** 漏掉的用例里，
+算法名经**变量跨文件传入**：
+
+```java
+String crypto = "DES";                        // 文件 A
+Cipher.getInstance(String.valueOf(crypto));   // 文件 B —— 这里只看到变量名
+```
+
+正则扫描**在结构上就看不见**。文献对照：专用研究工具 Cryptolation
+在同一类 benchmark 上也只有 **47.4% Recall**。
+
+> **所以这个数字是论据，不是污点** —— 它正是「为什么需要
+> 多源融合 + 数据流分析 + 大模型」的实证。只做正则就宣称 90%，才是不诚实的。
+
+### 三、对照方案硬指标
+
+| 方案要求 | 现状 | |
+|---|---|---|
+| 标注样本 ≥ 120（§2.2） | **1411 条** | ✅ 超额 |
+| ≥ 15 类密码安全问题（§2.2） | 范围内约 **30 类** | ✅ |
+| **凭据管理类 ≥ 8 类**（§2.2） | **0 类** | ❌ **完全没开工** |
+| Recall ≥ 90%（§2.3） | 37.9% | ❌ |
+| Precision ≥ 85%（§2.3） | 24.8% | ❌ |
+| `evidence_refs`（§7 / §8.4） | 未实现 | ❌ |
+| ≥ 3 类 Repair → Verify（§10） | 未开始 | ❌ |
+
+### 四、待办（按优先级）
+
+| # | 事项 | 归属 |
+|---|---|---|
+| 1 | 补规则库 9 个已淘汰算法<br>`BLOWFISH CAST IDEA MD2 MD4 NULLCIPHER RC5 TEA XTEA` | C |
+| 2 | 修 `scanner/normalize.py` 的 `RISK_BY_TYPE` 漏项<br>（同一 Blowfish 现在有两个矛盾结论） | A |
+| 3 | 修 `scanner/scan.py --tools-dir` 相对路径拼错 | A |
+| 4 | 查清 611 条误报的构成 | 未认领 |
+| 5 | `ai/` 补 `evidence_refs` | B |
+| 6 | **8 类凭据检测** —— 方案唯一完全没开工的硬指标 | 未认领 |
+| 7 | CamBench_Real 20 个 Java 项目要不要下 | 待定 |
+
+**每一条的「为什么」、以及三个待拍板的决定，
+见 [`docs/会议文档_2026-10-04.md`](docs/会议文档_2026-10-04.md)。**
+
+### 五、怎么自己验一遍
+
+```bash
+python benchmark/scope.py            # 裁定表自检（会交叉问规则库，不是复述自己）
+python benchmark/scope.py --gaps     # 规则库缺口清单（那 9 条）
+python benchmark/scope.py --report   # 范围外 636 条是怎么来的，逐条列出
+python benchmark/anonymize.py        # 匿名化自检（泄漏清零 + 字面量未被改动）
+python benchmark/eval.py out/bench/_all.json   # 算准确率
+```
