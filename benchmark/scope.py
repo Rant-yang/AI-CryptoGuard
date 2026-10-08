@@ -31,6 +31,7 @@
     OUT  明确不在范围内，从指标分母里剔除，但在报告里必须列出来
 """
 
+import os
 from typing import NamedTuple
 
 # ------------------------------------------------------------------ 裁定取值
@@ -70,16 +71,21 @@ class Verdict(NamedTuple):
 CRYPTOAPI_BENCH = {
     # ---------- 落在我们轴上的 ----------
     'brokencrypto': Verdict(
-        IN, ('DES', '3DES', 'DESEDE', 'RC4', 'RC2'), 'encryption', 'broken',
-        'DES/3DES/RC4/RC2 已被经典攻击攻破 —— 与量子无关。'
-        '这正是本项目要纠正的核心误判：上游工具把这类问题标成「量子脆弱」。'),
+        IN, ('DES', 'BLOWFISH', 'RC2', 'RC4', 'IDEA'), 'encryption', 'broken',
+        'DES / Blowfish / RC2 / RC4 / IDEA 均已被经典攻击攻破，'
+        '其中 64 位分组那几个（Blowfish/RC2/IDEA）另有 Sweet32 风险 ——'
+        '都与量子无关。这正是本项目要纠正的核心误判：'
+        '上游工具把这类问题标成「量子脆弱」。'
+        '清单由 benchmark 元数据逐文件核对，见 _selftest 的交叉核对。'),
     'brokenhash': Verdict(
-        IN, ('MD5', 'SHA1'), 'hashing', 'broken',
-        'MD5 / SHA-1 已被实际碰撞攻击攻破（SHAttered），属经典攻破，非量子威胁。'),
+        IN, ('MD5', 'SHA1', 'MD2', 'MD4'), 'hashing', 'broken',
+        'MD5 / SHA-1 已被实际碰撞攻击攻破（SHAttered），MD2 / MD4 更早就失效了。'
+        '四种都属经典攻破，非量子威胁。'),
     'brokenmac': Verdict(
-        IN, ('HMAC',), 'authentication', 'broken',
-        'HMAC 本身不是弱点 —— 弱点在底层哈希（HmacMD5/HmacSHA1）。'
-        '我们记 HMAC，但按底层哈希判风险，所以这条与规则库的 HMAC 条目对齐。'),
+        IN, ('HMACMD5', 'HMACSHA1'), 'authentication', 'broken',
+        'HMAC 本身不是弱点 —— 弱点在底层哈希（HmacMD5 / HmacSHA1）。'
+        '这里记**具体写法**而不是笼统的 HMAC：实测我们的检出报的就是'
+        '`HMACMD5` / `HMACSHA1`，记成 `HMAC` 会一条都对不上。'),
     'insecureasymmetriccrypto': Verdict(
         IN, ('RSA',), 'encryption', 'shor',
         'RSA 受 Shor 威胁。注意本类别里也有 RSA-1024 这类「经典已偏弱」的用例，'
@@ -141,11 +147,14 @@ CRYPTOAPI_BENCH = {
 #: 那是**明示的正确写法**（负样本）。适配器要把它们标成「期望不报」。
 CAMBENCH_CAP = {
     'brokencrypto': Verdict(
-        IN, ('DES', '3DES'), 'encryption', 'broken',
-        '同 CryptoAPI-Bench 的 brokencrypto：经典攻破，非量子。'),
+        IN, ('DES', 'BLOWFISH', 'RC2', 'RC4', 'RC5'), 'encryption', 'broken',
+        '同 CryptoAPI-Bench 的 brokencrypto：经典攻破 + 64 位分组 Sweet32，非量子。'
+        '⚠️ 这里原来写的是 `(DES, 3DES)` —— **五个用例里只认得出一个**。'
+        'CamBench 自己的 `BrokenCrypto{1..5}_meta1.yaml` 逐条写了真实算法，'
+        '清单由 _selftest 与元数据对账，不再靠人记。'),
     'brokenhash': Verdict(
-        IN, ('MD5', 'SHA1'), 'hashing', 'broken',
-        '同 brokenhash：经典攻破。'),
+        IN, ('MD5', 'SHA1', 'MD2', 'MD4'), 'hashing', 'broken',
+        '同 brokenhash：MD5 / SHA-1 / MD2 / MD4 四种经典攻破。'),
     'ecbmode': Verdict(
         IN, ('AESECB',), 'encryption', 'review',
         'ECB 工作模式问题；规则库有对应条目。'),
@@ -220,9 +229,11 @@ LLMCMT_LABEL_KEYWORDS = {
     'md5': Verdict(IN, ('MD5',), 'hashing', 'broken', 'MD5 经典攻破。'),
     'sha1': Verdict(IN, ('SHA1',), 'hashing', 'broken', 'SHA-1 经典攻破。'),
     'sha-1': Verdict(IN, ('SHA1',), 'hashing', 'broken', 'SHA-1 经典攻破。'),
-    'hmacmd5': Verdict(IN, ('MD5',), 'authentication', 'broken',
+    # 两种写法都收：上游有时报 `HmacMD5` 整体，有时只报底层哈希 `MD5`。
+    # 收窄到任一种都会把另一种的正确检出判成漏报 —— 这正是本文件踩过的坑。
+    'hmacmd5': Verdict(IN, ('HMACMD5', 'MD5'), 'authentication', 'broken',
                        'HMAC-MD5 的弱点在底层 MD5。'),
-    'hmacsha1': Verdict(IN, ('SHA1',), 'authentication', 'broken',
+    'hmacsha1': Verdict(IN, ('HMACSHA1', 'SHA1'), 'authentication', 'broken',
                         'HMAC-SHA1 的弱点在底层 SHA-1。'),
     'md4': Verdict(IN, ('MD4',), 'hashing', 'broken',
                    'MD4 早于 MD5 被攻破，应立即淘汰。'
@@ -467,6 +478,121 @@ def _answered_by_rules(alg, usage):
     return _rule_library().route(alg, usage)['reason'] != 'rule-missing'
 
 
+def _bench_meta():
+    """import `benchmark.meta`。
+
+    与 `_rule_library()` 同一个理由、同一个写法：本文件**既能被 import，
+    也能当脚本直接跑**。当脚本跑时 `__package__` 是空的，`from . import meta`
+    直接 ImportError。所以先把仓库根塞进 sys.path，再走绝对导入。
+    """
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from benchmark import meta
+    return meta
+
+
+def _metadata_algorithms(bench, bench_dir=None):
+    """从 benchmark **自带元数据**里抽「每个类别实际用到哪些算法」。
+
+    只取**正样本**（benchmark 自己标 `violation=True` 的）：
+    负样本（`Corrected*`）的描述写的是**安全写法**（`(AES/GCM/NoPadding)`），
+    混进来会把这个类别的声明污染成「也覆盖 AES」。
+
+    Returns:
+        dict {类别: frozenset(算法)}；**数据不在时返回 None**（不是空 dict）
+        —— 空 dict 会被误读成「一个类别都没有」，那是另一回事。
+    """
+    meta = _bench_meta()
+
+    bench_dir = bench_dir or meta.default_bench_dir()
+    out = {}
+
+    cap_root = os.path.join(bench_dir, meta.CAMBENCH_CAP_SUBTREE)
+    if bench == 'cambench-cap' and os.path.isdir(cap_root):
+        index, _ = meta.cambench_cap_meta(cap_root)
+        if not index:
+            return None
+        for rel, rec in index.items():
+            if not rec.get('violation'):
+                continue
+            cat = rel.split('/')[0]
+            out.setdefault(cat, set()).update(rec['algorithms'])
+
+    if bench == 'cryptoapi-bench':
+        cb_root = os.path.join(bench_dir, meta.CRYPTOAPI_BENCH)
+        xlsx = os.path.join(cb_root, 'CryptoAPI-Bench_details.xlsx')
+        if not os.path.isfile(xlsx):
+            return None
+        index, _ = meta.cryptoapi_bench_meta(cb_root, xlsx)
+        if not index:
+            return None
+        for rec in index.values():
+            if not rec.get('violation'):
+                continue
+            out.setdefault(rec['category'], set()).update(rec['algorithms'])
+
+    return out or None
+
+
+def _crosscheck_metadata(bench_dir=None):
+    """**声明 vs 元数据** 的对账。
+
+    这是本文件存在的意义所在：`Verdict.algorithms` 是**人写的声明**，
+    它会不会漂，只有拿**机器抽的事实**去比才知道。
+
+    比对规则：
+      · 只比**正样本抽得出算法**的类别（抽不出的说明元数据没点名，
+        比如 `pbeparameters` 的描述里没有算法，那时声明说了算）
+      · 范围为外的类别不比 —— 它们本来就不该有算法
+      · **必须报告比了几个类别**。比了 0 个还说「一致」等于什么都没查。
+
+    Returns:
+        (checked, fails, skipped_note)
+    """
+    fails, checked = [], 0
+    notes = []
+
+    for bench in ('cryptoapi-bench', 'cambench-cap'):
+        extracted = _metadata_algorithms(bench, bench_dir)
+        if extracted is None:
+            notes.append('%s: 元数据不在，未核对' % bench)
+            continue
+        table = TABLES[bench]
+        n_here = 0
+        for cat, algs in sorted(extracted.items()):
+            if not algs:
+                continue
+            try:
+                v = verdict_for(bench, cat)
+            except KeyError as e:
+                fails.append(str(e).split('\n')[0])
+                continue
+            if v.verdict == OUT:
+                # 范围为外却抽到算法：不是错，但值得说一声
+                notes.append('%s/%s 是范围外，元数据里却有点名的算法 %s（未参与对账）'
+                             % (bench, cat, '/'.join(sorted(algs))))
+                continue
+            declared, actual = set(v.algorithms), set(algs)
+            if declared != actual:
+                missing = sorted(actual - declared)
+                extra = sorted(declared - actual)
+                fails.append(
+                    '%s/%s 声明与元数据不符：%s'
+                    % (bench, cat,
+                       '；'.join(filter(None, [
+                           '缺 %s' % '/'.join(missing) if missing else '',
+                           '多了 %s' % '/'.join(extra) if extra else ''])))
+                    + '（元数据实测 = %s）' % '/'.join(sorted(actual)))
+            checked += 1
+            n_here += 1
+        if n_here:
+            notes.append('%s: 核对 %d 个类别' % (bench, n_here))
+
+    return checked, fails, notes
+
+
 def coverage_gaps():
     """裁定表里声称「范围内」但规则库其实答不出来的算法。
 
@@ -489,9 +615,11 @@ def coverage_gaps():
 def _selftest():
     """硬编码断言 —— 断言的是**真实约定**，不是复述本文件的实现。
 
-    刻意做两件容易漏的事：
+    刻意做三件容易漏的事：
       1. 反向核对：判定表里出现的每个裁定值都必须是三个合法值之一。
       2. 交叉核对：声称范围内的算法，规则库必须真的有 —— 真去 import 核对。
+      3. **与 benchmark 元数据对账**：类别级的算法声明是人写的，会不会漂
+         只有拿机器抽的事实去比才知道。比了几个类别必须报出来。
     """
     fails = []
 
@@ -529,6 +657,10 @@ def _selftest():
                     fails.append('%s/%s 声称可比，但规则库答不出 %s'
                                  % (bench, cat, alg))
 
+    # 3) 与 benchmark 元数据对账 —— 见 _crosscheck_metadata 的 docstring
+    checked, cross_fails, cross_notes = _crosscheck_metadata()
+    fails.extend(cross_fails)
+
     if fails:
         print('[FAIL] scope.py 自检未通过:')
         for f in fails:
@@ -540,27 +672,28 @@ def _selftest():
     n_out = sum(1 for t in TABLES.values() for v in t.values() if v.verdict == OUT)
     print('[PASS] scope.py 自检通过  '
           '（范围内 %d / 部分 %d / 范围外 %d）' % (n_in, n_part, n_out))
+    if checked:
+        print('       · 与 benchmark 元数据对账：%d 个类别的算法声明逐条相符'
+              % checked)
+    else:
+        # **不许把「没查」说成「一致」** —— 比了 0 项本身就是个问题，
+        # 只是数据不在仓库里时这不算我们的错，所以降级为显式跳过。
+        print('       · 与 benchmark 元数据对账：**未执行**（比了 0 个类别）。'
+              '这不是通过 —— 数据在 `_benchmarks/`，仓库里没有。')
+    for n in cross_notes:
+        print('       · ' + n)
     return True
 
 
 #: 已知的、**故意留下**的覆盖缺口 —— 不掩盖，单独记账。
-#: 这些不是 bug，是待办：要么补规则库，要么在报告里说明。
 #:
-#: **这批缺口是从真实 benchmark 数据里发现的，不是想出来的。**
-#: LLM-CMT 的 716 条真实代码里，这些已淘汰算法都出现了，
-#: 而我们的规则库答不出来 —— 一旦答辩被问「MD4 呢」，就是 `rule-missing`。
-#: 补起来很便宜（`_BY_ALGORITHM` 加几行），但必须先知道有这回事。
-KNOWN_GAPS = {
-    ('llmcmt', 'md4'),
-    ('llmcmt', 'md2'),
-    ('llmcmt', 'rc5'),
-    ('llmcmt', 'blowfish'),
-    ('llmcmt', 'idea'),
-    ('llmcmt', 'cast'),
-    ('llmcmt', 'tea used'),
-    ('llmcmt', 'xtea'),
-    ('llmcmt', 'nullcipher'),
-}
+#: 2026-10-04 记了 9 条（MD2/MD4/RC5/Blowfish/CAST/IDEA/TEA/XTEA/NullCipher）；
+#: **2026-10-08 已全部补进 `core/rules/pqc_routing.py._BY_ALGORITHM`，故清空。**
+#:
+#: 保留这个机制（而不是删掉）是有意的：缺口随时会长出来 ——
+#: 换个 benchmark、加一类算法就可能冒新的。空集表示「此刻一条都没有」，
+#: 而不是「以后也不会再有」。`--gaps` 随时能重新算出来。
+KNOWN_GAPS = set()
 
 
 if __name__ == '__main__':

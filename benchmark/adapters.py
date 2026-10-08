@@ -20,6 +20,7 @@ import csv
 import json
 import os
 
+from . import meta
 from . import scope
 
 #: 文件名里出现这些词 = 该文件是「正确写法」的负样本
@@ -40,8 +41,22 @@ class Record(dict):
     """一条统一标签。dict 是为了直接 json.dump。"""
 
 
-def _rec(bench, anon_rel, orig_rel, category, line=None, **extra):
+def _rec(bench, anon_rel, orig_rel, category, line=None, algorithms=None,
+         **extra):
+    """一条统一标签。
+
+    `algorithms` 显式传入时**压过**裁定表里的类别级清单，并在记录里
+    标 `algorithms_source='meta'` 留痕。
+
+    为什么要有这个参数 —— 见 `meta.py` 的模块 docstring：
+    类别级清单是**人写的声明**，元数据是**逐文件的事实**。事实优先，
+    且两者的差异由 `scope._selftest` 强制对账。
+    """
     v = scope.verdict_for(bench, category)
+    if algorithms:
+        algs, src = tuple(algorithms), 'meta'
+    else:
+        algs, src = tuple(v.algorithms), 'declared'
     r = Record(
         benchmark=bench,
         file=_norm_rel(anon_rel),
@@ -49,14 +64,34 @@ def _rec(bench, anon_rel, orig_rel, category, line=None, **extra):
         line=line,
         category=category,
         verdict=v.verdict,
-        algorithm=v.algorithms[0] if v.algorithms else None,
-        algorithms=list(v.algorithms),
+        algorithm=algs[0] if algs else None,
+        algorithms=list(algs),
+        algorithms_source=src,
         usage=v.usage,
         risk=v.risk,
         why=v.why,
     )
     r.update(extra)
     return r
+
+
+def _meta_lookup(index, orig_rel):
+    """在元数据索引里找一条；先按完整相对路径，再退到 basename。
+
+    退回 basename 是因为两边的路径根不一定一致（CryptoAPI-Bench 的
+    标签路径带 `src/main/java/...` 前缀，匿名树不一定带）。
+    """
+    if not index:
+        return None
+    rel = _norm_rel(orig_rel)
+    hit = index.get(rel)
+    if hit is not None:
+        return hit
+    stem = os.path.splitext(os.path.basename(rel))[0]
+    for k, v in index.items():
+        if os.path.splitext(os.path.basename(k))[0] == stem:
+            return v
+    return None
 
 
 # ------------------------------------------------------------------ 工具
@@ -80,12 +115,20 @@ def _category_under(orig_rel, anchor):
 def adapt_cryptoapi_bench(src_root, amap):
     """CryptoAPI-Bench：类别 = `src/main/java/org/cryptoapi/bench/<类别>/` 目录名。
 
-    标签表 `CryptoAPI-Bench_details.xlsx` 是给人看的，机器读不了；
-    但**目录名本身就是标签**，所以不解析 xlsx 也拿得到 ——
-    代价是只能用「文件级」粒度，标不到具体行号。
+    算法/存在性/行号从 `CryptoAPI-Bench_details.xlsx` 逐文件读（见 `meta.py`）。
+
+    ⚠️ 早先这里**不读 xlsx**，算法直接取 `scope.CRYPTOAPI_BENCH[类别].algorithms`
+    —— 那是人手写的一张类别级清单。实测 `brokencrypto` 声明了
+    `3DES/DES/DESEDE/RC2/RC4`，而目录里实际还有 **Blowfish** 和 **IDEA**，
+    于是正确的 Blowfish 检出被扣了两次分（既算漏报又算误报）。
+    现在算法走元数据，类别级清单只在元数据缺席时兜底。
     """
+    index, unknown = meta.cryptoapi_bench_meta(
+        src_root,
+        os.path.join(src_root, 'CryptoAPI-Bench_details.xlsx'))
+
     inv = _invert(amap)
-    out, unknown = [], []
+    out = []
     for anon_rel, orig_rel in sorted(inv.items()):
         if not orig_rel.endswith('.java'):
             continue
@@ -93,9 +136,19 @@ def adapt_cryptoapi_bench(src_root, amap):
         if cat is None:
             continue
         stem = os.path.splitext(os.path.basename(orig_rel))[0]
+        m = _meta_lookup(index, orig_rel)
+        if m is None:
+            kwargs = {}
+            line = None
+        else:
+            kwargs = {'algorithms': m['algorithms']}
+            line = m['line']
+        # 存在性优先信元数据（benchmark 自己说的），退回文件名启发式
+        expect = (m['violation'] if m is not None
+                  else not _is_negative(stem))
         try:
             out.append(_rec('cryptoapi-bench', anon_rel, orig_rel, cat,
-                            expect_misuse=not _is_negative(stem)))
+                            line=line, expect_misuse=expect, **kwargs))
         except KeyError as e:
             unknown.append((orig_rel, str(e).split('\n')[0]))
     return out, unknown
@@ -111,8 +164,10 @@ def adapt_cambench_cap(src_root, amap):
     于是 25 条标签全变成 0 条 —— 而且是**静默变 0**，不报错。
     这也是为什么 `build_all` 要把每家的条数打出来。
     """
+    index, unknown = meta.cambench_cap_meta(src_root)
+
     inv = _invert(amap)
-    out, unknown = [], []
+    out = []
     for anon_rel, orig_rel in sorted(inv.items()):
         if not orig_rel.endswith('.java'):
             continue
@@ -121,9 +176,20 @@ def adapt_cambench_cap(src_root, amap):
         if cat is None:
             continue
         stem = os.path.splitext(os.path.basename(orig_rel))[0]
+        m = _meta_lookup(index, orig_rel)
+        if m is None:
+            kwargs, line = {}, None
+        else:
+            # 负样本（Corrected*）的描述写的是**安全写法**（如 `(AES/GCM/NoPadding)`），
+            # 把它当成这个类别的算法清单会污染声明 —— 只取正样本的算法。
+            kwargs = {'algorithms': m['algorithms'] if m['violation'] else None}
+            kwargs = {k: v for k, v in kwargs.items() if v}
+            line = m['line']
+        expect = (m['violation'] if m is not None
+                  else not _is_negative(stem))
         try:
             out.append(_rec('cambench-cap', anon_rel, orig_rel, cat,
-                            expect_misuse=not _is_negative(stem)))
+                            line=line, expect_misuse=expect, **kwargs))
         except KeyError as e:
             unknown.append((orig_rel, str(e).split('\n')[0]))
     return out, unknown
@@ -314,9 +380,11 @@ def build_all(bench_dir, out_dir):
         ins = sum(1 for r in recs if r['verdict'] == scope.IN)
         part = sum(1 for r in recs if r['verdict'] == scope.PART)
         outs = sum(1 for r in recs if r['verdict'] == scope.OUT)
+        # 算法是从 benchmark 元数据来的，还是从手写声明兜底的？**必须能数出来。**
+        by_meta = sum(1 for r in recs if r.get('algorithms_source') == 'meta')
         print('  %-16s %4d 条 (正 %d / 负 %d)  '
-              '范围内 %d / 部分 %d / 范围外 %d'
-              % (bench, len(recs), pos, neg, ins, part, outs))
+              '范围内 %d / 部分 %d / 范围外 %d  算法源自元数据 %d'
+              % (bench, len(recs), pos, neg, ins, part, outs, by_meta))
         total += len(recs)
         all_unknown.extend((bench,) + u for u in unknown)
 

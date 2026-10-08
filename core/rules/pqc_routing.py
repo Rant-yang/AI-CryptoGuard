@@ -81,6 +81,38 @@ _BY_ALGORITHM = {
             ['RFC 7465']),
     'RC2': ('立即停用，改用 AES-256-GCM。', ['NIST SP 800-131A Rev 2']),
 
+    # ---- 已淘汰的分组密码：**64 位分组是共同死因** ----
+    #      这批不是想出来的，是 2026-10-04 复核时从真实 benchmark 数据里发现的：
+    #      LLM-CMT 的 716 条真实代码里它们都出现过，而当时的表查不到 ——
+    #      答辩被问「MD4 呢」就是一句 `rule-missing`。见 benchmark/scope.py --gaps。
+    #      64 位分组（Blowfish/CAST5/IDEA/RC5/TEA/XTEA）的迁移结论是同一条，
+    #      因为风险同源：生日界只有 2^32，长连接下 Sweet32 可恢复明文。
+    'BLOWFISH': ('64 位分组，长连接下存在 Sweet32 明文恢复风险'
+                 '（CVE-2016-2183）。立即改用 AES-256-GCM。',
+                 ['CVE-2016-2183 (Sweet32)', 'NIST SP 800-131A Rev 2']),
+    'CAST': ('CAST5 为 64 位分组，同 Sweet32 风险。改用 AES-256-GCM。',
+             ['RFC 2144', 'CVE-2016-2183 (Sweet32)']),
+    'CAST5': ('CAST5 为 64 位分组，同 Sweet32 风险。改用 AES-256-GCM。',
+              ['RFC 2144', 'CVE-2016-2183 (Sweet32)']),
+    'IDEA': ('IDEA 为 64 位分组且已不在 NIST 批准列表内。改用 AES-256-GCM。',
+             ['NIST SP 800-131A Rev 2']),
+    'RC5': ('RC5 分组偏小（默认 64 位）、密钥调度弱，已不推荐。'
+            '改用 AES-256-GCM。', ['RFC 2040']),
+    'TEA': ('TEA 存在相关密钥攻击且为 64 位分组，已不推荐。'
+            '改用 AES-256-GCM。', ['Needham & Wheeler, TEA (1994)']),
+    'XTEA': ('XTEA 修补了 TEA 的密钥调度，但仍是 64 位分组，不推荐用于新系统。'
+             '改用 AES-256-GCM。', ['Needham & Wheeler, XTEA (1998)']),
+    'NULLCIPHER': ('NullCipher **完全不加密**（密文即明文），'
+                   '出现它说明该处根本没有做加密。必须改为真实的 AEAD 加密。',
+                   ['Java Cryptography Architecture (JCA) 参考指南']),
+
+    # ---- 已淘汰的哈希：MD2 / MD4 早于 MD5 被攻破 ----
+    'MD2': ('MD2 已完全不可用（校验和构造即被攻破）。'
+            '完整性校验改用 SHA-256 / SHA-3。', ['RFC 1319']),
+    'MD4': ('MD4 已被实际碰撞攻击攻破，远比 MD5 更早失效。'
+            '完整性校验改用 SHA-256 / SHA-3，认证场景改用 HMAC。',
+            ['RFC 6150（已列为 Historic）', 'RFC 1320']),
+
     # ---- 对称加密：Grover 使强度减半，256 位仍安全 ----
     'AES': ('使用 AES-256 并配合 GCM 工作模式。', ['NIST SP 800-38D']),
     'AES128': ('建议升到 AES-256：Grover 下 AES-128 有效强度约 64 位。'
@@ -142,6 +174,16 @@ _BY_ALGORITHM = {
     'KMAC': ('基于 SHA-3 的 MAC，量子安全。', ['NIST SP 800-185']),
     'HMAC': ('MAC，安全性取决于底层哈希；建议底层用 SHA-256 及以上。',
              ['RFC 2104']),
+    # HMAC 的具体写法要单独收录，不能只写笼统的 `HMAC` ——
+    # 实测上游报的是 `HmacMD5` / `HmacSHA1` / `HmacSHA256`，
+    # 归一化后是 `HMACMD5` 这类整体名，只收 `HMAC` 会一条都对不上。
+    'HMACMD5': ('HMAC 本身不是弱点，问题在底层 MD5 已被攻破。'
+                '改用 HMAC-SHA-256。', ['RFC 2104', 'RFC 6151']),
+    'HMACSHA1': ('HMAC 本身不是弱点，问题在底层 SHA-1 已被攻破。'
+                 '改用 HMAC-SHA-256。', ['RFC 2104', 'RFC 6194']),
+    'HMACSHA256': ('HMAC-SHA-256 是当前推荐用法；'
+                   '量子威胁主要是 Grover，对 256 位哈希影响有限。',
+                   ['RFC 2104', 'FIPS 180-4']),
     'CMAC': ('MAC，安全性取决于底层分组密码；建议底层用 AES-256。',
              ['NIST SP 800-38B']),
 
