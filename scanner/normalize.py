@@ -47,6 +47,45 @@ def canon_algorithm(name):
     return ALIASES.get(key, key)
 
 
+# ---------------------------------------------------------------- 合并名拆词
+
+#: 带括号的合并名形态（cbom-scan 的 asset.algo 实测值域）:
+#:     "Legacy cipher (Blowfish/CAST5/IDEA/SEED)"  -> 4 个并列算法，必须拆
+#:     "SSH (RSA/ECDSA/Ed25519)"                   -> 3 个并列算法，拆
+#: 而这些**带括号但不是算法并列**的，必须原样放行:
+#:     "PKCS#8 private key (alg unspecified)"      括号内是说明文字
+#:     "JWT/multi (often RS256/ES256)"             段里含空格，不是算法 token
+#:     "SHA-384/512 (SHA-2)"                       括号内是家族名单段
+#: 纯斜杠的 "AES/GCM/NoPadding" 是「算法/模式/填充」参数写法，也不是并列，
+#: 不带括号天然不进本函数的拆分分支。
+import re as _re
+
+_COMBINED_RE = _re.compile(r'^(.*?)\s*\(([^()]*)\)\s*$')
+
+
+def split_combined_algorithm(name):
+    """识别「前缀 (A/B/C)」多算法合并名，返回算法候选列表；其余原样返回。
+
+    拆分的判定必须同时满足（缺一不拆，宁可不拆也不拆错）:
+        - 整体是 `前缀 (内容)` 结构（带括号才拆，纯斜杠不拆）
+        - 内容按 `/` 拆出 >= 2 段
+        - 每段非空且**不含空格**（排除 "alg unspecified" / "often RS256" 类说明文）
+    """
+    name = str(name or '').strip()
+    if not name:
+        return ['']
+    m = _COMBINED_RE.match(name)
+    if not m:
+        return [name]
+    inner = m.group(2).strip()
+    if not inner:
+        return [name]
+    parts = [p.strip() for p in inner.split('/')]
+    if len(parts) >= 2 and all(p and ' ' not in p for p in parts):
+        return parts
+    return [name]
+
+
 # ---------------------------------------------------------------- 用途映射
 
 #: cbom-scan 的 prim -> schema usage enum

@@ -202,7 +202,10 @@ scanner/
    确定性矛盾（如 RSA/hashing、MD5/encryption 这类实测上游误判）打
    `needs-usage-review` 标记，**复核与纠正归 ai/ 模块**。
 5. CryptoScan 的 `algorithm` 为空的 finding（TLS Configuration /
-   Hardcoded Key Size / PQC Library Import）退化为用 `type` 当算法名。
+   Hardcoded Key Size / PQC Library Import）不再拿 `type` 当算法名
+   （2026-10-08 任务 2 修正，见下方第二版改动）——分组键用 `TYPE:` 前缀，
+   输出的 algorithm/algorithm_normalized 如实留空并打 `no-algorithm` 标记，
+   不进 CBOM。这类线索保留给 C 的凭据检测用。
 6. `raw` 里不保留 CryptoScan 的 `sourceContext`（每条 7 行源码上下文，
    180KB 输出的大头，调试走 `<输出名>_raw/` 留档）与 description / remediation
    等 type 级元数据（按定位搬进 `core/rules/`，不在 110 条里重复 110 份）。
@@ -217,3 +220,60 @@ scanner/
 - Python 3.8+（标准库即可运行 scan.py 本体）
 - 工具本体按 `setup/README.md` 装到 `tools/`（不入库）
 - `core/schema/validate.py` 校验需要 `pip install jsonschema`
+
+## 第二版改动（2026-10-09，A）
+
+对应 `docs/任务清单_2026-10-08.md` 任务 1/2，外加一个实测定量后新增的
+本地字面量源（超出任务清单分工，待与 C 对齐后定稿）。
+
+### 任务 1：合并名拆词（normalize.split_combined_algorithm）
+
+- cbom-scan 的合并名 asset（`Legacy cipher (Blowfish/CAST5/IDEA/SEED)`、
+  `SSH (RSA/ECDSA/Ed25519)`）拆成独立算法各成一组，与 schema 计数单位对齐。
+- 拆词规则保守：**带括号且括号内按 `/` 拆出的每段无空格**才拆；
+  `AES/GCM/NoPadding`（参数写法）、`PKCS#8 private key (alg unspecified)`
+  （说明文字）、`SHA-384/512 (SHA-2)`（家族名单段）都不拆。
+- 拆开后每个候选**只继承 `match` 点名自己的命中**（match 归一后与候选
+  归一相等）；match 对不上任何候选或缺 match 时保守归给全部候选。
+  实测定量：只用 Blowfish 的文件若让 4 个候选继承全部命中，每文件
+  1 条误报变 3 条（FP +13、TP 不动）——match 归属修复后消失。
+
+### 任务 2：type 不许当算法
+
+- CryptoScan 无 `algorithm` 的 finding 分组键用 `TYPE:` + 归一化 type
+  （不撞算法桶、不被前缀规则误判、同文件不同 type 不撞 finding_id），
+  输出 algorithm/algorithm_normalized 如实留空 + `no-algorithm` 标签，
+  不进 CBOM。「没有算法」不许伪装成一个算法名。
+
+### 新增：本地字面量源（adapters/local_literal.py）
+
+- 动机（cryptoapi-bench 203 文件实测定量）：43 条范围内漏报里 24 条，
+  算法名以字符串字面量写在同一文件、只是经变量间接传入调用点
+  （`DEFAULT_CRYPTO = "IDEA"` -> `Cipher.getInstance(String.valueOf(c))`），
+  或 cbom-scan/cryptoscan 算法表压根没有 RC2/IDEA/MD2/MD4。
+- 双条件判定：同文件存在 JCE 汇点调用 + 词表内算法名字符串字面量
+  （转换串只取首段）。词表 = 已淘汰经典算法（DES 族/Legacy cipher 族/
+  RC 族/TEA 族/MD2/MD4/MD5/SHA1，风险统一 broken），**扩表归 C**。
+- usage 一律 unknown；与外部工具同 (file, alg) 重叠时让位（merge 侧
+  剔除）——只补盲区。只扫 .java（三个 benchmark 语料都是 Java）。
+- **schema 对接点（待 C）**：`core/schema/finding.v0.1.json` 的
+  `evidence[].tool` 枚举需加 `'local-literal'` 一行。schema 自己的
+  描述要求「自研模块也要如实填写，不要伪装成第三方」——在 C 加枚举前，
+  `validate.py` 会对本源产出的条目报红，这是预期行为，不是数据错误。
+
+### cryptoapi-bench 实测数字（2026-10-09，匿名树，双工具 + 本地源）
+
+| 版本 | P | R | TP | FP | FN | F1 |
+|---|---|---|---|---|---|---|
+| 第二版前（59705da） | 46.7% | 50.0% | 43 | 49 | 43 | 48.3% |
+| 任务 1+2 完成 | 51.2% | 50.0% | 43 | 41 | 43 | 50.6% |
+| + 本地字面量源 | **58.2%** | **74.4%** | 64 | 46 | 22 | **65.3%** |
+
+- 验收命令：合并名残留 0、拿 type 当算法的残留 0；selftest 103 项全过；
+  逐字节复现一致；除上述 schema 枚举待加外全部合规。
+- 剩余 22 条 FN 的构成：算法名以方法参数传入（文件里没有字面量）、
+  PBE 低迭代次数类（算法名从未出现）、ECB 模式类 —— 均为正则层结构性
+  天花板，正是 ai/ 模块（LLM 复核）的存在理由。
+- 本地源新增的 4 条负样本误报：查证过那 4 个 corrected 文件里确实存在
+  `Cipher.getInstance("RC2")` 这类字面量调用（try/fallback 写法），
+  报出的是真实模式命中，与 benchmark 的负样本口径分歧如实记录。

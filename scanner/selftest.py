@@ -18,7 +18,7 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan           # noqa: E402
+from scanner.adapters import cbom_scan, cryptoscan, local_literal   # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
 from scanner.merge import merge                              # noqa: E402
@@ -27,6 +27,7 @@ from scanner.normalize import (                              # noqa: E402
     max_severity,
     most_severe_risk,
     norm_algorithm,
+    split_combined_algorithm,
     to_relative_path,
     usage_contradicts_algorithm,
 )
@@ -255,6 +256,173 @@ def test_malformed_inputs(check):
           (len(f), f[0]['evidence'][0]['lines']), (1, [1, 2]))
 
 
+def test_split_combined_and_no_algorithm(check):
+    """任务 1（合并名拆词）+ 任务 2（type 不许当算法）的硬性不变式。"""
+    # ---- 任务 1: 拆词规则钉死全部真实形态（cbom-scan asset.algo 实测值域）----
+    check('拆: Legacy cipher 合并名 -> 4 个并列算法',
+          split_combined_algorithm('Legacy cipher (Blowfish/CAST5/IDEA/SEED)'),
+          ['Blowfish', 'CAST5', 'IDEA', 'SEED'])
+    check('拆: SSH 依赖的并列算法',
+          split_combined_algorithm('SSH (RSA/ECDSA/Ed25519)'),
+          ['RSA', 'ECDSA', 'Ed25519'])
+    check('不拆: 无括号原样返回',
+          split_combined_algorithm('AES-128'), ['AES-128'])
+    check('不拆: AES/GCM/NoPadding 是「算法/模式/填充」参数写法，不是并列',
+          split_combined_algorithm('AES/GCM/NoPadding'), ['AES/GCM/NoPadding'])
+    check('不拆: PKCS#8 括号内是说明文字（alg unspecified）',
+          split_combined_algorithm('PKCS#8 private key (alg unspecified)'),
+          ['PKCS#8 private key (alg unspecified)'])
+    check('不拆: JWT/multi 拆出的段含空格，不是算法 token',
+          split_combined_algorithm('JWT/multi (often RS256/ES256)'),
+          ['JWT/multi (often RS256/ES256)'])
+    check('不拆: SHA-384/512 括号内是家族名单段',
+          split_combined_algorithm('SHA-384/512 (SHA-2)'), ['SHA-384/512 (SHA-2)'])
+
+    # ---- 任务 1 端到端: Legacy asset 在 to_groups 里就拆开 ----
+    data = {'assets': [{
+        'id': 'legacy-sym', 'algo': 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)',
+        'prim': 'block-cipher', 'risk': 'broken',
+        'occurrences': [{'file': 'a.go', 'line': 7}],
+    }]}
+    groups = cbom_scan.to_groups(data, 'unused')
+    check('Legacy asset 拆成 4 个独立组', len(groups), 4)
+    check('拆出的组归一名都是单算法（硬性不变式: 不允许 LEGACY 拼接串）',
+          sorted(g['alg_norm'] for g in groups),
+          ['BLOWFISH', 'CAST5', 'IDEA', 'SEED'])
+    check('拆出组的 algorithm 是具体算法名',
+          sorted(g['algorithm'] for g in groups),
+          ['Blowfish', 'CAST5', 'IDEA', 'SEED'])
+    check('raw.algo 保留原始合并名供溯源',
+          groups[0]['raw']['algo'], 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)')
+
+    # ---- 任务 1 补（2026-10-09 cryptoapi-bench 实测抓的坑）: 拆开后命中只归
+    # match 点名的候选 —— 否则只用 Blowfish 的文件会把 CAST5/IDEA/SEED 全带上，
+    # 每个文件 1 条误报变 3 条（TP 不动、FP +13 的回归就这样来的）----
+    data = {'assets': [{
+        'id': 'legacy2', 'algo': 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)',
+        'prim': 'block-cipher', 'risk': 'broken',
+        'occurrences': [
+            {'file': 'b.go', 'line': 1, 'match': 'Blowfish'},
+            {'file': 'b.go', 'line': 2, 'match': 'CAST5'},
+            {'file': 'c.go', 'line': 5, 'match': 'ssh'},   # 对不上任何候选
+            {'file': 'c.go', 'line': 6},                   # 无 match
+        ],
+    }]}
+    got = sorted((g['file'], g['algorithm'], tuple(g['lines']))
+                 for g in cbom_scan.to_groups(data, 'unused'))
+    check('match 点名的候选才继承命中；对不上/缺失时保守归全部',
+          got, [
+        ('b.go', 'Blowfish', (1,)), ('b.go', 'CAST5', (2,)),
+        ('c.go', 'Blowfish', (5, 6)), ('c.go', 'CAST5', (5, 6)),
+        ('c.go', 'IDEA', (5, 6)), ('c.go', 'SEED', (5, 6)),
+    ])
+
+    # ---- 任务 2: 无 algorithm 的 finding 不再拿 type 当算法 ----
+    r = cryptoscan.to_groups({'findings': [
+        {'type': 'Mutual TLS (mTLS)', 'file': r'D:\p\a.py', 'line': 5,
+         'purpose': 'tls-configuration', 'severity': 0}]}, r'D:\p')
+    check('无 algorithm 的 finding 分组键用 TYPE: 前缀',
+          r[0]['alg_norm'], 'TYPE:MUTUALTLSMTLS')
+    f = merge(r)[0]
+    check('algorithm_normalized 如实留空（不打假算法）',
+          f['algorithm_normalized'], '')
+    check('algorithm 同样留空', f['algorithm'], '')
+    check('打 no-algorithm 标记', 'no-algorithm' in f.get('tags', []), True)
+    check('risk 兜底照常工作: 表外 type 落 review（不猜，扩表归 C）',
+          f['risk'], 'review')
+    f_hk = merge(cryptoscan.to_groups({'findings': [
+        {'type': 'Hardcoded Key Size', 'file': r'D:\p\a.py', 'line': 9,
+         'severity': 1}]}, r'D:\p'))[0]
+    check('risk 兜底照常工作: 表内 type 按 RISK_BY_TYPE 裁决',
+          f_hk['risk'], 'grover')
+
+    # ---- 任务 2: finding_id 不撞（同文件同用途、不同 type）----
+    r2 = merge(cryptoscan.to_groups({'findings': [
+        {'type': 'Hardcoded Key Size', 'file': r'D:\p\a.py', 'line': 1},
+        {'type': 'Mutual TLS (mTLS)', 'file': r'D:\p\a.py', 'line': 2},
+    ]}, r'D:\p'))
+    check('同文件不同 type 是两条独立 finding', len(r2), 2)
+    check('两条的 finding_id 不撞（分桶键入指纹）',
+          r2[0]['finding_id'] != r2[1]['finding_id'], True)
+
+    # ---- 任务 2: 有 algorithm 的 finding 走原路径不受影响 ----
+    r3 = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'RSA', 'type': 'RSA Algorithm', 'file': r'D:\p\b.py',
+         'line': 3, 'purpose': 'signing', 'severity': 3}]}, r'D:\p')
+    check('有 algorithm 的 finding 照常归一', r3[0]['alg_norm'], 'RSA')
+
+
+def test_local_literal(check):
+    """本地字面量源：双条件判定、只补盲区、词表外不猜。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        def put(name, text):
+            with open(os.path.join(root, name), 'w', encoding='utf-8') as fh:
+                fh.write(text)
+            return name
+
+        # 1) 汇点 + 字面量（经变量间接传入的真实形态）
+        put('a.java', 'class A {\n'
+                      '  static final String D = "IDEA";\n'          # 行 2
+                      '  void go(char[] c) throws Exception {\n'
+                      '    Cipher.getInstance(String.valueOf(c));\n'  # 行 4
+                      '  } }\n')
+        # 2) 只有字面量、没有汇点（测试资源/文档 —— 不许触发）
+        put('b.java', 'class B { static final String D = "RC2"; }\n')
+        # 3) 转换串首段命中（调用点字面量、算法表缺词的形态）
+        put('c.java', 'class C { void go() throws Exception {\n'
+                      '  Cipher.getInstance("DES/CBC/PKCS5Padding");\n'  # 行 2
+                      '} }\n')
+        # 4) 健全算法不在词表（AES 不是已淘汰经典算法）
+        put('d.java', 'class D { static final String D = "AES";\n'
+                      '  void go() throws Exception { Cipher.getInstance(D); } }\n')
+        # 5) 注释里出现算法名（无引号 —— 不算写死的算法选择）
+        put('e.java', 'class E { // IDEA is broken\n'
+                      '  void go() throws Exception { Cipher.getInstance(x); } }\n')
+        # 6) 同文件多字面量去重成一个组
+        put('f.java', 'class F {\n'
+                      '  static final String D1 = "MD4";\n'          # 行 2
+                      '  static final String D2 = "MD4";\n'          # 行 3
+                      '  void go(char[] c) throws Exception {\n'
+                      '    MessageDigest.getInstance(String.valueOf(c));\n'  # 行 5
+                      '  } }\n')
+
+        groups = {(g['file'], g['alg_norm']): g
+                  for g in local_literal.scan(root)}
+        check('汇点+字面量 -> IDEA 组', ('a.java', 'IDEA') in groups, True)
+        g = groups[('a.java', 'IDEA')]
+        check('行号 = 字面量行 + 汇点行', g['lines'], [2, 4])
+        check('risk 统一 broken（词表内全是已淘汰经典算法）', g['risk'], 'broken')
+        check('usage 如实 unknown（不猜用途）', g['usage'], 'unknown')
+        check('无汇点不触发（b.java 不产出）',
+              [k for k in groups if k[0] == 'b.java'], [])
+        check('转换串首段命中 -> DES 组', ('c.java', 'DES') in groups, True)
+        check('词表外健全算法不触发（d.java 不产出）',
+              [k for k in groups if k[0] == 'd.java'], [])
+        check('无引号注释不触发（e.java 不产出）',
+              [k for k in groups if k[0] == 'e.java'], [])
+        if ('f.java', 'MD4') in groups:
+            check('同文件多字面量去重成一个组', groups[('f.java', 'MD4')]['lines'],
+                  [2, 3, 5])
+        else:
+            check('同文件多字面量去重成一个组', ('f.java', 'MD4') in groups, True)
+
+        # ---- 让位规则：外部工具已覆盖的 (file, alg)，本源不添 unknown 条 ----
+        g_lit = _group('local-literal', 'a.java', 'BLOWFISH', 'unknown', [1],
+                       risk='broken', algorithm='Blowfish')
+        g_cbom = _group('cbom-scan', 'a.java', 'BLOWFISH', 'encryption', [2],
+                        risk='broken', algorithm='Blowfish')
+        f = merge([g_lit, g_cbom])
+        check('工具已覆盖的 (file,alg) 本源让位（不拆成两条）',
+              [(x['usage'], x['evidence'][0]['tool']) for x in f],
+              [('encryption', 'cbom-scan')])
+        f2 = merge([g_lit])
+        check('盲区里本源独立成条（unknown + needs-usage-review）',
+              (len(f2), f2[0]['usage'], f2[0]['risk'],
+               'needs-usage-review' in f2[0].get('tags', [])),
+              (1, 'unknown', 'broken', True))
+
+
 def test_coverage(check):
     a = [_group('cbom-scan', 'a.go', 'RSA', 'unknown', [1, 2])]
     b = [_group('cryptoscan', 'a.go', 'RSA', 'signing', [2, 3])]
@@ -289,7 +457,8 @@ def main():
 
     for fn in (test_normalize, test_relative_path, test_merge_absorb_and_fuse,
                test_merge_risk_overrides_and_tags, test_ed25519_match_refinement,
-               test_malformed_inputs, test_coverage, test_cbom_report):
+               test_split_combined_and_no_algorithm, test_malformed_inputs,
+               test_local_literal, test_coverage, test_cbom_report):
         fn(check)
 
     if fails:

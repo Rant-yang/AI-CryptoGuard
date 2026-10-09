@@ -27,6 +27,9 @@ def render_cbom(findings, target_label):
     """findings 列表 -> CycloneDX 1.6 dict。"""
     by_alg = {}
     for f in findings:
+        if not f['algorithm_normalized']:
+            # no-algorithm 的线索类发现不属于「算法物料清单」，不进 CBOM
+            continue
         by_alg.setdefault(f['algorithm_normalized'], []).append(f)
 
     components = []

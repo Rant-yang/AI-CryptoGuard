@@ -27,6 +27,7 @@ from scanner.normalize import (
     CRYPTOSCAN_SEVERITY_TO_ENUM,
     SEVERITY_ORDER,
     canon_algorithm,
+    norm_algorithm,
     to_relative_path,
 )
 
@@ -109,9 +110,12 @@ def run(target, tools_dir, raw_out=None, timeout=300):
 def to_groups(data, target):
     """CryptoScan JSON -> ToolGroup 列表（分组单位与 cbom_scan 相同）。
 
-    algorithm 为空的 finding（TLS Configuration / Hardcoded Key Size /
-    PQC Library Import 等）退化为用 type 作为算法名 —— 保持组可聚合，
-    具体叫什么由 raw 里的 type 溯源。
+    algorithm 为空的 finding（TLS 配置 / 证书 / 硬编码密钥类）**不再退化成
+    拿 type 当算法名**（2026-10-08 任务 2：type 回答「发现了什么问题」，
+    不是「用了什么算法」，实测 45 条误报 + 报告出「算法: Mutual TLS (mTLS)」
+    这种洋相）。这类发现保留（C 的凭据检测要用线索），但分组键用 TYPE:
+    前缀 —— 明显不是算法、不会被 startswith 系列规则误判、同文件不同
+    type 也不撞桶；merge 输出时算法字段如实留空并打 no-algorithm 标记。
     """
     buckets = {}
     findings = data.get('findings') or []
@@ -119,8 +123,14 @@ def to_groups(data, target):
         # 上游格式变化（findings 不是数组）时安全归零，不迭代字符串炸掉
         findings = []
     for f in findings:
-        algo_raw = f.get('algorithm') or f.get('type') or ''
-        alg_norm = canon_algorithm(algo_raw)
+        algo_raw = f.get('algorithm') or ''
+        if algo_raw:
+            alg_norm = canon_algorithm(algo_raw)
+        else:
+            t = f.get('type') or ''
+            if not t:
+                continue        # 无 algorithm 也无 type：定位不了任何东西
+            alg_norm = 'TYPE:' + norm_algorithm(t)
         usage = CRYPTOSCAN_PURPOSE_TO_USAGE.get(f.get('purpose', ''), 'unknown')
         rel = to_relative_path(f.get('file'), target)
         line = f.get('line')

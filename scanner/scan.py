@@ -6,7 +6,8 @@
 
 流程:
     定位工具(tools/) -> cbom-scan + CryptoScan 各跑一次 -> 各自转成 ToolGroup
-    -> merge 融合 -> 写 findings.json（+ 原始输出与 meta 留档）-> 打印汇总
+    -> 本地字面量源补盲区（无外部依赖）-> merge 融合
+    -> 写 findings.json（+ 原始输出与 meta 留档）-> 打印汇总
 
 退出码:
     0  成功（包括「扫描完成但零发现」；单工具失败但另一工具可用时也返回 0，
@@ -31,7 +32,7 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan   # noqa: E402
+from scanner.adapters import cbom_scan, cryptoscan, local_literal   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
@@ -138,6 +139,23 @@ def main(argv=None):
     if len(failures) == len(plan):
         _print_safe('[错误] 选用的工具全部失败，无法继续。')
         return 3
+
+    # ---- 本地字面量源（第三层模式证据，无外部依赖，总跑）
+    # 只补外部工具的盲区（算法名经变量间接传入/算法表缺词），
+    # 与工具重叠的分组在 merge 侧让位 —— 见 local_literal.py docstring
+    t0 = time.time()
+    lit_groups = local_literal.scan(target)
+    all_groups.extend(lit_groups)
+    meta_tools[local_literal.TOOL_NAME] = {
+        'ok': True,
+        'seconds': round(time.time() - t0, 2),
+        'groups': len(lit_groups),
+        'raw': None,
+        'summary': None,
+    }
+    _print_safe('[ok] %s 完成（%.2fs，产出 %d 个工具分组）'
+                % (local_literal.TOOL_NAME,
+                   meta_tools[local_literal.TOOL_NAME]['seconds'], len(lit_groups)))
 
     findings = merge(all_groups)
 
