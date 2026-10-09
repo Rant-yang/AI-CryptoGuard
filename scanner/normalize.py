@@ -151,7 +151,11 @@ RISK_BY_TYPE = {
     'RSA Algorithm': 'shor',
     'Elliptic Curve Cryptography': 'shor',
     'TLS Configuration': 'shor',
-    'AES-GCM Authenticated Encryption': 'grover',
+    'AES-GCM Authenticated Encryption': 'safe',
+    #: ↑ 原 grover（量子密钥减半只是迁移规划提示, 不是当前缺陷）。AES-GCM
+    #: 是 AEAD 最佳实践、CamBench 修复版的标准形态 —— grover 档会把它当
+    #: 问题进清单, 在「公认干净位置」上全成 FP（cambench-cap 实测 9 条）。
+    #: safe 档由 split_output 移出问题清单, CBOM 资产图仍保留条目。
     'ChaCha20-Poly1305': 'grover',
     'Poly1305': 'grover',
     'KMAC': 'grover',

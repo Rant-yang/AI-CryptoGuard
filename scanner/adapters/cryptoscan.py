@@ -170,8 +170,43 @@ def to_groups(data, target):
             g['quantum_as_seen'].append(qr)
         g['raw']['records'].append({k: f.get(k) for k in RAW_FIELDS})
 
+    # ---- 同 (file, alg) 的 usage 摆动合流 ----
+    # purpose 是逐行启发式: 同文件同算法的命中行常被拆成 authentication/
+    # encryption 两个桶（PBKDF2 实测高发）——那不是两种用途, 是同一处使用
+    # 的判定摆动。计数单位 (file, algorithm) 之下它只能是一条: 合到**行数
+    # 最多的具体用途**桶, 行号与上游记录全并, severity/confidence 照取 max。
+    # unknown 桶的行留给 merge 的行号吸收按精确行号细分 —— 不到那一步不猜。
+    by_falg = {}
+    for g in buckets.values():
+        by_falg.setdefault((g['file'], g['alg_norm']), []).append(g)
+    for same in by_falg.values():
+        if len(same) < 2:
+            continue
+        specific = [g for g in same if g['usage'] != 'unknown']
+        if not specific:
+            continue
+        main = max(specific, key=lambda g: (len(g['lines']), g['usage']))
+        for g in same:
+            if g is main:
+                continue
+            main['lines'] += g['lines']
+            if g['severity'] is not None and (
+                    main['severity'] is None or
+                    SEVERITY_ORDER[g['severity']] > SEVERITY_ORDER[main['severity']]):
+                main['severity'] = g['severity']
+            if g['confidence'] is not None and (
+                    main['confidence'] is None or
+                    g['confidence'] > main['confidence']):
+                main['confidence'] = g['confidence']
+            main['risk_types'] += g['risk_types']
+            main['quantum_as_seen'] += g['quantum_as_seen']
+            main['raw']['records'] += g['raw']['records']
+            g['lines'] = []          # 置空 = 后续过滤掉该组
+
     groups = []
     for g in buckets.values():
+        if not g['lines']:
+            continue
         g['lines'] = sorted(set(g['lines']))
         g['risk_types'] = sorted(set(g['risk_types']))
         g['quantum_as_seen'] = sorted(set(g['quantum_as_seen']))

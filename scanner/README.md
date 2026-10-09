@@ -257,22 +257,40 @@ scanner/
 - 手法是**受控常量传播**（不是完整数据流分析，那是 CrySentry 级别工具的事）：
   同文件不动点迭代（别名链 / `toCharArray` / `String.valueOf` /
   `Integer.parseInt(String.valueOf(x))` 壳剥离 / `HashMap.put("k",v)` ->
-  `get("k")` / 方法与构造器实参到形参）+ 跨文件一跳（caller 实参 ->
-  callee 形参，锚点 = 类名）。
-- 五条产出规则：R1 同文件词表字面量 + JCE 汇点（兜底）；R2 词表字面量
-  被传给树内类（caller 侧）；R3 JCE 汇点参数经传播解析到词表常量
-  （callee 侧/间接链）；R4 `PBEParameterSpec` 迭代实参解析值 < 1000
-  （低迭代是健全 KDF 的实现误用 -> risk=review，不算 broken；实参用括号
-  配平取 —— `Integer.parseInt(String.valueOf(count))` 是两层嵌套；
-  常量来自 caller 时 caller 文件反向同报一条，规则留痕 R4x）；
-  R5 转换串模式段为 ECB（`AES/ECB` -> review）。
+  `get("k")` / 方法与构造器实参到形参 / 恒假 if 块死代码剔除）+
+  跨文件一跳（caller 实参 -> callee 形参，锚点 = 类名）。
+- 产出规则（R1-R12）：
+  - R1 同文件词表字面量 + JCE 汇点（兜底；`PBEWithMD5AndDES` 组合名拆
+    底层词表算法）
+  - R2 词表字面量被传给项目内对象（caller 侧；接收者是显式 `new` 构造
+    即可，类文件不必在树内）
+  - R3 JCE 汇点参数经传播解析到词表常量（callee 侧/间接链）
+  - R4 PBE 低迭代，**must 口径**：`PBEParameterSpec` 第 2 参 /
+    `PBEKeySpec` 第 3 参的可达值上界 <= 1000（含边界）才报。恒假 if 块
+    的赋值按死代码剔除（`choice=0; if(choice>1) count=1050` -> 上界 5，
+    照报）、条件可达的升值取上界（corrected 修复形态不报）—— 这是两个
+    benchmark 同形态标签相反（llmcmt af10401 vs cryptoapi a1e0131）的
+    数据流语义解。常量来自 caller 时反向同报（R4x）
+  - R5 转换串模式段 ECB，**首段限块密码**（`RSA/ECB/OAEP` 的 "ECB" 是
+    NoPadding 历史名不是模式，不报）
+  - R6 Python：pycryptodome（`MOD.new(key, MOD.MODE_ECB)`）与
+    cryptography 库（`Cipher(algorithms.AES(k), modes.ECB())` 含变量形态）
+  - R7 C/C++（OpenSSL 家族）：`EVP_<alg>_ecb` / `<ALG>_ecb_encrypt` /
+    `EVP_<词表>` / 裸哈希与加密函数；词表算法一律报纯算法名（DES 用什么
+    模式都 broken，`/ECB` 后缀只对健全的 AES 有语义）
+  - R8 Go：`<pkg>.NewCipher/New`（des/rc4/cast5/tea/**xtea**）、
+    `gmd5.MustEncrypt*`；import 不做判定条件（blank import 有噪声）
+  - R10 ucryptolib（MicroPython）：`aes(key, MODE_ECB)` 含
+    `mode = MODE_ECB` 变量形态
+  - R12 OpenSSL `PKCS5_PBKDF2_HMAC` 第 5 参迭代数（`#define` 宏代入，
+    must <= 1000 与 R4 一致）
 - 误报防线：词表只收**已淘汰经典算法**（DES 族 / Legacy cipher 族 / RC 族 /
   TEA 族 / MD2 / MD4 / MD5 / SHA1，风险统一 broken），扩表归 C；
-  R4 必须精确解析**传给 PBEParameterSpec 的那个实参**（corrected 负样本
-  文件里有 byte[32]/put("x",2) 这类无关小数字，粗规则会误伤）；解析不到
-  常量就不报（不猜）。
+  R4 必须精确解析**传给 PBE 汇点的那个实参**（corrected 负样本文件里有
+  byte[32]/put("x",2) 这类无关小数字，粗规则会误伤）；解析不到常量就
+  不报（不猜）。
 - usage 一律 unknown；与外部工具同 (file, alg) 重叠时让位（merge 侧
-  剔除）——只补盲区。只扫 .java（三个 benchmark 语料都是 Java）。
+  剔除）——只补盲区。
 - **schema 对接点（待 C）**：`core/schema/finding.v0.1.json` 的
   `evidence[].tool` 枚举需加 `'local-literal'` 一行。schema 自己的
   描述要求「自研模块也要如实填写，不要伪装成第三方」——在 C 加枚举前，
@@ -292,6 +310,18 @@ scanner/
   schema 合规的 finding 数组（validate 实测 27 条全过），留给 C 的
   凭据/配置检测线。
 
+### 新增（2026-10-09 晚）：两条计数口径修正（llmcmt 实测定量）
+
+- **cryptoscan 同 (file, alg) 的 purpose 摆动在 adapter 层合流成一条**
+  （usage = 行数最多的具体用途，行号/上游记录全并，severity/confidence
+  取 max）。purpose 是逐行启发式，PBKDF2 同一处使用被拆成
+  authentication/encryption 两桶 —— 计数单位 (file, algorithm) 之下只能
+  是一条。实测定量：llmcmt 124 条 FP 全来自此（合流后消失）。
+- **`RISK_BY_TYPE['AES-GCM Authenticated Encryption']` grover -> safe**：
+  AES-GCM 是 AEAD 最佳实践、CamBench 修复版标准形态，grover 档把
+  「正确做法」当问题（cambench-cap 实测 9 条 FP）；safe 档不进问题清单，
+  CBOM 资产图保留条目。
+
 ### cryptoapi-bench 实测数字（2026-10-09，匿名树，双工具 + 本地源）
 
 | 版本 | P | R | TP | FP | FN | F1 |
@@ -301,10 +331,30 @@ scanner/
 | + 本地字面量源（R1 双条件版） | 58.2% | 74.4% | 64 | 46 | 22 | 65.3% |
 | + 常量传播（R1-R5） | 64.6% | 97.7% | 84 | 46 | 2 | 77.8% |
 | + 输出分层（safe / no-algorithm） | **86.0%** | **100.0%** | 86 | 14 | 0 | **92.5%** |
+| + 多语言/must 口径/合流（all8） | **87.8%** | **100.0%** | 86 | 12 | 0 | **93.5%** |
+
+### 四语料评测（2026-10-09 all8，匿名树单独扫描后合并）
+
+| 语料 | P | R | 说明 |
+|---|---|---|---|
+| cryptoapi-bench | **87.8%** | **100.0%** | 双达标（P>=85 / R>=90） |
+| cambench-cap | **92.9%** | **92.9%** | 双达标 |
+| llmcmt | 78.3% | 77.6% | 瓶颈在评测口径/标签质量（见下与对接清单） |
+| cambench-real | 未扫描 | 未扫描 | 仓库不含源码（20 个真实项目需 clone） |
+
+llmcmt 演进：R6-R8 多语言 + must 口径（56.2/70.1）-> cryptoscan usage
+摆动合流 + AES-GCM 判 safe + 词表算法报纯名 + R5 限块密码（76.7/70.8）
+-> R10 ucryptolib + R12 C 宏 PBKDF2 + PBEWith 拆词 + R2 放宽 + Go 补齐
+（**78.3/77.6**）。检测侧干净可修的已修完；剩余 FN/FP 全部落在四类
+**非检测问题**（明细见 `out/C对接清单_2026-10-09.md`）：
+1. 范围外正样本文件上的真实命中被 `fp=reported-tp` 一刀切计入（~69 条）
+2. 标签类目算法与代码不符（keysize 类全标 [RSA] 实为 AES/DSA 等 ~40 条）
+3. PBE 迭代阈值两 benchmark 打架（1020/11010 标 partial vs 1050=corrected）
+4. 跨文件用例 callee 文件不在匿名树、OpenSSL 源码混入语料
 
 - 方案硬指标 P≥85% / R≥90%：**两项均达标**。
 - 验收：合并名残留 0、拿 type 当算法的残留 0、no-algorithm/safe 混入
-  问题清单 0；selftest 119 项全过；逐字节复现一致（findings 与 leads
+  问题清单 0；selftest 当前置 140 项全过（多语言/must 口径/合流各有断言）；逐字节复现一致（findings 与 leads
   双文件）；leads 27 条 schema 全合规，findings 的 48 条报红**全部且仅**
   为上述 `local-literal` 枚举待加项。
 - 剩余 14 条 FP 的构成（全部逐条查证过）：11 条 corrected 负样本上

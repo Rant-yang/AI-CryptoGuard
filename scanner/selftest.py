@@ -352,6 +352,45 @@ def test_split_combined_and_no_algorithm(check):
     check('有 algorithm 的 finding 照常归一', r3[0]['alg_norm'], 'RSA')
 
 
+def test_cryptoscan_usage_fuse(check):
+    """同 (file, alg) 的 purpose 摆动在 adapter 层合流成一组。
+
+    llmcmt 实测 124 条 FP 全来自 cryptoscan 逐行 purpose 把同一处使用拆成
+    authentication/encryption 两桶 —— 计数单位 (file, algorithm) 之下它
+    只能是一条。合到行数最多的具体用途桶, 行号全并。
+    """
+    data = {'findings': [
+        # 同文件同算法 3 行: 2 行 encryption、1 行 authentication -> 一组
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 4,
+         'purpose': 'encryption', 'severity': 1, 'confidence': 'LOW'},
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 14,
+         'purpose': 'encryption', 'severity': 1, 'confidence': 'LOW'},
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 27,
+         'purpose': 'authentication', 'severity': 2, 'confidence': 'MEDIUM'},
+        # 同文件另一算法不受影响
+        {'algorithm': 'AES-GCM', 'file': r'D:\p\a.py', 'line': 30,
+         'purpose': 'encryption', 'severity': 0},
+    ]}
+    groups = cryptoscan.to_groups(data, r'D:\p')
+    check('同 (file,alg) 合流成一组（usage=行数最多的 encryption）',
+          [(g['algorithm'], g['usage']) for g in groups],
+          [('PBKDF2', 'encryption'), ('AES-GCM', 'encryption')])
+    main = groups[0]
+    check('行号全并 + 顺序稳定', main['lines'], [4, 14, 27])
+    check('severity 取最严重（跨桶照比）', main['severity'], 'medium')
+    check('confidence 取最大（跨桶照比, MEDIUM=0.6）', main['confidence'], 0.6)
+    check('被并桶的记录不丢（raw.records 3 条）',
+          len(main['raw']['records']), 3)
+    # 全 unknown 的多桶不猜（由 merge 的行号吸收按精确行号细分）
+    data2 = {'findings': [
+        {'algorithm': 'RSA', 'file': r'D:\p\b.py', 'line': 1, 'purpose': None},
+        {'algorithm': 'RSA', 'file': r'D:\p\b.py', 'line': 2},
+    ]}
+    g2 = cryptoscan.to_groups(data2, r'D:\p')
+    check('全 unknown 时保持单桶 unknown（不猜用途）',
+          [(g['usage'], g['lines']) for g in g2], [('unknown', [1, 2])])
+
+
 def test_local_literal(check):
     """本地字面量源：双条件判定、只补盲区、词表外不猜。"""
     import tempfile
@@ -443,6 +482,68 @@ def test_local_literal(check):
                        '    String c = h.get("aaa");\n'
                        '    MessageDigest.getInstance(c); }\n'
                        '}\n')
+        # 13) R4 must 口径: 恒假分支的升值是死代码（llmcmt af10401 形态）
+        put('dead1.java', 'class Dead1 {\n'
+                          '  void go() {\n'
+                          '    int choice = 0;\n'
+                          '    int count = 5;\n'
+                          '    if (choice > 1)\n'
+                          '      count = 1050;\n'          # 恒假 -> 死代码
+                          '    PBEParameterSpec s = new PBEParameterSpec(new byte[8], count); }\n'
+                          '}\n')
+        # 14) R4 must 口径: 可达分支存在合规路径 -> 不报（a1e0131 corrected 形态）
+        put('dead2.java', 'class Dead2 {\n'
+                          '  void go(boolean fix) {\n'
+                          '    int count = 5;\n'
+                          '    if (fix)\n'
+                          '      count = 1050;\n'          # 参数条件可达
+                          '    PBEParameterSpec s = new PBEParameterSpec(new byte[8], count); }\n'
+                          '}\n')
+        # 15) R4 阈值含边界: 恰 1000 也报（llmcmt af10416 形态, PBEKeySpec 第 3 参）
+        put('pbe3.java', 'class Pbe3 {\n'
+                         '  void go() {\n'
+                         '    int iterations = 1000;\n'
+                         '    PBEKeySpec spec = new PBEKeySpec(new char[8], new byte[8], iterations, 128); }\n'
+                         '}\n')
+        # 16) 多语言: py ECB / C 词表+ECB / Go 词表
+        put('ecb.py', 'from Crypto.Cipher import AES\n'
+                      'AES_128 = AES.new(K, AES.MODE_ECB)\n')
+        put('des3.py', 'from Crypto.Cipher import DES3\n'
+                       'cipher = DES3.new(key, DES3.MODE_CBC)\n')
+        put('md4.c', '#include <openssl/md4.h>\n'
+                     'void go() { MD4((const unsigned char*)t, len, out); }\n')
+        put('ecb.c', '#include <openssl/evp.h>\n'
+                     'void go() { EVP_aes_128_ecb(); }\n')
+        put('bf.cpp', 'void go() { BF_ecb_encrypt(p, c, &k, 1); }\n')
+        put('cast.go', 'import "golang.org/x/crypto/cast5"\n'
+                       'func go2() { block, _ := cast5.NewCipher(key) }\n')
+        put('xtea.go', 'import "golang.org/x/crypto/xtea"\n'
+                       'func go3() { block, _ := xtea.NewCipher(key) }\n')
+        put('gmd5.go', 'func go4() { s := gmd5.MustEncryptString(pw) }\n')
+        # 17) R10 ucryptolib (MicroPython): mode = MODE_ECB 变量形态
+        put('ucrypto.py', 'from ucryptolib import aes, MODE_ECB, MODE_CBC\n'
+                          'def enc(key, data, mode):\n'
+                          '    cipher = aes(key, mode)\n'
+                          '    return cipher.encrypt(data)\n'
+                          'def go(key, data):\n'
+                          '    mode = MODE_ECB\n'
+                          '    return enc(key, data, mode)\n')
+        # 18) R12 C 宏迭代数: #define ITERATIONS 1000 (含边界)
+        put('pbemac.c', '#include <openssl/evp.h>\n'
+                        '#define ITERATIONS 1000\n'
+                        'void go() { PKCS5_PBKDF2_HMAC(pw, l, salt, s, ITERATIONS, EVP_sha256(), klen, out); }\n')
+        # 19) JCE PBE 组合名拆词: PBEWithMD5AndDES -> MD5 + DES
+        put('pbec.java', 'class Pbec {\n'
+                         '  void go() throws Exception {\n'
+                         '    Cipher c = Cipher.getInstance("PBEWithMD5AndDES");\n'  # 行 3
+                         '  } }\n')
+        # 20) R2 放宽: 接收者是显式 new 构造、类文件不在树内 -> caller 仍报
+        put('caller2.java', 'class Caller2 {\n'
+                            '  void go() {\n'
+                            '    X9999 bc = new X9999();\n'
+                            '    String a = "IDEA";\n'
+                            '    bc.go(a); }\n'                    # 行 5
+                            '}\n')
 
         groups = {(g['file'], g['alg_norm']): g
                   for g in local_literal.scan(root)}
@@ -498,6 +599,42 @@ def test_local_literal(check):
 
         # ---- map put/get 同 key 传播 ----
         check('HashMap put/get 同 key 传播 -> MD2', ('hm.java', 'MD2') in groups, True)
+
+        # ---- R4 must 口径（恒假剔除 + 可达值上界 <= 1000）----
+        check('R4 恒假分支的 1050 是死代码 -> 上界 5, 照报',
+              ('dead1.java', 'PBKDF2') in groups, True)
+        check('R4 可达分支存在 1050 的合规路径 -> 不报（corrected 形态）',
+              [k for k in groups if k[0] == 'dead2.java'], [])
+        check('R4 阈值含边界: PBEKeySpec 恰 1000 也报',
+              ('pbe3.java', 'PBKDF2') in groups, True)
+
+        # ---- 多语言扫描（R6 py / R7 C/Go / 词表映射）----
+        check('R6 py: AES.new(K, AES.MODE_ECB) -> AES/ECB（review）',
+              groups.get(('ecb.py', canon_algorithm('AES/ECB')), {}).get('risk'),
+              'review')
+        check('R6 py: DES3.new(key, MODE_CBC) -> 3DES（broken）',
+              ('des3.py', canon_algorithm('3DES')) in groups, True)
+        check('R7 C: MD4(...) 裸哈希调用',
+              ('md4.c', 'MD4') in groups, True)
+        check('R7 C: EVP_aes_128_ecb -> AES/ECB',
+              ('ecb.c', canon_algorithm('AES/ECB')) in groups, True)
+        check('R7 cpp: BF_ecb_encrypt -> Blowfish（词表算法报纯名, 不带 /ECB）',
+              ('bf.cpp', canon_algorithm('Blowfish')) in groups, True)
+        check('R8 Go: cast5.NewCipher -> CAST（标签口径短名）',
+              ('cast.go', canon_algorithm('CAST')) in groups, True)
+        check('R8 Go: xtea.NewCipher -> XTEA',
+              ('xtea.go', canon_algorithm('XTEA')) in groups, True)
+        check('R8 Go: gmd5.MustEncryptString -> MD5（Encrypt\\w* 覆盖后缀变体）',
+              ('gmd5.go', 'MD5') in groups, True)
+        check('R10: ucryptolib 变量 mode=MODE_ECB -> AES/ECB',
+              ('ucrypto.py', canon_algorithm('AES/ECB')) in groups, True)
+        check('R12: C 宏 #define ITERATIONS 1000 -> PBKDF2（含边界）',
+              ('pbemac.c', 'PBKDF2') in groups, True)
+        check('R1 拆词: PBEWithMD5AndDES -> MD5 与 DES 两条',
+              (('pbec.java', 'MD5') in groups and
+               ('pbec.java', canon_algorithm('DES')) in groups), True)
+        check('R2 放宽: new 构造的接收者类不在树内 -> caller 侧照报',
+              ('caller2.java', 'IDEA') in groups, True)
 
         # ---- 让位规则：外部工具已覆盖的 (file, alg)，本源不添 unknown 条 ----
         g_lit = _group('local-literal', 'a.java', 'BLOWFISH', 'unknown', [1],
@@ -561,7 +698,8 @@ def main():
 
     for fn in (test_normalize, test_relative_path, test_merge_absorb_and_fuse,
                test_merge_risk_overrides_and_tags, test_ed25519_match_refinement,
-               test_split_combined_and_no_algorithm, test_malformed_inputs,
+               test_split_combined_and_no_algorithm, test_cryptoscan_usage_fuse,
+               test_malformed_inputs,
                test_local_literal, test_split_output, test_coverage,
                test_cbom_report):
         fn(check)

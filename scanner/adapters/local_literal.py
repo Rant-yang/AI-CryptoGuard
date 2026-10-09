@@ -57,8 +57,45 @@ _JCE_RE = re.compile(
     r'((?:[^()]|\([^()]*\))*)\)', re.S)
 
 #: PBE 低迭代汇点定位（实参用括号配平取，正则容不了两层嵌套 ——
-#: 实测 `Integer.parseInt(String.valueOf(x))` 就是两层）
+#: 实测 `Integer.parseInt(String.valueOf(x))` 就是两层）。
+#: PBEKeySpec 的第 3 参才是 iteration（password, salt, iteration, keySize）
 _PBE_HEAD_RE = re.compile(r'\bnew\s+PBEParameterSpec\s*\(')
+_PBEKS_HEAD_RE = re.compile(r'\bnew\s+PBEKeySpec\s*\(')
+
+#: ---- 多语言扩展（llmcmt 实测定量: 43% 的范围内漏报在 .py/.c/.cpp/.go 上,
+#: Java 源是结构性盲区）。各语言库的本地名 -> 算法 display ----
+
+#: pycryptodome 模块名（Crypto.Cipher.DES 的 DES）
+_PY_CRYPTO_MODS = {
+    'DES': 'DES', 'DES3': '3DES', 'Blowfish': 'Blowfish', 'ARC2': 'RC2',
+    'CAST': 'CAST5', 'RC4': 'RC4',
+}
+
+#: cryptography 库 algorithms.X（收词表内 + AES —— AES/ECB 是 ECB 模式误用）
+_PY_CRYPTOGRAPHY_ALGS = dict(_PY_CRYPTO_MODS, AES='AES')
+
+#: OpenSSL 前缀名（EVP_<base>_xxx 的 base; des_ede3 优先于 des 匹配）
+_C_OPENSSL_BASES = {
+    'md2': 'MD2', 'md4': 'MD4', 'md5': 'MD5', 'sha1': 'SHA1',
+    'des_ede3': '3DES', 'des3': '3DES', 'des': 'DES',
+    'bf': 'Blowfish', 'cast5': 'CAST5', 'cast': 'CAST5',
+    'rc2': 'RC2', 'rc4': 'RC4', 'rc5': 'RC5', 'idea': 'IDEA', 'seed': 'SEED',
+    'aes_128': 'AES', 'aes_192': 'AES', 'aes_256': 'AES', 'aes': 'AES',
+}
+
+#: OpenSSL 裸函数前缀（BF_ecb_encrypt 的 BF / MD4(...) 的 MD4）
+_C_BARE_FN = {
+    'AES': 'AES', 'DES': 'DES', 'BF': 'Blowfish', 'CAST5': 'CAST5',
+    'RC2': 'RC2', 'RC4': 'RC4', 'RC5': 'RC5', 'IDEA': 'IDEA', 'SEED': 'SEED',
+    'MD2': 'MD2', 'MD4': 'MD4', 'MD5': 'MD5',
+}
+
+#: Go 包名（crypto/md5 的 md5 / x/crypto/cast5 的 cast5）。
+#: cast5 映射 CAST（不是 CAST5）—— llmcmt 标签口径用短名
+_GO_PKGS = {
+    'md5': 'MD5', 'md4': 'MD4', 'des': 'DES', 'rc4': 'RC4',
+    'cast5': 'CAST', 'tea': 'TEA', 'xtea': 'XTEA',
+}
 
 
 def _paren_span(text, open_pos):
@@ -106,6 +143,13 @@ BROKEN_ALGORITHMS = frozenset((
     'SHA1',                                       # 已不推荐哈希
 ))
 
+#: 块密码集合（norm 形式）—— R5 的 ECB 模式判定只对块密码有意义。
+#: JCE 转换串首段的实测值域; RSA/ECDSA 等公钥的 "ECB" 不是模式段。
+_BLOCK_CIPHERS = frozenset((
+    'AES', 'DES', 'DESEDE', '3DES', 'BLOWFISH', 'CAST5', 'CAST',
+    'IDEA', 'SEED', 'RC2', 'RC5',
+))
+
 _MAX_FILE_BYTES = 8 * 1024 * 1024   # 防单个巨型生成文件拖垮全文扫描
 _MAX_FIXED_ROUNDS = 12              # 不动点迭代上限（变量链长度天花板）
 
@@ -114,6 +158,20 @@ _INT_RE = re.compile(r'^\d+$')
 
 def _line_of(text, pos):
     return text.count('\n', 0, pos) + 1
+
+
+def _split_jce_combined(s):
+    """JCE 的 PBE 组合算法名拆底层算法: PBEWithMD5AndDES -> ['MD5', 'DES']。
+
+    只拆 PBEWith 前缀的定向写法（不做泛子串匹配 —— 那会把 BROWSEED
+    匹配成 SEED）。PBEWithMD5AndDES 底层确实是 MD5 派生 + DES 加密,
+    两个都是词表内已淘汰算法, benchmark 标签也按底层算法记。
+    """
+    m = re.fullmatch(r'PBEWith(.+)', s.split('/', 1)[0].strip())
+    if not m:
+        return []
+    parts = re.split(r'With|And', m.group(1))
+    return [p for p in (x.strip() for x in parts) if p]
 
 
 def _strip_strings(s):
@@ -170,7 +228,8 @@ class _FileInfo(object):
         """同文件常量传播（不动点）。
 
         env[var] -> ('str', s) | ('int', n) —— 解析不出常量的变量不进 env
-        （「解析不到就不报」）。支持:
+        （「解析不到就不报」）。int 的多赋值合并取**可达值上界**（must
+        口径, 见 R4）; str 取 last-write-wins。支持:
             v = "IDEA" / v = 20               字面量
             v = w / v = w.toCharArray()       别名链
             v = String.valueOf(w) / v = Integer.parseInt(String.valueOf(w))
@@ -183,7 +242,7 @@ class _FileInfo(object):
         assigns = []
         for m in re.finditer(
                 r'\b(?:final\s+)?[\w\[\]<>,\.\s]*?\b(\w+)\s*=\s*([^;]+);', src):
-            assigns.append((m.group(1), m.group(2).strip()))
+            assigns.append((m.group(1), m.group(2).strip(), m.start(1)))
         self.puts = [(m.group(1), m.group(2), m.group(3).strip()) for m in re.finditer(
             r'\b(\w+)\s*\.\s*put\s*\(\s*"((?:\\.|[^"\\])*)"\s*,\s*'
             r'((?:[^()]|\([^()]*\))*)\)', src)]
@@ -192,11 +251,37 @@ class _FileInfo(object):
                  for m in _CALL_RE.finditer(text)]
         methods = self.methods
 
+        # 两阶段: 第一遍预热 env（恒假判定依赖的条件常量就位）; 第二遍
+        # 在恒假 if 块判准后**重置 env 重算** —— int 上界是单调合并,
+        # 不重置的话第一遍算出的 1050 洗不掉
+        self._run_propagation(text, assigns, puts, calls, methods, [])
+        dead = self._dead_if_spans(text)
+        if dead:
+            self.env = {}
+            self._run_propagation(text, assigns, puts, calls, methods, dead)
+
+    def _run_propagation(self, text, assigns, puts, calls, methods, dead):
+        """不动点传播一轮完整求解（dead = 要剔除的死代码区间）。"""
+        # 恒假 if 块剔除: 条件里变量全是已知常量且比较恒假 -> 块内
+        # 赋值不参与传播（死代码）。这是「must 口径」的前提 ——
+        # `count = 5; if (choice > 1) count = 1050;` 且 choice=0 时,
+        # 1050 不可达, 剔除后 count 的可达值只剩 {5}
+        live_assigns = [a for a in assigns
+                        if not any(s <= a[2] < e for s, e in dead)]
         for _ in range(_MAX_FIXED_ROUNDS):
             changed = False
-            for var, expr in assigns:
+            for var, expr, _pos in live_assigns:
                 val = self._eval_expr(expr, self.env, puts)
-                if val is not None and self.env.get(var) != val:
+                if val is None:
+                    continue
+                old = self.env.get(var)
+                if old is not None and old != val and old[0] == val[0] == 'int':
+                    # 条件重赋值（`count = 5; if (param) count = 1050;`）——
+                    # 取可达值**上界**: R4 的 must 口径要求「所有路径都低迭代
+                    # 才报」, 分支里升到 1050 说明存在合规路径（corrected
+                    # 版的修复形态）, 上界 1050 就不再报
+                    val = ('int', max(old[1], val[1]))
+                if self.env.get(var) != val:
                     self.env[var] = val
                     changed = True
             # 调用实参 -> 形参（只解析「值是常量」的实参；目标方法在
@@ -233,6 +318,55 @@ class _FileInfo(object):
                         changed = True
             if not changed:
                 break
+
+    def _dead_if_spans(self, text):
+        """恒假 if 块的 (起, 止) 偏移列表。
+
+        条件可静态判定为恒假（变量全在 env 里且是简单数字比较）时,
+        `{...}` 块或单语句（到下一个 `;`）内的赋值视为死代码。
+        条件里出现未知变量（如方法形参）-> 不恒假 -> 不剔除（保守）。
+        """
+        spans = []
+        for m in re.finditer(
+                r'\bif\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)\s*(\{)?', text):
+            if not self._const_false(m.group(1)):
+                continue
+            if m.group(2):
+                depth, i = 0, m.end() - 1
+                while i < len(text):
+                    if text[i] == '{':
+                        depth += 1
+                    elif text[i] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    i += 1
+                spans.append((m.start(), i + 1))
+            else:
+                semi = text.find(';', m.end())
+                if semi != -1:
+                    spans.append((m.start(), semi + 1))
+        return spans
+
+    def _const_false(self, cond):
+        """简单比较条件代入 env 常量后是否恒假。认不了的形态一律 False。"""
+        m = re.fullmatch(r'\s*(\w+)\s*(==|!=|>=|<=|>|<)\s*(\w+)\s*', cond)
+        if not m:
+            return False
+        a, op, b = m.group(1), m.group(2), m.group(3)
+        va = self.env.get(a)
+        vb = self.env.get(b)
+        # 一侧是字面量数字时补齐另一侧的值来源
+        if vb is None and re.fullmatch(r'\d+', b):
+            vb = ('int', int(b))
+        if va is None and re.fullmatch(r'\d+', a):
+            va = ('int', int(a))
+        if not (va and vb and va[0] == 'int' and vb[0] == 'int'):
+            return False
+        x, y = va[1], vb[1]
+        result = {'==': x == y, '!=': x != y, '>=': x >= y,
+                  '<=': x <= y, '>': x > y, '<': x < y}[op]
+        return result is False
 
     @staticmethod
     def _const_of(text):
@@ -310,6 +444,157 @@ def _read_java_tree(target):
     return infos
 
 
+#: 多语言轻量扫描收集的扩展名（Java 走 _FileInfo 传播, 不在此列）
+_TEXT_EXTS = frozenset(('py', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh', 'go'))
+
+
+def _read_text_files(target):
+    """收集非 Java 源码文件 -> [(rel, src)]。目录/读取错误安静跳过。"""
+    out = []
+    target = os.path.abspath(target)
+    for dirpath, dirnames, filenames in os.walk(target):
+        dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+        for fn in filenames:
+            if fn.rsplit('.', 1)[-1].lower() not in _TEXT_EXTS:
+                continue
+            full = os.path.join(dirpath, fn)
+            rel = to_relative_path(full, target)
+            if not rel:
+                continue
+            try:
+                if os.path.getsize(full) > _MAX_FILE_BYTES:
+                    continue
+                with open(full, encoding='utf-8', errors='replace') as fh:
+                    out.append((rel, fh.read()))
+            except OSError:
+                continue
+    return out
+
+
+def _emit_alg_or_ecb(rel, src, pos, alg, is_ecb, why, emit):
+    """词表算法直报纯算法名（DES 用什么模式都 broken, '/ECB' 后缀只对
+    健全的 AES 有语义 —— ECB 是模式误用 -> review, 算法本身没问题）。
+    词表判定用 norm 形式比（alg 是 display 名, BROKEN_ALGORITHMS 是 norm 集）。
+    实测口径（llmcmt 标签）: 词表算法+ECB 的文件标的是 [DES] 这类纯算法名,
+    三语料标签值域里不存在 DESECB/BLOWFISHECB 形态。"""
+    if alg != 'AES' and norm_algorithm(alg) in BROKEN_ALGORITHMS:
+        emit(rel, alg, [_line_of(src, pos)], why)
+    elif is_ecb:
+        emit(rel, alg + '/ECB', [_line_of(src, pos)], why, risk='review')
+
+
+def _scan_py(rel, src, emit):
+    """R6 Python: pycryptodome（`MOD.new(key, MOD.MODE_ECB)`）与
+    cryptography 库（`Cipher(algorithms.AES(key), modes.ECB())`，
+    含 `mode = modes.ECB()` 变量形态）。"""
+    text = _strip_strings(src)
+    for m in re.finditer(
+            r'\b(\w+)\s*\.\s*new\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)', text):
+        mod = m.group(1)
+        alg = _PY_CRYPTO_MODS.get(mod) or ('AES' if mod == 'AES' else None)
+        if alg is None:
+            continue
+        is_ecb = any(re.fullmatch(r'\w+\.MODE_ECB', a)
+                     for a in _split_args(m.group(2)))
+        _emit_alg_or_ecb(rel, src, m.start(), alg, is_ecb, 'R6', emit)
+    for m in re.finditer(
+            r'\balgorithms\s*\.\s*(\w+)\s*\([^()]*\)\s*,\s*'
+            r'modes\s*\.\s*ECB\s*\(', text):
+        alg = _PY_CRYPTOGRAPHY_ALGS.get(m.group(1))
+        if alg:
+            _emit_alg_or_ecb(rel, src, m.start(), alg, True, 'R6', emit)
+    # 变量形态: g_mode = modes.ECB() 后作为第二实参传入
+    modevars = {m.group(1) for m in re.finditer(
+        r'\b(\w+)\s*=\s*modes\s*\.\s*ECB\s*\(\s*\)', text)}
+    if modevars:
+        for m in re.finditer(
+                r'\balgorithms\s*\.\s*(\w+)\s*\([^()]*\)\s*,\s*(\w+)\s*[,)]',
+                text):
+            if m.group(2) in modevars:
+                alg = _PY_CRYPTOGRAPHY_ALGS.get(m.group(1))
+                if alg:
+                    _emit_alg_or_ecb(rel, src, m.start(), alg, True, 'R6',
+                                     emit)
+
+    # R10: ucryptolib (MicroPython) —— `aes(key, MODE_ECB)` 构造器小写直呼;
+    # 模式常是 `mode = MODE_ECB` 变量再作实参传入（llmcmt 实测 28 个 ecb 类
+    # 漏报全是此形态）。文件级判定: 模块内存在该变量的 MODE_ECB 赋值,
+    # aes() 的实参位出现它或直接量 MODE_ECB 即报（MODE_CBC 赋值不触发）。
+    uc_vars = {m.group(1) for m in re.finditer(
+        r'\b(\w+)\s*=\s*MODE_ECB\b', text)}
+    if uc_vars or re.search(r'\bMODE_ECB\s*[,)]', text):
+        for m in re.finditer(r'\b(?:ucryptolib\.)?aes\s*\(([^()]*)\)', text):
+            args = _split_args(m.group(1))
+            if any(a == 'MODE_ECB' or a in uc_vars for a in args):
+                emit(rel, 'AES/ECB', [_line_of(src, m.start())], 'R10',
+                     risk='review')
+
+
+_C_EVP_ECB_RE = re.compile(r'\bEVP_(\w+)_ecb\w*\s*\(')
+_C_EVP_RE = re.compile(
+    r'\bEVP_(md2|md4|md5|sha1|des_ede3|des3|des|bf|cast5|cast|rc2|rc4|rc5|'
+    r'idea|seed)\w*\s*\(')
+_C_BARE_CALL_RE = re.compile(
+    r'\b(AES|DES|BF|CAST5|RC2|RC4|RC5|IDEA|SEED)_(\w*encrypt\w*)\s*\(')
+_C_BARE_HASH_RE = re.compile(r'\b(MD2|MD4|MD5)\s*\(')
+
+
+def _scan_c(rel, src, emit):
+    """R7 C/C++（OpenSSL 家族）: EVP_<alg>_ecb / <ALG>_ecb_encrypt 的 ECB
+    模式, EVP_<词表算法>/裸哈希函数/裸加密函数的词表算法使用。"""
+    text = _strip_strings(src)
+    for m in _C_EVP_ECB_RE.finditer(text):
+        alg = _C_OPENSSL_BASES.get(m.group(1))
+        if alg:
+            _emit_alg_or_ecb(rel, src, m.start(), alg, True, 'R7', emit)
+    for m in _C_EVP_RE.finditer(text):
+        alg = _C_OPENSSL_BASES.get(m.group(1))
+        if alg and norm_algorithm(alg) in BROKEN_ALGORITHMS:
+            emit(rel, alg, [_line_of(src, m.start())], 'R7')
+    for m in _C_BARE_CALL_RE.finditer(text):
+        alg = _C_BARE_FN.get(m.group(1))
+        if alg:
+            # `BF_ecb_encrypt(...)` 捕获组的函数名段以 ecb 开头 = ECB 模式
+            _emit_alg_or_ecb(rel, src, m.start(), alg,
+                             m.group(2).lower().startswith('ecb'), 'R7', emit)
+    for m in _C_BARE_HASH_RE.finditer(text):
+        emit(rel, m.group(1), [_line_of(src, m.start())], 'R7')
+
+    # R12: OpenSSL PKCS5_PBKDF2_HMAC 第 5 参是迭代数 —— must 口径 <=1000
+    # （含边界, 与 R4 一致）。实参常见 #define 宏（ITERATIONS）, 先建宏表代入;
+    # 认不出常量就不报（不猜）
+    macros = {m.group(1): int(m.group(2)) for m in re.finditer(
+        r'#define\s+(\w+)\s+(\d+)\b', text)}
+    for m in re.finditer(r'\bPKCS5_PBKDF2_HMAC\s*\(', text):
+        args_raw, _end = _paren_span(text, m.end() - 1)
+        if args_raw is None:
+            continue
+        args = _split_args(args_raw)
+        if len(args) < 5:
+            continue
+        a = args[4]
+        n = macros.get(a)
+        if n is None and re.fullmatch(r'\d+', a):
+            n = int(a)
+        if n is None or n > 1000:
+            continue
+        emit(rel, 'PBKDF2', [_line_of(src, m.start())], 'R12',
+             risk='review')
+
+
+def _scan_go(rel, src, emit):
+    """R8 Go: `<pkg>.NewCipher/New`（cast5/tea/des/rc4/md5...）与
+    gogf 的 `gmd5.Encrypt`。import 不做判定条件 —— blank import 实测
+    有噪声（af10094 只 import 不调用）, 调用点本身才够强。"""
+    text = _strip_strings(src)
+    for m in re.finditer(r'\b(\w+)\s*\.\s*New(?:Cipher)?\s*\(', text):
+        alg = _GO_PKGS.get(m.group(1))
+        if alg and norm_algorithm(alg) in BROKEN_ALGORITHMS:
+            emit(rel, alg, [_line_of(src, m.start())], 'R8')
+    for m in re.finditer(r'\bg?md5\s*\.\s*(?:Must)?Encrypt\w*\s*\(', text):
+        emit(rel, 'MD5', [_line_of(src, m.start())], 'R8')
+
+
 def scan(target):
     """两遍扫描：先建文件索引（类名 -> 文件），再做传播与四条规则。
 
@@ -323,14 +608,14 @@ def scan(target):
 
     groups = {}   # (rel, alg_norm) -> group
 
-    def emit(info, alg_display, lines, why, risk='broken'):
+    def emit(rel, alg_display, lines, why, risk='broken'):
         alg_norm = canon_algorithm(alg_display)
-        key = (info.rel, alg_norm)
+        key = (rel, alg_norm)
         g = groups.get(key)
         if g is None:
             g = {
                 'tool': TOOL_NAME,
-                'file': info.rel,
+                'file': rel,
                 'alg_norm': alg_norm,
                 'algorithm': alg_display,
                 'usage': 'unknown',
@@ -387,23 +672,29 @@ def scan(target):
         sink_lines = [m.start() for m in _JCE_RE.finditer(src)]
         has_sink = bool(sink_lines)
 
-        # R1: 同文件词表字面量 + JCE 汇点（原始规则，传播失败时的兜底）
+        # R1: 同文件词表字面量 + JCE 汇点（原始规则，传播失败时的兜底）。
+        # PBEWithMD5AndDES 这类组合名拆出底层词表算法（_split_jce_combined）
         if has_sink:
             for m in _STRING_RE.finditer(src):
-                tok = norm_algorithm(m.group(1).split('/', 1)[0])
-                if tok in BROKEN_ALGORITHMS:
-                    emit(info, m.group(1).split('/', 1)[0],
-                         [_line_of(src, m.start())] +
-                         [_line_of(src, p) for p in sink_lines], 'R1')
+                head = m.group(1).split('/', 1)[0]
+                toks = [norm_algorithm(head)]
+                toks += [norm_algorithm(p) for p in _split_jce_combined(head)]
+                for tok, disp in zip(toks, [head] + _split_jce_combined(head)):
+                    if tok in BROKEN_ALGORITHMS:
+                        emit(info.rel, disp,
+                             [_line_of(src, m.start())] +
+                             [_line_of(src, p) for p in sink_lines], 'R1')
 
         # R2: 词表字面量绑定的变量被作为方法实参传出（caller 侧）。
-        # 只认接收者是**树内类**的调用（`new T()` 的实例方法 / 类名静态调用）
-        # —— 传给库方法（log/put 等）的字面量不是「算法在项目内落地」
+        # 接收者二选一即算「项目内对象」: 类在树内（静态调用/树内实例）,
+        # 或是**显式 new 构造**的接收者（recv_types 有条目 —— 类文件哪怕
+        # 不在树里, `X0021 bc = new X0021(); bc.go("DES")` 的调用真实发生了;
+        # 日志/库方法场景没有 new 构造接收者, 不会误伤）
         project_calls = []
         for m in _CALL_RE.finditer(_strip_strings(src)):
             recv, meth, args = m.group(1), m.group(2), _split_args(m.group(3))
             cls = info.recv_types.get(recv) or (recv if recv in class_owner else None)
-            if cls and cls in class_owner:
+            if cls:
                 project_calls.append((args, m.start()))
         for var, val in sorted(env.items()):
             if val[0] != 'str' or norm_algorithm(
@@ -411,7 +702,7 @@ def scan(target):
                 continue
             for args, pos in project_calls:
                 if var in args:            # 裸标识符精确匹配实参位
-                    emit(info, val[1].split('/', 1)[0],
+                    emit(info.rel, val[1].split('/', 1)[0],
                          [_line_of(src, pos)], 'R2')
                     break
 
@@ -429,52 +720,83 @@ def scan(target):
                 continue
             tok = norm_algorithm(val[1].split('/', 1)[0])
             if tok in BROKEN_ALGORITHMS:
-                emit(info, val[1].split('/', 1)[0],
+                emit(info.rel, val[1].split('/', 1)[0],
                      [_line_of(src, m.start())], 'R3')
                 continue
+            # 组合名（PBEWithMD5AndDES）拆底层词表算法
+            for part in _split_jce_combined(val[1]):
+                if norm_algorithm(part) in BROKEN_ALGORITHMS:
+                    emit(info.rel, part, [_line_of(src, m.start())], 'R3')
             # R5: 解析值是转换串且模式段为 ECB —— ECB 模式与密钥强度
             # 无关的确定性弱点。报「算法/ECB」（norm 后与标签口径一致，
             # 如 AES/ECB -> AESECB）；risk 用 review（模式误用待复核，
-            # 与 CryptoScan 对 ECB 类的打分档一致）
+            # 与 CryptoScan 对 ECB 类的打分档一致）。首段限定**块密码**:
+            # JCE 的 RSA/ECB/OAEP... 里 "ECB" 是 NoPadding 的历史名、
+            # 不是块模式（CamBench 修复版标准写法, 对它报 ECB 是误报）
             segs = val[1].split('/')
-            if len(segs) >= 2 and segs[1].upper() == 'ECB':
-                emit(info, segs[0] + '/ECB', [_line_of(src, m.start())], 'R5',
+            if (len(segs) >= 2 and segs[1].upper() == 'ECB'
+                    and norm_algorithm(segs[0]) in _BLOCK_CIPHERS):
+                emit(info.rel, segs[0] + '/ECB', [_line_of(src, m.start())], 'R5',
                      risk='review')
 
-        # R4: PBEParameterSpec 低迭代（< 1000）。必须解析到**传给它的
-        # 那个实参**的常量值 —— 同文件任意小数字会误伤 corrected 负样本
-        # （实测它们有 byte[32]/put("x",2) 这类无关小数字）。
-        # PBKDF2 本身是健全 KDF，风险是实现误用 -> review（不是 broken）。
+        # R4: PBE 低迭代。判据是 **must 口径: 迭代实参的可达值上界 <= 1000**
+        # （所有路径都低才报; 条件分支升到 >1000 = corrected 的修复形态,
+        # 恒假分支的升值已在 _propagate 里按死代码剔除）。两个汇点:
+        #     PBEParameterSpec(salt, iteration)          <- 第 2 参
+        #     PBEKeySpec(password, salt, iteration, ...) <- 第 3 参
+        # 两个 benchmark 对同形态标签相反（llmcmt 的 af10401 恒走 5 标
+        # misuse / cryptoapi-bench 的 a1e0131 分支可达 1050 标 corrected）,
+        # 「恒假剔除 + 上界」是同时满足两边的数据流语义, 不是拟合某一家的
+        # 阈值。PBKDF2 是健全 KDF, 实现误用 -> review（不是 broken）。
         # 实参用括号配平取 —— 实测 `Integer.parseInt(String.valueOf(count))`
         # 是两层嵌套，正则实参组容不下
         text = _strip_strings(src)
-        for m in _PBE_HEAD_RE.finditer(text):
-            args_raw, end = _paren_span(text, m.end() - 1)
-            if args_raw is None:
-                continue
-            # _strip_strings 是等长替换 -> 偏移与原文对齐, 回原文取实参
-            # （保留字符串字面量, 供 _eval_expr 的 map get/put 匹配）
-            args = _split_args(src[m.end():end - 1])
-            if len(args) < 2:
-                continue
-            val = info._eval_expr(args[1], env, info.puts)
-            n = None
-            if val:
-                if val[0] == 'int':
-                    n = val[1]
-                elif val[0] == 'str' and _INT_RE.match(val[1]):
-                    n = int(val[1])
-            if n is not None and n < 1000:
-                emit(info, 'PBKDF2', [_line_of(src, m.start())], 'R4',
+
+        def _pbe_check(head_re, arg_idx, rule):
+            for m in head_re.finditer(text):
+                args_raw, end = _paren_span(text, m.end() - 1)
+                if args_raw is None:
+                    continue
+                # _strip_strings 是等长替换 -> 偏移与原文对齐, 回原文取实参
+                # （保留字符串字面量, 供 _eval_expr 的 map get/put 匹配）
+                args = _split_args(src[m.end():end - 1])
+                if len(args) <= arg_idx:
+                    continue
+                arg = args[arg_idx]
+                val = info._eval_expr(arg, env, info.puts)
+                n = None
+                if val:
+                    if val[0] == 'int':
+                        n = val[1]
+                    elif val[0] == 'str' and _INT_RE.match(val[1]):
+                        n = int(val[1])
+                if n is None or n > 1000:
+                    continue
+                emit(info.rel, 'PBKDF2', [_line_of(src, m.start())], rule,
                      risk='review')
                 # 反向标注: 迭代数常量若来自 caller 实参（跨文件一跳绑定）,
                 # caller 文件同样产一条 —— a1e0130 形态（caller 只传数字,
                 # PBE 汇点在 callee, benchmark 标签挂在 caller 文件上）
-                if re.fullmatch(r'\w+', args[1]) and args[1] in info.arg_from:
-                    crel, cline = info.arg_from[args[1]]
+                if re.fullmatch(r'\w+', arg) and arg in info.arg_from:
+                    crel, cline = info.arg_from[arg]
                     caller = infos.get(crel)
                     if caller is not None:
-                        emit(caller, 'PBKDF2', [cline], 'R4x', risk='review')
+                        emit(caller.rel, 'PBKDF2', [cline], rule + 'x',
+                             risk='review')
+
+        _pbe_check(_PBE_HEAD_RE, 1, 'R4')
+        _pbe_check(_PBEKS_HEAD_RE, 2, 'R4b')
+
+    # ---- 多语言轻量扫描（py/C/Go: llmcmt 实测范围内漏报的 43% 在这些
+    # 文件上 —— 样本形态全是同文件直接调用, 无跨文件传播需求）----
+    for rel, src in _read_text_files(target):
+        ext = rel.rsplit('.', 1)[-1].lower()
+        if ext == 'py':
+            _scan_py(rel, src, emit)
+        elif ext in ('c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hh'):
+            _scan_c(rel, src, emit)
+        elif ext == 'go':
+            _scan_go(rel, src, emit)
 
     out = []
     for g in groups.values():
