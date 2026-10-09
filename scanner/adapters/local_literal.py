@@ -174,6 +174,24 @@ def _split_jce_combined(s):
     return [p for p in (x.strip() for x in parts) if p]
 
 
+def _vocab_hits(s):
+    """算法字符串 -> 词表内 display 名列表（0..n 条）。
+
+    三层: 整串; Hmac 前缀剥离（HmacMD5 -> MD5 —— HMAC 的底层哈希仍是
+    MD5, llmcmt 按 md5 类目记; HmacSHA256 剥出 SHA256 不在词表, 天然不报）;
+    PBEWith 组合拆词。"""
+    out = []
+    head = s.split('/', 1)[0].strip()
+    if norm_algorithm(head) in BROKEN_ALGORITHMS:
+        out.append(head)
+    m = re.fullmatch(r'[Hh]mac(\w+)', head)
+    if m and norm_algorithm(m.group(1)) in BROKEN_ALGORITHMS:
+        out.append(m.group(1))
+    out += [p for p in _split_jce_combined(s)
+            if norm_algorithm(p) in BROKEN_ALGORITHMS]
+    return out
+
+
 def _strip_strings(s):
     """把字符串字面量的内容抹成等长下划线。
 
@@ -673,17 +691,13 @@ def scan(target):
         has_sink = bool(sink_lines)
 
         # R1: 同文件词表字面量 + JCE 汇点（原始规则，传播失败时的兜底）。
-        # PBEWithMD5AndDES 这类组合名拆出底层词表算法（_split_jce_combined）
+        # HmacMD5 前缀剥离 / PBEWithMD5AndDES 组合拆词都走 _vocab_hits
         if has_sink:
             for m in _STRING_RE.finditer(src):
-                head = m.group(1).split('/', 1)[0]
-                toks = [norm_algorithm(head)]
-                toks += [norm_algorithm(p) for p in _split_jce_combined(head)]
-                for tok, disp in zip(toks, [head] + _split_jce_combined(head)):
-                    if tok in BROKEN_ALGORITHMS:
-                        emit(info.rel, disp,
-                             [_line_of(src, m.start())] +
-                             [_line_of(src, p) for p in sink_lines], 'R1')
+                for disp in _vocab_hits(m.group(1)):
+                    emit(info.rel, disp,
+                         [_line_of(src, m.start())] +
+                         [_line_of(src, p) for p in sink_lines], 'R1')
 
         # R2: 词表字面量绑定的变量被作为方法实参传出（caller 侧）。
         # 接收者二选一即算「项目内对象」: 类在树内（静态调用/树内实例）,
@@ -718,15 +732,11 @@ def scan(target):
                 val = c if c and c[0] == 'str' else None
             if not val or val[0] != 'str':
                 continue
-            tok = norm_algorithm(val[1].split('/', 1)[0])
-            if tok in BROKEN_ALGORITHMS:
-                emit(info.rel, val[1].split('/', 1)[0],
-                     [_line_of(src, m.start())], 'R3')
-                continue
-            # 组合名（PBEWithMD5AndDES）拆底层词表算法
-            for part in _split_jce_combined(val[1]):
-                if norm_algorithm(part) in BROKEN_ALGORITHMS:
-                    emit(info.rel, part, [_line_of(src, m.start())], 'R3')
+            hits = _vocab_hits(val[1])
+            for disp in hits:
+                emit(info.rel, disp, [_line_of(src, m.start())], 'R3')
+            if hits:
+                continue      # 词表已按纯名报（词表+ECB 不再叠 /ECB 条目）
             # R5: 解析值是转换串且模式段为 ECB —— ECB 模式与密钥强度
             # 无关的确定性弱点。报「算法/ECB」（norm 后与标签口径一致，
             # 如 AES/ECB -> AESECB）；risk 用 review（模式误用待复核，
