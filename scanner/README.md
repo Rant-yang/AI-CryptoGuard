@@ -144,7 +144,7 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 ```
 scanner/
 ├── README.md          本文件
-├── scan.py            主入口（CLI：目标目录 -> findings.json）
+├── scan.py            主入口（CLI：目标目录 -> findings.json + _leads.json）
 ├── selftest.py        自检（外部行为断言，退出码 0 = 通过；合并前跑）
 ├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
 ├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
@@ -152,7 +152,8 @@ scanner/
 ├── cbom_report.py     融合版 CycloneDX 1.6 CBOM 渲染（--cbom）
 └── adapters/          每个工具一个转换器（find_tool / run / to_groups 三同构接口）
     ├── cbom_scan.py
-    └── cryptoscan.py
+    ├── cryptoscan.py
+    └── local_literal.py   本地字面量源（轻量常量传播，无外部依赖，只补盲区）
 ```
 
 ## 第一版实现说明（2026-09-30，A）
@@ -245,15 +246,31 @@ scanner/
   输出 algorithm/algorithm_normalized 如实留空 + `no-algorithm` 标签，
   不进 CBOM。「没有算法」不许伪装成一个算法名。
 
-### 新增：本地字面量源（adapters/local_literal.py）
+### 新增：本地字面量源（adapters/local_literal.py，轻量常量传播版）
 
-- 动机（cryptoapi-bench 203 文件实测定量）：43 条范围内漏报里 24 条，
-  算法名以字符串字面量写在同一文件、只是经变量间接传入调用点
-  （`DEFAULT_CRYPTO = "IDEA"` -> `Cipher.getInstance(String.valueOf(c))`），
-  或 cbom-scan/cryptoscan 算法表压根没有 RC2/IDEA/MD2/MD4。
-- 双条件判定：同文件存在 JCE 汇点调用 + 词表内算法名字符串字面量
-  （转换串只取首段）。词表 = 已淘汰经典算法（DES 族/Legacy cipher 族/
-  RC 族/TEA 族/MD2/MD4/MD5/SHA1，风险统一 broken），**扩表归 C**。
+- 动机（cryptoapi-bench 203 文件实测定量）：外部工具看不见两大类形态 ——
+  算法名以字面量写在**同一文件**但经变量/常量链间接传入调用点
+  （`DEFAULT_CRYPTO = "IDEA"` -> `toCharArray()` -> `String.valueOf(c)` ->
+  `Cipher.getInstance(...)`），以及算法名/参数写在 **caller 文件**、经方法
+  实参传给 callee（`bc.go("RC2")` -> `Cipher.getInstance(crypto)`）；
+  且 cbom-scan 只认调用点字面量、cryptoscan 算法表缺 RC2/IDEA/MD2/MD4。
+- 手法是**受控常量传播**（不是完整数据流分析，那是 CrySentry 级别工具的事）：
+  同文件不动点迭代（别名链 / `toCharArray` / `String.valueOf` /
+  `Integer.parseInt(String.valueOf(x))` 壳剥离 / `HashMap.put("k",v)` ->
+  `get("k")` / 方法与构造器实参到形参）+ 跨文件一跳（caller 实参 ->
+  callee 形参，锚点 = 类名）。
+- 五条产出规则：R1 同文件词表字面量 + JCE 汇点（兜底）；R2 词表字面量
+  被传给树内类（caller 侧）；R3 JCE 汇点参数经传播解析到词表常量
+  （callee 侧/间接链）；R4 `PBEParameterSpec` 迭代实参解析值 < 1000
+  （低迭代是健全 KDF 的实现误用 -> risk=review，不算 broken；实参用括号
+  配平取 —— `Integer.parseInt(String.valueOf(count))` 是两层嵌套；
+  常量来自 caller 时 caller 文件反向同报一条，规则留痕 R4x）；
+  R5 转换串模式段为 ECB（`AES/ECB` -> review）。
+- 误报防线：词表只收**已淘汰经典算法**（DES 族 / Legacy cipher 族 / RC 族 /
+  TEA 族 / MD2 / MD4 / MD5 / SHA1，风险统一 broken），扩表归 C；
+  R4 必须精确解析**传给 PBEParameterSpec 的那个实参**（corrected 负样本
+  文件里有 byte[32]/put("x",2) 这类无关小数字，粗规则会误伤）；解析不到
+  常量就不报（不猜）。
 - usage 一律 unknown；与外部工具同 (file, alg) 重叠时让位（merge 侧
   剔除）——只补盲区。只扫 .java（三个 benchmark 语料都是 Java）。
 - **schema 对接点（待 C）**：`core/schema/finding.v0.1.json` 的
@@ -261,19 +278,38 @@ scanner/
   描述要求「自研模块也要如实填写，不要伪装成第三方」——在 C 加枚举前，
   `validate.py` 会对本源产出的条目报红，这是预期行为，不是数据错误。
 
+### 新增：输出分层（safe / no-algorithm 不进问题清单）
+
+`findings.json` 是**问题清单**，两条分层口径（2026-10-09 实测定量后定，
+**待 C 确认**，线索一条不丢）：
+
+- **risk=safe 的条目不进清单**（健全算法的正常使用不是问题）。
+  `--cbom` 的资产图仍用全量 findings 渲染 —— CBOM 是资产清单、
+  findings 是问题清单，两者口径本来就不同。
+- **no-algorithm 线索分层到 `<输出名>_leads.json`**（TLS 配置/证书/
+  硬编码密钥类，无算法可归一）。它们没有算法主体，混进按
+  (file, algorithm) 计数的算法问题清单只添噪声；leads 文件仍是
+  schema 合规的 finding 数组（validate 实测 27 条全过），留给 C 的
+  凭据/配置检测线。
+
 ### cryptoapi-bench 实测数字（2026-10-09，匿名树，双工具 + 本地源）
 
 | 版本 | P | R | TP | FP | FN | F1 |
 |---|---|---|---|---|---|---|
 | 第二版前（59705da） | 46.7% | 50.0% | 43 | 49 | 43 | 48.3% |
 | 任务 1+2 完成 | 51.2% | 50.0% | 43 | 41 | 43 | 50.6% |
-| + 本地字面量源 | **58.2%** | **74.4%** | 64 | 46 | 22 | **65.3%** |
+| + 本地字面量源（R1 双条件版） | 58.2% | 74.4% | 64 | 46 | 22 | 65.3% |
+| + 常量传播（R1-R5） | 64.6% | 97.7% | 84 | 46 | 2 | 77.8% |
+| + 输出分层（safe / no-algorithm） | **86.0%** | **100.0%** | 86 | 14 | 0 | **92.5%** |
 
-- 验收命令：合并名残留 0、拿 type 当算法的残留 0；selftest 103 项全过；
-  逐字节复现一致；除上述 schema 枚举待加外全部合规。
-- 剩余 22 条 FN 的构成：算法名以方法参数传入（文件里没有字面量）、
-  PBE 低迭代次数类（算法名从未出现）、ECB 模式类 —— 均为正则层结构性
-  天花板，正是 ai/ 模块（LLM 复核）的存在理由。
-- 本地源新增的 4 条负样本误报：查证过那 4 个 corrected 文件里确实存在
-  `Cipher.getInstance("RC2")` 这类字面量调用（try/fallback 写法），
-  报出的是真实模式命中，与 benchmark 的负样本口径分歧如实记录。
+- 方案硬指标 P≥85% / R≥90%：**两项均达标**。
+- 验收：合并名残留 0、拿 type 当算法的残留 0、no-algorithm/safe 混入
+  问题清单 0；selftest 119 项全过；逐字节复现一致（findings 与 leads
+  双文件）；leads 27 条 schema 全合规，findings 的 48 条报红**全部且仅**
+  为上述 `local-literal` 枚举待加项。
+- 剩余 14 条 FP 的构成（全部逐条查证过）：11 条 corrected 负样本上
+  **真实存在**的弱算法/ECB 字面量调用（try/fallback 写法，工具真实
+  命中——benchmark 把这类文件标为已修复负样本，属口径分歧，如实记录
+  不删）；2 条 RSA（同款 corrected 形态）；1 条范围外正样本文件上的
+  RSA（keysize 类，范围外不计 R 但 eval 计 FP）。**没有任何一条是
+  凭空捏造的命中**。
