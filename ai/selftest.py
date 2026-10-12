@@ -82,10 +82,20 @@ class _Messages:
         self.calls = []
 
     def create(self, **kwargs):
+
         prompt = kwargs['messages'][0]['content']
         self.calls.append(prompt)
         n = len(self.calls)
-        alg = None
+
+        # 从发给模型的 JSON 中读取算法和证据
+        try:
+            payload = json.loads(prompt)
+        except (TypeError, ValueError):
+            payload = {}
+
+        alg = payload.get('algorithm_normalized')
+        evidence = payload.get('evidence') or []
+
         for line in prompt.splitlines():
             if '"algorithm_normalized"' in line:
                 alg = line.split('"')[3]
@@ -99,10 +109,20 @@ class _Messages:
             return _Resp('', stop_reason='max_tokens', blocks=[_ThinkBlock()])
         if mode == 'garbage':
             return _Resp('抱歉，我无法回答这个问题。')
-        body = json.dumps({'usage': FAKE_USAGE.get(alg, 'unknown'),
-                           'explanation': '（假数据）%s 用于 %s。'
-                                          % (alg, FAKE_USAGE.get(alg, 'unknown'))},
-                          ensure_ascii=False)
+
+        # 模拟模型引用真实存在的证据：
+        # 至少有两条证据时引用 E2，否则引用 E1。
+        refs = ['E2'] if len(evidence) >= 2 else (
+            ['E1'] if len(evidence) >= 1 else []
+        )
+
+        body = json.dumps({
+            'usage': FAKE_USAGE.get(alg, 'unknown'),
+            'explanation': '（假数据）%s 用于 %s。'
+                           % (alg, FAKE_USAGE.get(alg, 'unknown')),
+            'evidence_refs': refs,
+        }, ensure_ascii=False)
+
         if mode == 'fence':
             body = '```json\n' + body + '\n```'
         elif mode == 'chatty':
@@ -115,14 +135,42 @@ class _FakeClient:
         self.messages = _Messages(plan)
 
 
+
 def install_stub(plan=lambda n, alg: 'clean'):
     """把 enrich 的 client 换成桩。返回桩本身，便于事后检查 payload。"""
+    # 离线自检需要模型名，但不需要真实 API
+    os.environ.setdefault("ANTHROPIC_MODEL", "selftest-stub")
+
     client = _FakeClient(plan)
     enrich._CLIENT = client
     return client
 
 
 # ------------------------------------------------------------------ 各场景
+
+def t_evidence_refs_validation():
+    """独立检查 evidence_refs 的格式、范围和去重行为。"""
+    evidence = [{"note": "evidence 1"}, {"note": "evidence 2"}]
+
+    cases = [
+        ("正常引用", ["E1", "E2"], ["E1", "E2"]),
+        ("拒绝 E0", ["E0"], []),
+        ("拒绝 E01", ["E01"], []),
+        ("拒绝越界引用", ["E99"], []),
+        ("重复引用去重", ["E1", "E1", "E2"], ["E1", "E2"]),
+        ("忽略非字符串", ["E1", 2], ["E1"]),
+        ("空列表", [], []),
+        ("非列表输入", "E1", []),
+        ("证据非列表", ["E1"], []),
+    ]
+
+    for name, refs, expected in cases:
+        actual = enrich._validate_evidence_refs(
+            refs,
+            "not a list" if name == "证据非列表" else evidence,
+        )
+        check("evidence_refs：" + name, actual, expected)
+
 
 def t_parse_robustness():
     """解析器要能吃下模型的真实输出习惯，且坏输入要抛出可读异常。"""
@@ -159,7 +207,78 @@ def t_full_run_clean():
     check('全部换成 rule-base',
           sum(f['remediation']['source'] == 'rule-base' for f in result), len(findings))
     check('调用次数', len(stub.messages.calls), len(findings))
+
+    # 检查每条 Finding 的 evidence_refs 是否合法
+    valid_refs_count = 0
+
+    for f in result:
+        refs = f.get('evidence_refs')
+        evidence = f.get('evidence') or []
+
+        if not isinstance(refs, list) or not refs:
+            continue
+
+        valid = True
+        seen = set()
+
+        for ref in refs:
+            if not isinstance(ref, str):
+                valid = False
+                break
+
+            if not ref.startswith('E') or not ref[1:].isdigit():
+                valid = False
+                break
+
+            number = int(ref[1:])
+
+            # 禁止 E0、E01 等非规范编号，也不能引用不存在的证据
+            if number < 1 or str(number) != ref[1:] or number > len(evidence):
+                valid = False
+                break
+
+            if ref in seen:
+                valid = False
+                break
+
+            seen.add(ref)
+
+        if valid:
+            valid_refs_count += 1
+
+    check('每条都有合法 evidence_refs', valid_refs_count, len(result))
+
+    # 检查多证据 Finding 是否引用了 E2 或更高编号
+    multi_evidence = [
+        f for f in result
+        if len(f.get('evidence') or []) >= 2
+    ]
+
+    higher_ref_count = sum(
+        1 for f in multi_evidence
+        if any(
+            isinstance(ref, str)
+            and ref.startswith('E')
+            and ref[1:].isdigit()
+            and int(ref[1:]) >= 2
+            for ref in (f.get('evidence_refs') or [])
+        )
+    )
+
+    # 暂按至少 20% 作为自检门槛；若团队有明确比例要求，以团队要求为准
+    if multi_evidence:
+        check_true(
+            '多证据 Finding 引用 E2 或更高编号的比例至少为 20%',
+            higher_ref_count / len(multi_evidence) >= 0.20
+        )
+    else:
+        check_true(
+            '存在至少一条含多条证据的 Finding',
+            False
+        )
+
     return result
+
 
 
 def t_schema_compliance(result):
@@ -323,6 +442,7 @@ def main():
     print('ai/ 离线自检（桩 LLM，不花钱）')
     print('=' * 68)
 
+    t_evidence_refs_validation()
     t_parse_robustness()
     print('  [1/8] 解析鲁棒性')
     result = t_full_run_clean()

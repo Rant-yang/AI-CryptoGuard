@@ -177,8 +177,10 @@ Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
 
 方案 §8：AI 输出必须**结构化且带 `evidence_refs`**。
 
-> ⚠️ **目前 schema 里还没有 `evidence_refs` 字段** —— 这是 ai/ 和 core/ 共同的缺口，
-> 属于待办，未落地。当前只能靠「解释里点名具体证据」这个约定。
+> ✅ **`evidence_refs` 已实现** —— `core/schema/finding.v0.1.json` 已定义该字段，
+> `ai/enrich.py` 会校验引用编号的格式、范围与重复项，并将合法引用写回 Finding。
+> `ai/selftest.py` 已覆盖正常引用、非法编号、越界、重复项及异常输入等情况。
+> 当前离线自测已通过；真实模型输出的语义准确性仍需进一步集成验证。
 
 别让模型自由发挥。**每句解释都要能指回 `evidence[]` 里的具体某条。**
 写不出来的话，说明证据不足，那就照实说证据不足。
