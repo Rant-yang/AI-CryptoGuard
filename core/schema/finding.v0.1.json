@@ -122,6 +122,18 @@
       "description": "AI 生成的人话解释。**必须能对应到 evidence 里的具体证据**，不许脱离证据自由发挥。未生成时为 null。"
     },
 
+
+    "evidence_refs": {
+      "type": "array",
+      "description": "AI 结论引用的证据编号；E1 对应 evidence[0]，E2 对应 evidence[1]，以此类推。",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^E[1-9][0-9]*$"
+      }
+    },
+
     "remediation": {
       "type": "object",
       "additionalProperties": false,
