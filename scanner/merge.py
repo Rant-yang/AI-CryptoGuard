@@ -49,10 +49,14 @@ from scanner.normalize import (
 )
 
 #: evidence 排序：主源在前
-_TOOL_ORDER = {'cbom-scan': 0, 'cryptoscan': 1}
+_TOOL_ORDER = {'cbom-scan': 0, 'cryptoscan': 1, 'local-literal': 2}
 
 TAG_NEEDS_USAGE_REVIEW = 'needs-usage-review'
 TAG_UPSTREAM_RISK_CORRECTED = 'upstream-risk-corrected'
+#: 无算法的线索类发现（CryptoScan 的 TLS 配置/证书/硬编码密钥类，见 adapter）。
+#: 分桶键形如 'TYPE:XXX'，但输出的 algorithm/algorithm_normalized 如实留空
+#: ——「没有算法」不许伪装成一个算法名。
+TAG_NO_ALGORITHM = 'no-algorithm'
 
 
 def merge(all_groups):
@@ -61,6 +65,15 @@ def merge(all_groups):
     行号吸收会重排组内行号，因此这里先浅拷贝每个组 ——
     **不污染调用方手里的原始数据**（coverage 差异审计需要吸收前的原始命中）。
     """
+    # 本地字面量源只补盲区：同一 (file, alg) 外部工具已有分组的，让位 ——
+    # 工具侧的判定粒度更好（用途/行号/风险都有），重叠的 unknown 组只会
+    # 把同一发现拆成两条（工具条 + 字面量条）添噪声
+    covered = {(g['file'], g['alg_norm']) for g in all_groups
+               if g.get('tool') != 'local-literal'}
+    all_groups = [g for g in all_groups
+                  if g.get('tool') != 'local-literal'
+                  or (g['file'], g['alg_norm']) not in covered]
+
     by_key = {}
     for g in all_groups:
         g = dict(g)               # 浅拷贝；lines 后续都是整列替换，不会牵连原组
@@ -108,14 +121,21 @@ def merge(all_groups):
         confidence = max(confidences) if confidences else None
 
         # ---- algorithm 保留上游原始写法，主源的写法优先
+        # TYPE: 前缀 = 无算法的线索类发现：算法字段如实留空（不打假算法），
+        # finding_id 用分桶键生成 —— 同文件同用途下不同 type 才不会撞号
+        no_alg = alg.startswith('TYPE:')
         algorithm = next((g['algorithm'] for g in groups
                           if g['tool'] == 'cbom-scan' and g.get('algorithm')), None)
         if not algorithm:
             algorithm = next((g['algorithm'] for g in groups
                               if g.get('algorithm')), alg)
+        if no_alg:
+            algorithm = ''
 
         # ---- tags
         tags = []
+        if no_alg:
+            tags.append(TAG_NO_ALGORITHM)
         if usage == 'unknown':
             tags.append(TAG_NEEDS_USAGE_REVIEW)
         elif usage_contradicts_algorithm(alg, usage):
@@ -132,7 +152,7 @@ def merge(all_groups):
             'file': file,
             'line': all_lines[0],
             'algorithm': algorithm,
-            'algorithm_normalized': alg,
+            'algorithm_normalized': '' if no_alg else alg,
             'usage': usage,
             'risk': risk,
             'severity': severity,

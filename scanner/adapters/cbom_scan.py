@@ -19,6 +19,8 @@ import subprocess
 from scanner.normalize import (
     CBOM_PRIM_TO_USAGE,
     canon_algorithm,
+    norm_algorithm,
+    split_combined_algorithm,
     to_relative_path,
 )
 
@@ -104,41 +106,68 @@ def to_groups(data, target):
         assets = []
     for asset in assets:
         algo_raw = asset.get('algo', '')
-        alg_norm = canon_algorithm(algo_raw)
+        # 合并名拆词（2026-10-08 任务 1）: "Legacy cipher (Blowfish/CAST5/IDEA/SEED)"
+        # 这类 asset 是多个并列算法的合并名，归一化会压成一坨永远匹配不上标签
+        # （实测 94 条误报）。拆成候选后**每个算法各产出独立 ToolGroup**，
+        # 与 schema 计数单位「一条 finding = (file, 算法, 用途)」对齐。
+        # 带括号才拆、拆出的段必须像算法 token（详见函数 docstring）。
+        candidates = split_combined_algorithm(algo_raw)
         usage = CBOM_PRIM_TO_USAGE.get(asset.get('prim', ''), 'unknown')
         # raw 逐字保留 asset 的核心判定字段（与 core/samples/example_finding.json 的
-        # cbom raw 口径一致；repl / why 等 asset 级长文本不重复塞进每条证据）
+        # cbom raw 口径一致；algo 保留**原始合并名**供溯源，repl / why 等
+        # asset 级长文本不重复塞进每条证据）
         raw = {k: asset.get(k) for k in ('id', 'algo', 'prim', 'risk')}
 
-        # 分组键是 (file, usage)：Ed25519/X25519 这类捆绑 asset 会被 match
-        # 细分拆成不同用途的组 —— 与 schema 计数单位 (file, alg, usage) 对齐
-        by_group = {}
+        # 拆开后每个候选**只继承点名自己的命中**（match 归一后与候选归一相等）。
+        # 实测（2026-10-09 cryptoapi-bench）: 只用 Blowfish 的文件，拆开的
+        # CAST5/IDEA/SEED 若继承全部命中会各成一条误报 —— 每个文件 1 条变 3 条。
+        # match 对不上任何候选（说明性 match，如 'SSH'）或缺 match 时，
+        # 保守归给全部候选 —— 行为退回拆词前，绝不丢真命中。
+        tok_to_cands = {}
+        for cand in candidates:
+            tok_to_cands.setdefault(norm_algorithm(cand), []).append(cand)
+
+        # cand -> (file, usage) -> lines
+        by_cand = {cand: {} for cand in candidates}
         for occ in asset.get('occurrences', []):
             rel = to_relative_path(occ.get('file'), target)
             if not rel:
                 continue
-            occ_usage = _refine_usage_by_match(alg_norm, usage, occ.get('match'))
-            by_group.setdefault((rel, occ_usage), []).append(occ.get('line'))
+            match = occ.get('match')
+            tok = norm_algorithm(match) if match else ''
+            owners = tok_to_cands.get(tok) if tok else None
+            if owners is None:
+                owners = candidates
+            for cand in owners:
+                alg_norm = canon_algorithm(cand)
+                # 分组键是 (file, usage)：Ed25519/X25519 捆绑 asset 会被 match
+                # 细分成不同用途的组 —— 与计数单位 (file, alg, usage) 对齐
+                occ_usage = _refine_usage_by_match(alg_norm, usage, match)
+                by_cand[cand].setdefault((rel, occ_usage), []).append(occ.get('line'))
 
-        for (rel, occ_usage), lines in by_group.items():
-            clean = sorted({ln for ln in lines
-                            if isinstance(ln, int) and ln >= 1})
-            if not clean:
-                # 该文件全部命中行号非法 —— 一个真实命中都没有的组不许流出：
-                # 空行组会骗过 coverage 的算法级覆盖统计（算法没命中却算覆盖）
-                continue
-            groups.append({
-                'tool': TOOL_NAME,
-                'file': rel,
-                'alg_norm': alg_norm,
-                'algorithm': algo_raw,
-                'usage': occ_usage,
-                'lines': clean,
-                'severity': None,           # cbom-scan 没有 severity 概念
-                'confidence': None,
-                'risk': asset.get('risk'),  # 主源：五档直接可用
-                'risk_types': [],           # （cryptoscan 专用字段）
-                'quantum_as_seen': [],      # （cryptoscan 专用字段）
-                'raw': raw,
-            })
+        for cand in candidates:
+            alg_norm = canon_algorithm(cand)
+            by_group = by_cand[cand]
+
+            for (rel, occ_usage), lines in by_group.items():
+                clean = sorted({ln for ln in lines
+                                if isinstance(ln, int) and ln >= 1})
+                if not clean:
+                    # 该文件全部命中行号非法 —— 一个真实命中都没有的组不许流出：
+                    # 空行组会骗过 coverage 的算法级覆盖统计（算法没命中却算覆盖）
+                    continue
+                groups.append({
+                    'tool': TOOL_NAME,
+                    'file': rel,
+                    'alg_norm': alg_norm,
+                    'algorithm': cand,       # 拆出的具体算法名（未拆时 == algo_raw）
+                    'usage': occ_usage,
+                    'lines': clean,
+                    'severity': None,        # cbom-scan 没有 severity 概念
+                    'confidence': None,
+                    'risk': asset.get('risk'),   # 主源：五档直接可用
+                    'risk_types': [],            # （cryptoscan 专用字段）
+                    'quantum_as_seen': [],       # （cryptoscan 专用字段）
+                    'raw': raw,
+                })
     return groups
