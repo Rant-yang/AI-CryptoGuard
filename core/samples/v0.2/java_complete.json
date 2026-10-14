@@ -1,0 +1,227 @@
+[
+  {
+    "schema_version": "0.2",
+    "finding_id": "abc000000000",
+    "file": "src/Sample.java",
+    "line": 42,
+    "algorithm": "RSA",
+    "algorithm_normalized": "RSA",
+    "usage": "unknown",
+    "risk": "shor",
+    "severity": "high",
+    "confidence": 0.9,
+    "evidence": [
+      {
+        "tool": "crysentry",
+        "kind": "taint",
+        "lines": [
+          42
+        ],
+        "raw": {
+          "fixture": true
+        },
+        "flow": {
+          "source": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "sink": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "path": [
+            {
+              "file": "src/Sample.java",
+              "line": 42,
+              "method": "example"
+            }
+          ],
+          "completeness": "complete"
+        }
+      }
+    ],
+    "remediation": {
+      "decided": false,
+      "reason": "not-enriched",
+      "source": "none"
+    },
+    "stage": "scanned",
+    "finding_kind": "algorithm"
+  },
+  {
+    "schema_version": "0.2",
+    "finding_id": "abc000000000",
+    "file": "src/Sample.java",
+    "line": 42,
+    "algorithm": "RSA",
+    "algorithm_normalized": "RSA",
+    "usage": "unknown",
+    "risk": "shor",
+    "severity": "high",
+    "confidence": 0.9,
+    "evidence": [
+      {
+        "tool": "crysentry",
+        "kind": "taint",
+        "lines": [
+          42
+        ],
+        "raw": {
+          "fixture": true
+        },
+        "flow": {
+          "source": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "sink": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "path": [
+            {
+              "file": "src/Sample.java",
+              "line": 42,
+              "method": "example"
+            }
+          ],
+          "completeness": "complete"
+        }
+      }
+    ],
+    "remediation": {
+      "decided": false,
+      "reason": "not-enriched",
+      "source": "none"
+    },
+    "stage": "assessed",
+    "finding_kind": "algorithm",
+    "quantum_assessment": {
+      "status": "assessed",
+      "quantum_effect": "shor",
+      "classical_issues": [],
+      "rule_version": "fixture-1",
+      "rule_refs": [
+        "fixture.rsa.shor"
+      ],
+      "evidence_refs": [
+        "E1"
+      ],
+      "unknowns": [
+        "用途待复核"
+      ],
+      "migration_candidates": []
+    }
+  },
+  {
+    "schema_version": "0.2",
+    "finding_id": "abc000000000",
+    "file": "src/Sample.java",
+    "line": 42,
+    "algorithm": "RSA",
+    "algorithm_normalized": "RSA",
+    "usage": "unknown",
+    "risk": "shor",
+    "severity": "high",
+    "confidence": 0.9,
+    "evidence": [
+      {
+        "tool": "crysentry",
+        "kind": "taint",
+        "lines": [
+          42
+        ],
+        "raw": {
+          "fixture": true
+        },
+        "flow": {
+          "source": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "sink": {
+            "file": "src/Sample.java",
+            "line": 42,
+            "method": "example"
+          },
+          "path": [
+            {
+              "file": "src/Sample.java",
+              "line": 42,
+              "method": "example"
+            }
+          ],
+          "completeness": "complete"
+        }
+      }
+    ],
+    "remediation": {
+      "decided": false,
+      "reason": "not-enriched",
+      "source": "none"
+    },
+    "stage": "explained",
+    "finding_kind": "algorithm",
+    "quantum_assessment": {
+      "status": "assessed",
+      "quantum_effect": "shor",
+      "classical_issues": [],
+      "rule_version": "fixture-1",
+      "rule_refs": [
+        "fixture.rsa.shor"
+      ],
+      "evidence_refs": [
+        "E1"
+      ],
+      "unknowns": [
+        "用途待复核"
+      ],
+      "migration_candidates": []
+    },
+    "explanation": "合成接口样例：证据尚不能确认具体用途，请先复核调用上下文。",
+    "evidence_refs": [
+      "E1"
+    ],
+    "usage_assessment": {
+      "usage": "unknown",
+      "reason": "样例未提供业务调用上下文",
+      "evidence_refs": [
+        "E1"
+      ],
+      "unknowns": [
+        "实际用途"
+      ]
+    },
+    "remediation_steps": [
+      {
+        "action": "复核实际调用上下文",
+        "target": null,
+        "evidence_refs": [
+          "E1"
+        ],
+        "rule_refs": [
+          "fixture.rsa.shor"
+        ],
+        "prerequisites": [
+          "访问项目源码"
+        ],
+        "verification": [
+          "确认用途与调用点一致"
+        ],
+        "execution_status": "not_run"
+      }
+    ],
+    "analysis_provenance": {
+      "input_digest": "6752391e7a7f5ebc27aebcff19e563ad2b7c3fbcda0be5c4fb2a20e67a05e38f",
+      "rule_version": "fixture-1",
+      "prompt_version": "fixture-1",
+      "model_id": "offline-fixture",
+      "redaction_version": "fixture-1"
+    }
+  }
+]

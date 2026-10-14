@@ -1,0 +1,39 @@
+{
+  "schema_version": "0.2",
+  "task_id": "fixture-task",
+  "mode": "fast",
+  "languages": [
+    "python"
+  ],
+  "stages": [
+    {
+      "name": "scan",
+      "status": "pending",
+      "reason": null,
+      "seconds": 0,
+      "tool_version": null
+    },
+    {
+      "name": "deep_java",
+      "status": "skipped",
+      "reason": "Python-only input",
+      "seconds": 0,
+      "tool_version": null
+    },
+    {
+      "name": "quantum_assessment",
+      "status": "pending",
+      "reason": null,
+      "seconds": 0,
+      "tool_version": null
+    },
+    {
+      "name": "ai",
+      "status": "pending",
+      "reason": null,
+      "seconds": 0,
+      "tool_version": null
+    }
+  ],
+  "unresolved_deep_evidence": []
+}

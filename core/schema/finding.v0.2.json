@@ -1,0 +1,785 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Rant-yang/AI-CryptoGuard/core/schema/finding.v0.2.json",
+  "title": "AI-CryptoGuard Finding v0.2",
+  "description": "三个扫描工具的输出统一到本格式。计数单位=(file, algorithm_normalized, usage)，即同一文件里同一算法的同一用途算一条，多处命中收进 evidence[].lines。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "finding_id",
+    "file",
+    "line",
+    "algorithm",
+    "risk",
+    "severity",
+    "evidence",
+    "remediation",
+    "stage",
+    "finding_kind",
+    "usage"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "finding_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]{6,64}$",
+      "description": "稳定且确定性的 ID，必须可复现：sha1(file|algorithm_normalized|usage)[:12]。同一份代码重复扫描必须得到同样的 ID，否则无法 diff。"
+    },
+    "finding_kind": {
+      "enum": [
+        "algorithm",
+        "credential",
+        "configuration",
+        "dependency"
+      ],
+      "default": "algorithm",
+      "description": "Finding 主体类型。旧数据缺省为 algorithm；凭据问题必须填 credential，避免把问题类型伪装成算法名。"
+    },
+    "rule_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_-]{2,63}$",
+      "description": "稳定规则编号。凭据/配置类 Finding 必填，例如 CRED-HARDCODED-PASSWORD。算法类可省略。"
+    },
+    "file": {
+      "type": "string",
+      "description": "项目内相对路径，正斜杠。**不要绝对路径** —— 上游给的是绝对路径，转换时必须剥掉（信息泄露 + 结果不可移植）。",
+      "examples": [
+        "src/auth/session.py"
+      ]
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "代表性行号（通常取首次命中）。全部命中行号见 evidence[].lines。"
+    },
+    "algorithm": {
+      "type": "string",
+      "description": "算法名，保留上游原始写法。",
+      "examples": [
+        "RSA",
+        "AES-128",
+        "Ed25519 / X25519",
+        "MD5"
+      ]
+    },
+    "algorithm_normalized": {
+      "type": "string",
+      "description": "归一化后的算法名，用于跨工具对齐与去重。三个工具对同一算法的叫法不同，必须归一。缺失时退化为 algorithm。",
+      "examples": [
+        "RSA",
+        "AES",
+        "ED25519",
+        "MD5"
+      ]
+    },
+    "usage": {
+      "enum": [
+        "signing",
+        "encryption",
+        "key_exchange",
+        "hashing",
+        "authentication",
+        "tls_configuration",
+        "unknown"
+      ],
+      "default": "unknown",
+      "description": "用途。**这个字段决定 PQC 迁移路线，是 AI 模块的核心产出。** AI 的职责是复核/纠正上游给的用途，不是从零判断。判不出来必须填 unknown，不许猜。"
+    },
+    "risk": {
+      "enum": [
+        "shor",
+        "broken",
+        "grover",
+        "review",
+        "safe",
+        "not_applicable"
+      ],
+      "description": "风险口径。算法 Finding 使用五档量子/经典风险；credential/configuration/dependency 使用 not_applicable，表示该问题不属于量子算法风险轴。**以我方规则库判定为准，不透传上游。**"
+    },
+    "severity": {
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "description": "严重程度。上游表示法不统一（CryptoScan 是整数 0-4，且同一份 JSON 里 finding 与 summary 还是两套），转换时统一成本字段。"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "置信度 0-1。上游是枚举（HIGH/MEDIUM/LOW），转换时映射：HIGH=0.9, MEDIUM=0.6, LOW=0.3。"
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "证据列表。**一条 finding 可以挂多个工具的证据 —— 这是我们区别于单个工具的地方，也是方案「≥3 类证据」的落地方式。**",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool",
+          "kind",
+          "lines"
+        ],
+        "properties": {
+          "tool": {
+            "enum": [
+              "cbom-scan",
+              "cryptoscan",
+              "crysentry",
+              "local-literal",
+              "python-ast",
+              "credential-scan",
+              "manual"
+            ],
+            "description": "证据来源工具。自研模块也要如实填写，不要伪装成第三方。"
+          },
+          "kind": {
+            "enum": [
+              "pattern",
+              "taint",
+              "ast",
+              "entropy",
+              "dependency",
+              "manual"
+            ],
+            "description": "证据类型。pattern=正则模式命中 / taint=数据流污点链 / ast=语法树分析 / entropy=熵检测 / dependency=依赖清单。"
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "该工具在本文件中命中的所有行号。这就是「110 条变 45 条」的收口点。"
+          },
+          "raw": {
+            "type": "object",
+            "description": "上游原始记录，逐字保留，便于溯源与答辩时举证。不要在这里做加工。"
+          },
+          "flow": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "file": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 1
+                      },
+                      "method": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "file",
+                      "line",
+                      "method"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sink": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "file": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "line": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1
+                  },
+                  "method": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "file",
+                  "line",
+                  "method"
+                ]
+              },
+              "path": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "line": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1
+                    },
+                    "method": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "line",
+                    "method"
+                  ]
+                },
+                "minItems": 0
+              },
+              "completeness": {
+                "enum": [
+                  "complete",
+                  "source_missing",
+                  "partial"
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "sink",
+              "path",
+              "completeness"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "tool": {
+                  "const": "crysentry"
+                },
+                "kind": {
+                  "const": "taint"
+                }
+              },
+              "required": [
+                "tool",
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "flow"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "explanation": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "AI 生成的人话解释。**必须能对应到 evidence 里的具体证据**，不许脱离证据自由发挥。未生成时为 null。"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "description": "AI 结论引用的证据编号；E1 对应 evidence[0]，E2 对应 evidence[1]，以此类推。",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^E[1-9][0-9]*$"
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "修复/迁移建议。**本字段必填、任何阶段都不许省略。** 确定性密码事实由规则库回答，不由大模型生成（方案 §8）。尚未增强时填占位符（见 README「remediation 必填」一节），不要留空 —— 留空就无法区分「还没做」和「忘了做」。",
+      "required": [
+        "decided",
+        "source"
+      ],
+      "properties": {
+        "decided": {
+          "type": "boolean",
+          "description": "是否已给出确定结论。**false = 明确不给具体算法（方案 §9.1 禁止固定映射）。** 前端与报告必须把这个状态显示出来，不许静默填一个默认算法。为什么是 false，看 reason。"
+        },
+        "reason": {
+          "enum": [
+            "decided",
+            "usage-undetermined",
+            "not-an-algorithm",
+            "rule-missing",
+            "not-enriched"
+          ],
+          "description": "**为什么是这个结论。** 2026-10-03 新增（可选）。原先 decided=false 同时表示「用途判不出」和「规则库没这条」，但这两件事对用户是完全不同的消息，前端不能都糊成一句「需人工确认」。decided=已给出结论 / usage-undetermined=用途判不出来（§9.1）/ not-an-algorithm=命中的是库名或配置项 / rule-missing=规则库确实没这条 / not-enriched=尚未增强。不变量：decided == (reason == 'decided')，且 reason=='not-enriched' 等价于 source=='none'。"
+        },
+        "action": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "具体建议。decided=true 时是确定的替换方案；decided=false 时写清「为什么还不能给」以及「需要先确认什么」。"
+        },
+        "source": {
+          "enum": [
+            "rule-base",
+            "ai",
+            "none"
+          ],
+          "description": "这条建议从哪来。密码学确定事实必须来自 rule-base；来自 ai 的要打个问号。**none = 尚未增强的占位符**（scanner 层产出后、ai 层接手前的状态），统计 source==none 的条数就是 AI 层的进度。"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "标准依据，如 FIPS 203 / SP 800-131A。答辩时用得上。"
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "自由标签，用于筛选与统计。"
+    },
+    "stage": {
+      "enum": [
+        "scanned",
+        "assessed",
+        "explained"
+      ]
+    },
+    "quantum_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "assessed",
+            "insufficient_evidence",
+            "not_applicable"
+          ]
+        },
+        "quantum_effect": {
+          "enum": [
+            "shor",
+            "quantum_search",
+            "no_known_quantum_break",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "classical_issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "rule_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^E[1-9][0-9]*$"
+          },
+          "uniqueItems": true
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        },
+        "migration_candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "usage": {
+                "enum": [
+                  "signing",
+                  "encryption",
+                  "key_exchange",
+                  "hashing",
+                  "authentication",
+                  "tls_configuration",
+                  "unknown"
+                ],
+                "default": "unknown",
+                "description": "用途。**这个字段决定 PQC 迁移路线，是 AI 模块的核心产出。** AI 的职责是复核/纠正上游给的用途，不是从零判断。判不出来必须填 unknown，不许猜。"
+              },
+              "route_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "conditions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 0
+              }
+            },
+            "required": [
+              "usage",
+              "route_id",
+              "rule_refs",
+              "conditions"
+            ]
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "status",
+        "quantum_effect",
+        "classical_issues",
+        "rule_version",
+        "rule_refs",
+        "evidence_refs",
+        "unknowns",
+        "migration_candidates"
+      ]
+    },
+    "usage_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usage": {
+          "enum": [
+            "signing",
+            "encryption",
+            "key_exchange",
+            "hashing",
+            "authentication",
+            "tls_configuration",
+            "unknown"
+          ],
+          "default": "unknown",
+          "description": "用途。**这个字段决定 PQC 迁移路线，是 AI 模块的核心产出。** AI 的职责是复核/纠正上游给的用途，不是从零判断。判不出来必须填 unknown，不许猜。"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^E[1-9][0-9]*$"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "unknowns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "usage",
+        "reason",
+        "evidence_refs",
+        "unknowns"
+      ]
+    },
+    "remediation_steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "file": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "line": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1
+                  },
+                  "method": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "file",
+                  "line",
+                  "method"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^E[1-9][0-9]*$"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "rule_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0
+          },
+          "verification": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "execution_status": {
+            "const": "not_run"
+          }
+        },
+        "required": [
+          "action",
+          "target",
+          "evidence_refs",
+          "rule_refs",
+          "prerequisites",
+          "verification",
+          "execution_status"
+        ]
+      },
+      "minItems": 0
+    },
+    "analysis_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "input_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "rule_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "redaction_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "input_digest",
+        "rule_version",
+        "prompt_version",
+        "model_id",
+        "redaction_version"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "finding_kind": {
+            "const": "credential"
+          }
+        },
+        "required": [
+          "finding_kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "rule_id"
+        ],
+        "properties": {
+          "risk": {
+            "const": "not_applicable"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "enum": [
+              "assessed",
+              "explained"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "quantum_assessment"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "explained"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "usage_assessment",
+          "explanation",
+          "evidence_refs",
+          "remediation_steps",
+          "analysis_provenance"
+        ],
+        "properties": {
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "stage": {
+            "const": "scanned"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "quantum_assessment"
+              ]
+            },
+            {
+              "required": [
+                "analysis_provenance"
+              ]
+            },
+            {
+              "required": [
+                "usage_assessment"
+              ]
+            },
+            {
+              "required": [
+                "remediation_steps"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
