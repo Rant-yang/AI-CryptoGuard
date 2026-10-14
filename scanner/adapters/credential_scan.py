@@ -46,11 +46,20 @@ _ASSIGN_RE = re.compile(
     # 允许 C/C++ cast、Go []byte(...)、Java helper(...) 包住字面量；
     # 仍要求左侧变量名敏感或文件内存在密码学 sink，不能仅凭任意字符串报警。
     r'(?P<prefix>[^;"\'\r\n]{0,96})(?P<quote>["\'])'
-    r'(?P<value>[^"\'\r\n]{3,4096})(?P=quote)')
+    r'(?P<value>[^"\'\r\n]{1,4096})(?P=quote)')
 _ARRAY_ASSIGN_RE = re.compile(
     r'(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})'
     r'(?:\s*\[[^\]\r\n]{0,40}\])?\s*(?::=|=)\s*'
     r'(?:\[[^\]\r\n]*\](?:byte)?\s*)?\{(?P<value>[0-9xXa-fA-F,\s-]{7,1024})\}')
+_CHAR_ARRAY_ASSIGN_RE = re.compile(
+    r'(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})'
+    r'(?:\s*\[[^\]\r\n]{0,40}\])?\s*(?::=|=)\s*'
+    r'\{(?P<value>(?:\s*["\'][^"\'\r\n]{1,4}["\']\s*,?){1,256})\}')
+_DIRECT_KEY_LITERAL_RE = re.compile(
+    r'(?i)(?:SecretKeySpec|PBEKeySpec|Fernet|AES\.new|DES(?:3)?\.new|'
+    r'algorithms\.(?:AES|TripleDES|ChaCha20)|aes\.NewCipher)\s*\('
+    r'\s*(?:\[\]byte\s*\(|bytes\s*\()?\s*(?:b|u|r|br|rb)?'
+    r'(?P<quote>["\'])(?P<value>[^"\'\r\n]{1,4096})(?P=quote)')
 _URL_RE = re.compile(r'\b[a-zA-Z][a-zA-Z0-9+.-]*://([^\s/:@]+):([^\s/@]+)@')
 _PEM_RE = re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----')
 _LOG_RE = re.compile(r'(?i)\b(?:print|println|printf|console\.log|log\.(?:trace|debug|info|warn|error)|logger\.(?:trace|debug|info|warn|error))\s*\((.*)')
@@ -63,8 +72,17 @@ _PLACEHOLDER = re.compile(r'(?i)^(?:example|sample|dummy|placeholder|replace[_-]
 _WEAK = {'admin', 'admin123', 'password', 'password1', 'passw0rd', '123456',
          '12345678', 'root', 'guest', 'test', 'default', 'changeme', 'secret'}
 _CRYPTO_CONTEXT_RE = re.compile(
-    r'(?i)(?:SecretKeySpec|PBEKeySpec|KeyStore\.(?:load|setKeyEntry)|'
-    r'NewCipher|_set_key|setKey\s*\(|privateKey|signingKey|encryptionKey)')
+    r'(?i)(?:SecretKeySpec|PBE(?:KeySpec|ParameterSpec)|KeyStore|javax\.crypto|'
+    r'java\.security\.(?:KeyStore|Key)|Crypto\.Cipher|cryptography\.hazmat|'
+    r'golang\.org/x/crypto|crypto/(?:aes|des|rsa|hmac)|openssl/|'
+    r'aes\.NewCipher|AES\.new|DES(?:3)?\.new|algorithms\.(?:AES|TripleDES|ChaCha20)|'
+    r'Fernet|EVP_|AES_set_(?:encrypt|decrypt)_key|NewCipher|_set_key|setKey\s*\(|'
+    r'privateKey|signingKey|encryptionKey)')
+_PASSWORD_CONTEXT_RE = re.compile(
+    r'(?i)(?:PBE(?:KeySpec|ParameterSpec)|KeyStore(?:\.load|\.getInstance|\b))')
+_GENERIC_KEY_NAME = re.compile(
+    r'(?i)^(?:g[_-])?(?:default[_-]?)?(?:crypto[_-]?)?'
+    r'key(?:bytes?|fernet|\d+)?$')
 _RUNTIME_SOURCE_RE = re.compile(
     r'(?i)(?:getenv|environ|getProperty|process\.env|config\.|vault|secretManager)')
 
@@ -79,7 +97,12 @@ def scan(root):
         try:
             with open(path, encoding='utf-8-sig', errors='replace') as fh:
                 text = fh.read()
-            context = {'generic_key_sensitive': bool(_CRYPTO_CONTEXT_RE.search(text))}
+            context = {
+                'generic_key_sensitive': bool(_CRYPTO_CONTEXT_RE.search(text)),
+                'generic_key_rule': ('CRED-HARDCODED-PASSWORD'
+                                     if _PASSWORD_CONTEXT_RE.search(text)
+                                     else 'CRED-HARDCODED-CRYPTO-KEY'),
+            }
             for line_no, line in enumerate(text.splitlines(), 1):
                 findings.extend(_scan_line(rel, line_no, line, pepper, context))
         except OSError:
@@ -128,6 +151,12 @@ def _scan_line(rel, line_no, line, pepper, context=None):
                             '%s:%s' % (rel, line_no), pepper, kind='ast',
                             value_length=0))
 
+    # 字面量直接进入明确的密钥构造/加密 API，不依赖变量名猜测。
+    for m in _DIRECT_KEY_LITERAL_RE.finditer(line):
+        out.append(_finding(rel, line_no, m.start(),
+                            'CRED-HARDCODED-CRYPTO-KEY', m.group('value'),
+                            pepper, kind='pattern'))
+
     for m in _ASSIGN_RE.finditer(line):
         name, value = m.group('name'), m.group('value')
         if _RUNTIME_SOURCE_RE.search(m.group('prefix')):
@@ -135,18 +164,28 @@ def _scan_line(rel, line_no, line, pepper, context=None):
         if _PLACEHOLDER.match(value.strip()):
             continue
         rule = _assignment_rule(name, value, context)
-        if rule:
-            out.append(_finding(rel, line_no, m.start(), rule, value, pepper,
-                                kind='pattern'))
-        if value.lower() in _WEAK and _SENSITIVE.search(name):
+        is_weak = value.lower() in _WEAK and _SENSITIVE.search(name)
+        # 同一字面量只给一个主结论：弱口令比泛化的“硬编码口令”更具体。
+        if is_weak:
             out.append(_finding(rel, line_no, m.start(), 'CRED-DEFAULT-WEAK',
                                 value, pepper, kind='pattern'))
-        if (_SENSITIVE.search(name) and len(value) >= 20
+        elif rule:
+            out.append(_finding(rel, line_no, m.start(), rule, value, pepper,
+                                kind='pattern'))
+        # 高熵规则只兜底未知敏感变量，避免与 token/key 确定规则重复上报。
+        if (not rule and not is_weak and _SENSITIVE.search(name)
+                and len(value) >= 20
                 and _entropy(value) >= 3.5):
             out.append(_finding(rel, line_no, m.start(),
                                 'CRED-HIGH-ENTROPY-SECRET', value, pepper,
                                 kind='entropy'))
     for m in _ARRAY_ASSIGN_RE.finditer(line):
+        name, value = m.group('name'), m.group('value')
+        rule = _assignment_rule(name, value, context)
+        if rule:
+            out.append(_finding(rel, line_no, m.start(), rule, value, pepper,
+                                kind='pattern'))
+    for m in _CHAR_ARRAY_ASSIGN_RE.finditer(line):
         name, value = m.group('name'), m.group('value')
         rule = _assignment_rule(name, value, context)
         if rule:
@@ -162,9 +201,10 @@ def _assignment_rule(name, value, context=None):
         return 'CRED-HARDCODED-TOKEN'
     if _CRYPTO_KEY.search(name):
         return 'CRED-HARDCODED-CRYPTO-KEY'
-    if (context or {}).get('generic_key_sensitive') and name.lower() in {
-            'key', 'key2', 'defaultkey', 'default_key', 'encrypt_key'}:
-        return 'CRED-HARDCODED-CRYPTO-KEY'
+    if ((context or {}).get('generic_key_sensitive')
+            and _GENERIC_KEY_NAME.fullmatch(name)):
+        return (context or {}).get('generic_key_rule',
+                                   'CRED-HARDCODED-CRYPTO-KEY')
     return None
 
 

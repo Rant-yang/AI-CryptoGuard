@@ -29,12 +29,16 @@ def report(label_dir, findings_path, scanned):
     for name in sorted(labels_by_bench):
         if name not in scanned:
             continue
+        # 专项口径：凭据正样本 + benchmark 明确标注的负样本。
+        # 其他漏洞类别的正样本不是“凭据干净样本”，把其上的凭据线索算 FP
+        # 等于把标签未覆盖误当成工具误报。
         labels = [r for r in labels_by_bench[name]
-                  if str(r.get('category', '')).lower()
-                  in beval.CREDENTIAL_RULES_BY_CATEGORY]
+                  if (str(r.get('category', '')).lower()
+                      in beval.CREDENTIAL_RULES_BY_CATEGORY)
+                  or not r.get('expect_misuse')]
         mine = [f for f in findings
                 if any(beval._same_file(f.get('file', ''), r['file'])
-                       for r in labels_by_bench[name])]
+                       for r in labels)]
         m = beval.match(labels, mine)
         p, r, _ = beval.prf(m['tp'], m['fp'], m['fn'])
         print('%-18s %8d %8d %8d %7.1f%% %7.1f%%' %
@@ -51,6 +55,11 @@ def report(label_dir, findings_path, scanned):
         if missed:
             print('  未命中: ' + ' / '.join('%s=%d' % item
                                              for item in missed.most_common()))
+        false_rules = collections.Counter(
+            str(f.get('rule_id') or '(missing)') for f in m['fp_detail'])
+        if false_rules:
+            print('  误报规则: ' + ' / '.join('%s=%d' % item
+                                                for item in false_rules.most_common()))
 
     p, r, f1 = beval.prf(agg_tp, agg_fp, agg_fn)
     print('-' * 72)

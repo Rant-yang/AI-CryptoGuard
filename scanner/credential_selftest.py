@@ -17,10 +17,14 @@ FIXTURE = '''
 password = "OnlyForSyntheticTest!"
 default_password = "admin123"
 api_token = "TokAbc1234567890SyntheticValue"
+cloud_access_key = "AbCDef0123456789SyntheticOpaqueValue"
 aes_key = "00112233445566778899AABBCCDDEEFF"
 -----BEGIN PRIVATE KEY-----
 db_url = "postgres://demo:syntheticpass@localhost/app"
 logger.info(password)
+g_key = b"0123456789abcdef"
+cipher = AES.new(b"fedcba9876543210", AES.MODE_GCM)
+char [] defaultKey = {'a', 'b', 'c'};
 '''
 
 NEGATIVE = '''
@@ -30,11 +34,23 @@ api_token = "${API_TOKEN}"
 key = generate_key()
 '''
 
+IMPORT_CONTEXT = '''
+from Crypto.Cipher import AES
+g_key = b"0123456789abcdef"
+'''
+
+PASSWORD_CONTEXT = '''
+import java.security.KeyStore;
+String key = "SyntheticStorePassword";
+KeyStore ks = KeyStore.getInstance("JKS");
+'''
+
 FORBIDDEN = (
     'OnlyForSyntheticTest!', 'admin123',
     'TokAbc1234567890SyntheticValue',
+    'AbCDef0123456789SyntheticOpaqueValue',
     '00112233445566778899AABBCCDDEEFF',
-    'syntheticpass',
+    'syntheticpass', '0123456789abcdef', 'fedcba9876543210',
 )
 
 
@@ -45,6 +61,10 @@ def main():
             fh.write(FIXTURE)
         with open(os.path.join(td, 'negative.py'), 'w', encoding='utf-8') as fh:
             fh.write(NEGATIVE)
+        with open(os.path.join(td, 'import_context.py'), 'w', encoding='utf-8') as fh:
+            fh.write(IMPORT_CONTEXT)
+        with open(os.path.join(td, 'password_context.java'), 'w', encoding='utf-8') as fh:
+            fh.write(PASSWORD_CONTEXT)
         first = credential_scan.scan(td)
         second = credential_scan.scan(td)
 
@@ -65,6 +85,12 @@ def main():
     assert all(f['risk'] == 'not_applicable' for f in first)
     assert all(f['evidence_refs'] == ['E1'] for f in first)
     assert all(f['remediation']['source'] == 'rule-base' for f in first)
+    assert any(f['file'] == 'import_context.py' and
+               f['rule_id'] == 'CRED-HARDCODED-CRYPTO-KEY' for f in first), \
+        '密码库导入必须建立通用 key 的上下文'
+    assert any(f['file'] == 'password_context.java' and
+               f['rule_id'] == 'CRED-HARDCODED-PASSWORD' for f in first), \
+        'KeyStore/PBE 上下文里的通用 key 必须按口令裁决'
     assert not any(f['file'] == 'negative.py' for f in first), \
         '注释、环境变量、占位符或函数返回值被误报'
 

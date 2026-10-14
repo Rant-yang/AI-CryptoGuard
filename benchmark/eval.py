@@ -156,9 +156,10 @@ def match(labels, findings):
             excluded_out.append(f)
 
     used = set()
+    used_findings = set()
     tp_detail, line_hits = [], 0
 
-    for f in eligible:
+    for finding_index, f in enumerate(eligible):
         ffile, falgs, fline = f.get('file', ''), _algo_set(f), f.get('line')
         frule = f.get('rule_id')
         hit = None
@@ -185,6 +186,7 @@ def match(labels, findings):
             break
         if hit is not None:
             used.add(hit)
+            used_findings.add(finding_index)
             tp_detail.append((f, pos_in[hit]))
 
     # 落在「公认干净」位置上的 finding = 误报
@@ -207,6 +209,10 @@ def match(labels, findings):
         'n_negative': len(neg),
         'line_hits': line_hits,
         'tp_detail': tp_detail,
+        # 供专项报告按规则/类别解释误报。这里只返回 Finding 对象，
+        # 调用方仍不得打印 raw 中的凭据材料。
+        'fp_detail': [f for i, f in enumerate(eligible)
+                      if i not in used_findings],
         'pos_in': pos_in,
     }
 
@@ -251,6 +257,9 @@ def _selftest():
     empty = match(labels, [])
     if empty['fn'] != 2:
         print('[FAIL] eval.py 自检: 零检出必须保留 FN')
+        return 1
+    if len(got['fp_detail']) != got['fp']:
+        print('[FAIL] eval.py 自检: fp_detail 数量必须与 fp 一致')
         return 1
     print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出）')
     return 0
