@@ -254,6 +254,26 @@ ai/ 复核（实测 22 条挂着 `needs-usage-review`）。据未复核的用途
 | 2026-09-28 | 写入分组内字段合并规则（severity 取 MAX 等） | C | 否 |
 | **2026-10-02** | **`remediation` 由可选改为必填**，补占位符约定 | C | **否（见下）** |
 | **2026-10-03** | **新增可选字段 `remediation.reason`**，区分三种「给不出结论」 | C | **否（见下）** |
+| **2026-10-14** | 新增可选 `finding_kind` / `rule_id`；`risk` 增加 `not_applicable`，承载凭据等非算法问题 | C | 否（旧算法数据仍全部合法） |
+
+### 非算法 Finding（2026-10-14）
+
+凭据问题不属于 Shor/Grover 风险轴，也不能把 `Hardcoded password` 伪装成算法名。
+因此凭据 producer 必须输出：
+
+```json
+{
+  "finding_kind": "credential",
+  "rule_id": "CRED-HARDCODED-PASSWORD",
+  "algorithm": "Credential",
+  "algorithm_normalized": "CREDENTIAL",
+  "risk": "not_applicable"
+}
+```
+
+其中 `algorithm` 仅为 v0.1 向后兼容占位；界面与新代码用 `finding_kind + rule_id`
+识别主体。Schema 用条件约束保证 credential Finding 必须有 `rule_id`，且 risk 必须
+为 `not_applicable`。旧数据不带 `finding_kind` 时仍按 algorithm 解释。
 
 > **为什么这次没升 v0.2**：**字段集合没变** —— 没有增删改任何字段名，
 > 只是把一个已存在的字段从可选收紧为必填。升版本号会连带改

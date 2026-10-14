@@ -225,6 +225,17 @@ def t_evidence_refs_validation():
     check('resume 复用带有效 evidence_refs 的增强结果',
           enrich._is_enriched(legacy), True)
 
+    credential = {
+        'finding_kind': 'credential',
+        'evidence': evidence,
+        'evidence_refs': ['E1'],
+        'remediation': {'source': 'rule-base'},
+    }
+    check('凭据本地终态永不送 LLM', enrich._is_local_final(credential), True)
+    credential['remediation']['source'] = 'none'
+    check('未完成的凭据不能伪装成本地终态',
+          enrich._is_local_final(credential), False)
+
 
 def t_parse_robustness():
     """解析器要能吃下模型的真实输出习惯，且坏输入要抛出可读异常。"""

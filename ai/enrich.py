@@ -382,6 +382,18 @@ def _is_enriched(finding):
     return remediation.get("source") != "none" and bool(refs)
 
 
+def _is_local_final(finding):
+    """不应送往 LLM 的本地终态 Finding。
+
+    凭据事实、遮蔽证据和处置建议已由本地规则生成。再次送云端既没有收益，
+    还会让通用 PQC route("Credential") 把正确结论覆盖成 rule-missing。
+    """
+    remediation = finding.get("remediation") or {}
+    return (finding.get("finding_kind") == "credential"
+            and remediation.get("source") == "rule-base"
+            and _is_enriched(finding))
+
+
 def _write(output_path, findings):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as fh:
@@ -459,20 +471,23 @@ def main():
     # ---------------------------------------------------------- dry-run
     if args.dry_run:
         import redact
+        cloud_findings = [f for f in findings if not _is_local_final(f)]
         print("[DRY-RUN] 不调用 LLM，也不会写任何文件。")
         print("[DRY-RUN] 输入: %s（%d 条）" % (input_path, len(findings)))
+        print("[DRY-RUN] 本地终态跳过: %d 条；预计发云端: %d 条"
+              % (len(findings) - len(cloud_findings), len(cloud_findings)))
         print()
         print("发往云端的 payload 总量: %d 字符"
               % sum(len(json.dumps(redact_finding(f, args.context),
-                                   ensure_ascii=False)) for f in findings))
+                                   ensure_ascii=False)) for f in cloud_findings))
         print()
-        for finding in findings[:3]:
+        for finding in cloud_findings[:3]:
             print("-" * 68)
             print(json.dumps(redact_finding(finding, args.context),
                              ensure_ascii=False, indent=2))
-        if len(findings) > 3:
+        if len(cloud_findings) > 3:
             print("-" * 68)
-            print("（只打印前 3 条，共 %d 条）" % len(findings))
+            print("（只打印前 3 条，共 %d 条会发云端）" % len(cloud_findings))
         return 0
 
     # ---------------------------------------------------------- resume
@@ -487,9 +502,15 @@ def main():
     enriched = []
     failed = []
     skipped = 0
+    local_final = 0
 
     for index, finding in enumerate(findings, start=1):
         fid = finding.get("finding_id", "unknown")
+
+        if _is_local_final(finding):
+            local_final += 1
+            enriched.append(finding)
+            continue
 
         if fid in done:
             skipped += 1
@@ -517,8 +538,9 @@ def main():
     _write(output_path, enriched)
     print("[OK] 输出完成: %s" % output_path)
 
-    ok = len(enriched) - skipped - len(failed)
-    print("[SUM] 增强 %d 条，复用 %d 条，失败 %d 条" % (ok, skipped, len(failed)))
+    ok = len(enriched) - skipped - local_final - len(failed)
+    print("[SUM] 增强 %d 条，复用 %d 条，本地终态 %d 条，失败 %d 条"
+          % (ok, skipped, local_final, len(failed)))
     if failed:
         print("[SUM] 失败的条目仍是占位符（source='none'），"
               "加了 --resume 重跑即可自动重试：")

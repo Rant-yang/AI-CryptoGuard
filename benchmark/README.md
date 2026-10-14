@@ -24,6 +24,22 @@
 
 数据放在**仓库外** `../_benchmarks/`（源码树 89MB，绝不入库）。
 
+## 2026-10-14：凭据线进入考卷
+
+`credential-scan` 已实现 8 类管理缺陷，7 个公开凭据类别由范围外改为范围内。
+三套已扫描语料的当前结果：
+
+- 凭据专项：P=47.9%、R=45.9%、F1=46.9%（TP 102 / FP 111 / FN 120）
+- 算法 + 凭据整体：P=67.3%、R=71.5%、F1=69.3%
+
+这比旧的算法线 75.2% / 82.2% 低，因为考卷扩大了。旧数字仍可用于说明算法线，
+不能继续称作完整系统指标。专项诊断命令：
+
+```bash
+python benchmark/credential_report.py out/bench_credentials/all3.json \
+  --scanned cryptoapi-bench,cambench-cap,llmcmt
+```
+
 ---
 
 ## 三件必须先懂的事

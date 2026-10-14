@@ -115,15 +115,14 @@ CRYPTOAPI_BENCH = {
         OUT, (), None, None,
         '可预测密钥属密钥生成质量问题，非算法选择。'),
     'predictablepbepassword': Verdict(
-        OUT, (), None, None,
-        '可预测口令属输入质量问题，非算法选择。'),
+        IN, (), 'authentication', None,
+        '凭据检测线已覆盖源码中的硬编码/默认 PBE 口令；按凭据规则评分。'),
     'predictablekeystorepassword': Verdict(
-        OUT, (), None, None,
-        '可预测密钥库口令同上。'),
+        IN, (), 'authentication', None,
+        '凭据检测线已覆盖硬编码/默认密钥库口令；按凭据规则评分。'),
     'credentialinstring': Verdict(
-        OUT, (), None, None,
-        '硬编码凭据属**机密管理**问题。方案 §2.2 里凭据检测是独立能力'
-        '（≥8 类），不通过「算法选择」这条线评判 —— 两条线不能混算。'),
+        IN, (), 'authentication', None,
+        '凭据检测线已覆盖字符串中的口令、Token、密码学密钥和高熵秘密。'),
     'untrustedprng': Verdict(
         OUT, (), None, None,
         '不可信随机数源属随机源质量问题，非算法选择。'),
@@ -307,17 +306,17 @@ LLMCMT_LABEL_KEYWORDS = {
                            'bcrypt cost 参数偏低。算法层面可比，参数不校验。'),
 
     # ---------- 明确范围外：凭据管理 ----------
-    'hardcoded': Verdict(OUT, (), None, None,
-                         '硬编码密钥/口令/凭据属**机密管理**问题。'
-                         '方案 §2.2 把凭据检测列为独立能力，'
-                         '不通过「算法选择」这条线评判 —— 两条线不能混算。'),
-    'hardcode': Verdict(OUT, (), None, None, '同上：硬编码凭据。'),
+    'hardcoded': Verdict(IN, (), 'authentication', None,
+                         '凭据检测线已覆盖硬编码口令、Token、密码学密钥、私钥材料与高熵秘密。'),
+    'hardcode': Verdict(IN, (), 'authentication', None, '同上：硬编码凭据。'),
     'storing passwords in plain text': Verdict(OUT, (), None, None,
                                                '明文存口令，属凭据管理。'),
     'transmitting passwords in plain text': Verdict(OUT, (), None, None,
                                                     '明文传口令，属凭据管理。'),
-    'insecure key storage': Verdict(OUT, (), None, None, '密钥存储，非算法选择。'),
-    'token': Verdict(OUT, (), None, None, '令牌安全问题，非算法选择。'),
+    'insecure key storage': Verdict(IN, (), 'authentication', None,
+                                    '凭据检测线覆盖源码内嵌私钥与硬编码密码学密钥。'),
+    'token': Verdict(IN, (), 'authentication', None,
+                     '凭据检测线覆盖硬编码 API Token 与高熵秘密。'),
     'jwt': Verdict(OUT, (), None, None, 'JWT 安全问题，非算法选择。'),
     'password length': Verdict(OUT, (), None, None, '口令长度策略，非算法选择。'),
     'sha-256 for password hashing': Verdict(OUT, (), None, None,
@@ -404,6 +403,16 @@ TABLES = {
     'cambench-cap': CAMBENCH_CAP,
     'cambench-real': CAMBENCH_REAL_FUM,
     'llmcmt': LLMCMT_LABEL_KEYWORDS,
+}
+
+# 范围内但**不在算法轴**上的凭据类别。它们由 finding.rule_id 对账，
+# 因此合法地没有 algorithms；eval.py 负责类别 -> 可接受规则集合的翻译。
+CREDENTIAL_CATEGORIES = {
+    ('cryptoapi-bench', 'predictablepbepassword'),
+    ('cryptoapi-bench', 'predictablekeystorepassword'),
+    ('cryptoapi-bench', 'credentialinstring'),
+    ('llmcmt', 'hardcoded'), ('llmcmt', 'hardcode'),
+    ('llmcmt', 'insecure key storage'), ('llmcmt', 'token'),
 }
 
 
@@ -630,7 +639,8 @@ def _selftest():
             if v.verdict not in legal:
                 fails.append('%s/%s 裁定值非法: %r' % (bench, cat, v.verdict))
             # 范围内就必须给出算法，否则比不了
-            if v.verdict in (IN, PART) and not v.algorithms:
+            if (v.verdict in (IN, PART) and not v.algorithms
+                    and (bench, cat) not in CREDENTIAL_CATEGORIES):
                 fails.append('%s/%s 是%s但没给算法' % (bench, cat, VERDICT_CN[v.verdict]))
             # 范围外就不该给算法 —— 给了说明裁定自相矛盾
             if v.verdict == OUT and v.algorithms:

@@ -36,6 +36,32 @@ import re
 import sys
 
 
+# Benchmark 类别到我方凭据规则的**可接受集合**。这是标签词汇翻译，不是检测器
+# 实现；一个 benchmark 的 generic "hardcoded" 可以由多个更细的我方规则命中。
+CREDENTIAL_RULES_BY_CATEGORY = {
+    'predictablepbepassword': {'CRED-HARDCODED-PASSWORD', 'CRED-DEFAULT-WEAK'},
+    'predictablekeystorepassword': {'CRED-HARDCODED-PASSWORD', 'CRED-DEFAULT-WEAK'},
+    'credentialinstring': {
+        'CRED-HARDCODED-PASSWORD', 'CRED-HARDCODED-TOKEN',
+        'CRED-HARDCODED-CRYPTO-KEY', 'CRED-DEFAULT-WEAK',
+        'CRED-HIGH-ENTROPY-SECRET',
+    },
+    'hardcoded': {
+        'CRED-HARDCODED-PASSWORD', 'CRED-HARDCODED-TOKEN',
+        'CRED-HARDCODED-CRYPTO-KEY', 'CRED-EMBEDDED-PRIVATE-KEY',
+        'CRED-DEFAULT-WEAK', 'CRED-HIGH-ENTROPY-SECRET', 'CRED-IN-URL',
+    },
+    'hardcode': {
+        'CRED-HARDCODED-PASSWORD', 'CRED-HARDCODED-TOKEN',
+        'CRED-HARDCODED-CRYPTO-KEY', 'CRED-EMBEDDED-PRIVATE-KEY',
+        'CRED-DEFAULT-WEAK', 'CRED-HIGH-ENTROPY-SECRET', 'CRED-IN-URL',
+    },
+    'insecure key storage': {'CRED-HARDCODED-CRYPTO-KEY',
+                             'CRED-EMBEDDED-PRIVATE-KEY'},
+    'token': {'CRED-HARDCODED-TOKEN', 'CRED-HIGH-ENTROPY-SECRET'},
+}
+
+
 # ------------------------------------------------------------------ 载入
 
 def load_labels(label_dir):
@@ -97,6 +123,10 @@ def _label_algos(rec):
     return {_norm_algo(a) for a in (rec.get('algorithms') or []) if _norm_algo(a)}
 
 
+def _label_credential_rules(rec):
+    return CREDENTIAL_RULES_BY_CATEGORY.get(str(rec.get('category', '')).lower(), set())
+
+
 def match(labels, findings):
     """把 findings 与 labels 对上。
 
@@ -130,6 +160,7 @@ def match(labels, findings):
 
     for f in eligible:
         ffile, falgs, fline = f.get('file', ''), _algo_set(f), f.get('line')
+        frule = f.get('rule_id')
         hit = None
         for i, r in enumerate(pos_in):
             if i in used:
@@ -137,9 +168,13 @@ def match(labels, findings):
             if not _same_file(ffile, r['file']):
                 continue
             algos = _label_algos(r)
+            credential_rules = _label_credential_rules(r)
+            if credential_rules:
+                if frule not in credential_rules:
+                    continue
             # 算法对得上，或者标签没给算法（部分可比类别有时给不出）
             # 标签给了算法就必须对上；合并名拆开后命中任一即可
-            if algos:
+            if algos and not credential_rules:
                 # 标签明确给了算法时，finding 也必须给出算法且能相交。
                 # 旧逻辑会把「无算法线索」仅凭文件名算成 TP。
                 if not falgs or not (algos & falgs):
@@ -191,16 +226,20 @@ def _selftest():
          'verdict': 'out'},
         {'file': 'clean.java', 'algorithms': [], 'expect_misuse': False,
          'verdict': 'out'},
+        {'file': 'cred.py', 'category': 'hardcoded', 'algorithms': [],
+         'expect_misuse': True, 'verdict': 'in'},
     ]
     findings = [
         {'file': 'in.java', 'algorithm': 'DES'},
         {'file': 'in.java', 'algorithm': ''},
         {'file': 'out.java', 'algorithm': 'AES'},
         {'file': 'clean.java', 'algorithm': 'RSA'},
+        {'file': 'cred.py', 'algorithm': 'Credential',
+         'rule_id': 'CRED-HARDCODED-TOKEN'},
     ]
     got = match(labels, findings)
     checks = {
-        '有算法真值必须由同算法 finding 命中': got['tp'] == 1,
+        '算法与凭据真值分别命中': got['tp'] == 2,
         '无算法线索不能仅凭文件名成为 TP': got['fp'] == 2,
         '范围外正样本输出对称排除': got['n_excluded_out_of_scope'] == 1,
         '范围内正样本没有漏报': got['fn'] == 0,
@@ -210,7 +249,7 @@ def _selftest():
         print('[FAIL] eval.py 自检: ' + '；'.join(failed))
         return 1
     empty = match(labels, [])
-    if empty['fn'] != 1:
+    if empty['fn'] != 2:
         print('[FAIL] eval.py 自检: 零检出必须保留 FN')
         return 1
     print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出）')

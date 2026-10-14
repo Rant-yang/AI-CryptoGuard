@@ -134,8 +134,9 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
   用 Python 自带的 `ast` 模块写轻量局部数据流，**能追踪"这个密钥从哪来"就够**。
   ⚠️ 不要试图"照着 CrySentry 重写一个 Python 版" —— 它背后是一整套研究级程序分析引擎，
   不是可以照抄的扫描逻辑。
-- **凭据检测**：方案要求 ≥8 类凭据缺陷，现有工具覆盖不到一半（CryptoScan 只有 9 条正则：
-  6 个 PEM 头 + 3 个变量名，**无熵检测**）。这块要自研。
+- **凭据检测（2026-10-14 已接入第一版）**：`adapters/credential_scan.py` 实现 8 类
+  管理缺陷，含模式、文件上下文与熵证据。输出只存遮蔽长度和进程内随机 HMAC
+  指纹，不保存明文；专项公开语料 P=47.9%、R=45.9%，仍需提质。
 
 ---
 
@@ -146,11 +147,12 @@ scanner/
 ├── README.md          本文件
 ├── scan.py            主入口（CLI：目标目录 -> findings.json + _leads.json）
 ├── selftest.py        自检（外部行为断言，退出码 0 = 通过；合并前跑）
+├── credential_selftest.py  8 类凭据 + Schema + 零明文泄露断言
 ├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
 ├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
 ├── coverage.py        覆盖差异审计（一家报一家没报 -> 漏报复核线索）
 ├── cbom_report.py     融合版 CycloneDX 1.6 CBOM 渲染（--cbom）
-└── adapters/          每个工具一个转换器（find_tool / run / to_groups 三同构接口）
+└── adapters/          外部工具转换器 + 自研 local_literal / credential_scan
     ├── cbom_scan.py
     ├── cryptoscan.py
     └── local_literal.py   本地字面量源（轻量常量传播，无外部依赖，只补盲区）

@@ -31,6 +31,18 @@
       "description": "稳定且确定性的 ID，必须可复现：sha1(file|algorithm_normalized|usage)[:12]。同一份代码重复扫描必须得到同样的 ID，否则无法 diff。"
     },
 
+    "finding_kind": {
+      "enum": ["algorithm", "credential", "configuration", "dependency"],
+      "default": "algorithm",
+      "description": "Finding 主体类型。旧数据缺省为 algorithm；凭据问题必须填 credential，避免把问题类型伪装成算法名。"
+    },
+
+    "rule_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_-]{2,63}$",
+      "description": "稳定规则编号。凭据/配置类 Finding 必填，例如 CRED-HARDCODED-PASSWORD。算法类可省略。"
+    },
+
     "file": {
       "type": "string",
       "description": "项目内相对路径，正斜杠。**不要绝对路径** —— 上游给的是绝对路径，转换时必须剥掉（信息泄露 + 结果不可移植）。",
@@ -70,8 +82,8 @@
     },
 
     "risk": {
-      "enum": ["shor", "broken", "grover", "review", "safe"],
-      "description": "量子风险，五档。**以我方规则库判定为准，不透传上游。** 分类口径对齐 cbom-scan（三个工具里唯一分类正确的）：shor=量子可完全攻破 / broken=已被经典攻击攻破（与量子无关）/ grover=量子下强度减半 / review=需人工确认 / safe=安全。注意 CryptoScan 会把 broken 误标为 VULNERABLE。"
+      "enum": ["shor", "broken", "grover", "review", "safe", "not_applicable"],
+      "description": "风险口径。算法 Finding 使用五档量子/经典风险；credential/configuration/dependency 使用 not_applicable，表示该问题不属于量子算法风险轴。**以我方规则库判定为准，不透传上游。**"
     },
 
     "severity": {
@@ -170,5 +182,18 @@
       "items": { "type": "string" },
       "description": "自由标签，用于筛选与统计。"
     }
-  }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "properties": {"finding_kind": {"const": "credential"}},
+        "required": ["finding_kind"]
+      },
+      "then": {
+        "required": ["rule_id"],
+        "properties": {"risk": {"const": "not_applicable"}}
+      }
+    }
+  ]
 }

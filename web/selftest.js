@@ -20,7 +20,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.dirname(__dirname);           // web/ 的上一级 = 仓库根
-const TARGET_NAME = process.argv[2] || 'findings_ai.json';
+const TARGET_NAME = (process.argv[2] || 'findings_ai.json')
+  .replace(/\\/g, '/').replace(/^out\//, '');
 const TARGET = 'out/' + TARGET_NAME;
 const TARGET_PATH = path.join(ROOT, 'out', TARGET_NAME);
 
@@ -33,7 +34,11 @@ if (!fs.existsSync(TARGET_PATH)) {
 const html = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
 const m = html.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 if (!m) { console.error('从 index.html 里提取不到 <script>'); process.exit(1); }
-const code = m[1];
+// 页面默认只枚举正式产物名。自检允许传任意 out/ 文件，因此把本次目标
+// 注入候选首位；fetch 桩仍只供应这一份文件，不会退回到别的数据自欺。
+const code = m[1].replace(
+  'const CANDIDATES = [',
+  `const CANDIDATES = ['../${TARGET}',`);
 
 const data = JSON.parse(fs.readFileSync(TARGET_PATH, 'utf8'));
 

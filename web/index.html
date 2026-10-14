@@ -31,7 +31,7 @@
     /* 风险 = 成因。亮/暗区分同为红色的 shor 与 broken。 */
     /* 都按「配白字 ≥4.5:1」选过 —— 条上要放白字 */
     --shor:#c93a2b; --broken:#7e2f24; --broken2:#66251b; --grover:#a0670a;
-    --review:#5b6876; --safe:#2c7a55;
+    --review:#5b6876; --safe:#2c7a55; --not_applicable:#4f5660;
 
     /* 结论状态 */
     --ok:#2c7a55; --warn:#b57500; --info:#3d5a80; --mute:#6b7683;
@@ -107,6 +107,7 @@
   .seg.grover{background:var(--grover)}
   .seg.review{background:var(--review)}
   .seg.safe{background:var(--safe)}
+  .seg.not_applicable{background:var(--not_applicable)}
   @keyframes seg-in{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 
   .mech{display:flex; gap:2px}
@@ -180,6 +181,8 @@
   .rk.grover i{background:var(--grover)} .rk.grover {color:var(--grover)}
   .rk.review i{background:var(--review)} .rk.review {color:var(--review)}
   .rk.safe   i{background:var(--safe)}   .rk.safe   {color:var(--safe)}
+  .rk.not_applicable i{background:var(--not_applicable)}
+  .rk.not_applicable {color:var(--not_applicable)}
 
   .tag{
     display:inline-block; border:1px solid var(--rule); border-radius:3px;
@@ -337,13 +340,14 @@ async function autoLoad(){
 
 /* ============================ 常 量 ============================ */
 
-const RISKS = ['shor','broken','grover','review','safe'];
+const RISKS = ['shor','broken','grover','review','safe','not_applicable'];
 const RISK_CN = {shor:'量子直接破解', broken:'经典攻击已破', grover:'量子加速削弱',
-                 review:'待评估', safe:'无已知威胁'};
+                 review:'待评估', safe:'无已知威胁', not_applicable:'非算法风险'};
 /* 每类成因的机制。broken 那条是本项目的核心主张：
    上游把 MD5 之流判成「量子脆弱」，但它其实是被经典攻击攻破的，与量子无关。 */
 const RISK_MECH = {shor:'Shor 可恢复私钥', broken:'与量子无关', grover:'Grover 使强度减半',
-                   review:'证据不足以判定', safe:'当前无已知攻击'};
+                   review:'证据不足以判定', safe:'当前无已知攻击',
+                   not_applicable:'凭据 / 配置风险'};
 
 const SEVS = ['critical','high','medium','low','info'];
 const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'提示'};
@@ -393,6 +397,10 @@ const esc = s => String(s==null?'':s).replace(/[&<>"']/g,
 function riskRank(r){ return RISKS.indexOf(r) < 0 ? 99 : RISKS.indexOf(r); }
 function sevRank(s){ return SEVS.indexOf(s) < 0 ? 99 : SEVS.indexOf(s); }
 function riskCls(r){ return RISKS.indexOf(r) < 0 ? 'review' : r; }
+function subjectOf(f){
+  return f.finding_kind === 'credential' ? (f.rule_id || '凭据问题')
+                                         : (f.algorithm || '—');
+}
 
 function countBy(rows, fn){
   const m = new Map();
@@ -516,7 +524,7 @@ function apply(){
     if(S.usage.size  && !S.usage.has(f.usage)) return false;
     if(S.reason.size && !S.reason.has(reasonOf(f))) return false;
     if(q){
-      const hay = [f.algorithm, f.algorithm_normalized, f.file, f.line,
+      const hay = [subjectOf(f), f.algorithm, f.algorithm_normalized, f.rule_id, f.file, f.line,
                    f.usage, f.explanation, (f.tags||[]).join(' ')]
                   .join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
@@ -529,7 +537,7 @@ function apply(){
     let x, y;
     if(key==='risk'){ x=riskRank(a.risk); y=riskRank(b.risk); }
     else if(key==='severity'){ x=sevRank(a.severity); y=sevRank(b.severity); }
-    else if(key==='algorithm'){ x=a.algorithm||''; y=b.algorithm||''; }
+    else if(key==='algorithm'){ x=subjectOf(a); y=subjectOf(b); }
     else if(key==='file'){ x=(a.file||'')+a.line; y=(b.file||'')+b.line; }
     else if(key==='decided'){ x=(a.remediation||{}).decided?0:1; y=(b.remediation||{}).decided?0:1; }
     else { x=a[key]||''; y=b[key]||''; }
@@ -561,7 +569,7 @@ function renderList(){
     const rk = riskCls(f.risk);
     return `<tr data-i="${i}" class="${sel?'sel':''}">
       <td><span class="rk ${rk}"><i></i>${esc(RISK_CN[f.risk]||f.risk||'—')}</span></td>
-      <td class="alg">${esc(f.algorithm||'—')}</td>
+      <td class="alg">${esc(subjectOf(f))}</td>
       <td class="loc" title="${esc(f.file)}">${esc((f.file||'').split(/[\\/]/).pop())}:${esc(f.line)}</td>
       <td><span class="tag">${esc(USAGE_CN[f.usage]||f.usage||'—')}</span></td>
       <td><span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span></td>
@@ -572,7 +580,7 @@ function renderList(){
 
   $('#list').innerHTML = `<table>
     <thead><tr>
-      ${th('risk','风险')}${th('algorithm','算法')}${th('file','位置')}
+      ${th('risk','风险')}${th('algorithm','对象 / 规则')}${th('file','位置')}
       ${th('usage','用途')}${th('severity','严重')}${th('decided','结论')}
       ${th('evidence','证据','right')}
     </tr></thead>
@@ -628,7 +636,7 @@ function renderDetail(){
 
   $('#detail').innerHTML = `<div class="dwrap">
     <div class="dhead">
-      <h2>${esc(f.algorithm||'—')}</h2>
+      <h2>${esc(subjectOf(f))}</h2>
       <div class="path">${esc(f.file)}:${esc(f.line)}</div>
       <div class="drow">
         <span class="rk ${rk}"><i></i>${esc(RISK_CN[f.risk]||f.risk||'—')}</span>

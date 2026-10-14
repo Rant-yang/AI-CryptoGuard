@@ -33,7 +33,8 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan, local_literal   # noqa: E402
+from scanner.adapters import (cbom_scan, credential_scan, cryptoscan,
+                              local_literal)   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
@@ -181,6 +182,24 @@ def main(argv=None):
     findings_all = merge(all_groups)
     findings, leads = split_output(findings_all)
 
+    # ---- 凭据管理缺陷（独立风险轴，不参与算法 merge / CBOM）
+    # 该模块直接产出统一 Finding，并保证 evidence.raw 不含凭据原文。
+    t0 = time.time()
+    credential_findings = credential_scan.scan(target)
+    findings.extend(credential_findings)
+    findings.sort(key=lambda f: (f['file'], f['line'], f['finding_id']))
+    meta_tools[credential_scan.TOOL_NAME] = {
+        'ok': True,
+        'seconds': round(time.time() - t0, 2),
+        'groups': len(credential_findings),
+        'raw': None,
+        'summary': {'rules': _count_by(credential_findings, 'rule_id')},
+    }
+    _print_safe('[ok] %s 完成（%.2fs，产出 %d 条凭据 Finding；不保存原文）'
+                % (credential_scan.TOOL_NAME,
+                   meta_tools[credential_scan.TOOL_NAME]['seconds'],
+                   len(credential_findings)))
+
     with open(out_path, 'w', encoding='utf-8') as fh:
         json.dump(findings, fh, ensure_ascii=False, indent=1)
     leads_path = os.path.splitext(out_path)[0] + '_leads.json'
@@ -204,6 +223,8 @@ def main(argv=None):
             'risk_corrected': sum(
                 1 for f in findings
                 if TAG_UPSTREAM_RISK_CORRECTED in f.get('tags', [])),
+            'credentials': len(credential_findings),
+            'by_credential_rule': _count_by(credential_findings, 'rule_id'),
         },
         'seconds_total': round(time.time() - t_all, 2),
     }
@@ -256,6 +277,8 @@ def _print_summary(findings, meta, out_path, meta_path, leads_path=None,
     _print_safe('按用途        : %s' % json.dumps(c['by_usage'], ensure_ascii=True))
     _print_safe('多源证据      : %d 条（同一问题挂了多个工具）' % c['multi_evidence'])
     _print_safe('风险已纠正    : %d 条（上游量子风险判定被我方规则库推翻）' % c['risk_corrected'])
+    _print_safe('凭据问题      : %d 条（8 类规则，本地检测且不保存凭据原文）'
+                % c.get('credentials', 0))
     if cov is not None:
         s = cov['summary']
         _print_safe('覆盖差异      : 双方同报 %d 行 | 仅 cbom-scan %d 行 | 仅 cryptoscan %d 行'
