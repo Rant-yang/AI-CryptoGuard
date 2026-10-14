@@ -53,11 +53,11 @@ def _print_safe(text):
 def find_tools_dir(explicit):
     """工具目录定位: --tools-dir > 环境变量 ACG_TOOLS_DIR > <仓库根>/tools/。"""
     if explicit:
-        return explicit
+        return os.path.abspath(explicit)
     env = os.environ.get('ACG_TOOLS_DIR')
     if env:
-        return env
-    return os.path.join(_ROOT, 'tools')
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(_ROOT, 'tools'))
 
 
 def run_tool(adapter, target, tools_dir, raw_path, timeout):

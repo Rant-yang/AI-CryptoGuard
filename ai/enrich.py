@@ -376,8 +376,10 @@ def _is_enriched(finding):
     判据是 remediation.source != 'none' —— 失败的条目会保持 'none'，
     所以 --resume 会自动重试它们，不需要额外的失败清单。
     """
-    return (finding.get("remediation") or {}).get("source") != "none" \
-        and finding.get("remediation") is not None
+    remediation = finding.get("remediation") or {}
+    refs = _validate_evidence_refs(
+        finding.get("evidence_refs"), finding.get("evidence") or [])
+    return remediation.get("source") != "none" and bool(refs)
 
 
 def _write(output_path, findings):

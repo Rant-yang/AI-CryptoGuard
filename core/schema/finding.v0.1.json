@@ -96,7 +96,7 @@
         "required": ["tool", "kind", "lines"],
         "properties": {
           "tool": {
-            "enum": ["cbom-scan", "cryptoscan", "crysentry", "python-ast", "credential-scan", "manual"],
+            "enum": ["cbom-scan", "cryptoscan", "crysentry", "local-literal", "python-ast", "credential-scan", "manual"],
             "description": "证据来源工具。自研模块也要如实填写，不要伪装成第三方。"
           },
           "kind": {

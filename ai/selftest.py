@@ -23,10 +23,54 @@ sys.path.insert(0, str(ROOT))
 import ai.enrich as enrich                      # noqa: E402
 from ai import redact                           # noqa: E402
 
-FINDINGS = ROOT / 'out' / 'findings.json'
+SAMPLE_FINDINGS = ROOT / 'core' / 'samples' / 'example_finding.json'
 SCHEMA = ROOT / 'core' / 'schema' / 'finding.v0.1.json'
 
 FAILS = []
+
+
+def _fresh_findings():
+    """从入库示例构造 scanner 阶段夹具，不依赖被 gitignore 的 out/。"""
+    findings = json.loads(SAMPLE_FINDINGS.read_text(encoding='utf-8'))
+    for f in findings:
+        f.pop('explanation', None)
+        f.pop('evidence_refs', None)
+        f['remediation'] = {
+            'decided': False,
+            'reason': 'not-enriched',
+            'action': '尚未增强。',
+            'source': 'none',
+        }
+        # full 模式必须有一条真实代码上下文可供脱敏回归测试。
+        target = next((e for e in f['evidence']
+                       if e.get('tool') == 'cryptoscan'), f['evidence'][0])
+        target['tool'] = 'cryptoscan'
+        target['raw'] = {
+            'records': [{
+                'type': 'Selftest',
+                'language': 'java',
+                'context': 'Cipher.getInstance("%s")' % f['algorithm'],
+                'match': 'Cipher.getInstance',
+            }]
+        }
+
+    unknown = json.loads(json.dumps(findings[-1]))
+    unknown['finding_id'] = 'selftest000001'
+    unknown['algorithm'] = 'UnmappedAlgorithm'
+    unknown['algorithm_normalized'] = 'UNMAPPEDALGORITHM'
+    unknown['usage'] = 'unknown'
+    unknown['risk'] = 'review'
+    unknown['severity'] = 'low'
+    unknown['tags'] = ['needs-usage-review']
+    findings.append(unknown)
+    return findings
+
+
+def _write_fixture(path):
+    findings = _fresh_findings()
+    path.write_text(json.dumps(findings, ensure_ascii=False, indent=2),
+                    encoding='utf-8')
+    return findings
 
 
 def check(desc, got, want):
@@ -171,6 +215,16 @@ def t_evidence_refs_validation():
         )
         check("evidence_refs：" + name, actual, expected)
 
+    legacy = {
+        'evidence': evidence,
+        'remediation': {'source': 'rule-base'},
+    }
+    check('resume 不复用缺少 evidence_refs 的旧增强结果',
+          enrich._is_enriched(legacy), False)
+    legacy['evidence_refs'] = ['E1']
+    check('resume 复用带有效 evidence_refs 的增强结果',
+          enrich._is_enriched(legacy), True)
+
 
 def t_parse_robustness():
     """解析器要能吃下模型的真实输出习惯，且坏输入要抛出可读异常。"""
@@ -193,12 +247,13 @@ def t_parse_robustness():
 
 
 def t_full_run_clean():
-    """干净跑：91 条全过，且仍然合规。"""
+    """干净跑：入库夹具全过，且仍然合规。"""
     stub = install_stub()
-    findings = json.loads(FINDINGS.read_text(encoding='utf-8'))
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        findings = _write_fixture(inp)
         out = Path(td) / 'ai.json'
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        sys.argv = ['enrich.py', str(inp), '-o', str(out)]
         enrich.main()
         result = json.loads(out.read_text(encoding='utf-8'))
 
@@ -297,10 +352,12 @@ def t_schema_compliance(result):
 
 def t_fence_does_not_crash():
     """模型在第 N 条包围栏 —— 修之前这里会崩，且丢掉全部进度。"""
-    install_stub(lambda n, alg: 'fence' if n == 50 else 'clean')
+    install_stub(lambda n, alg: 'fence' if n == 2 else 'clean')
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        _write_fixture(inp)
         out = Path(td) / 'ai.json'
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        sys.argv = ['enrich.py', str(inp), '-o', str(out)]
         enrich.main()
         check_true('围栏不再导致崩溃，输出文件存在', out.exists())
         result = json.loads(out.read_text(encoding='utf-8'))
@@ -310,10 +367,12 @@ def t_fence_does_not_crash():
 
 def t_partial_failure_is_survivable():
     """第 30 条一直失败 —— 其余必须照常完成，失败的保持占位符。"""
-    install_stub(lambda n, alg: 'raise' if n == 30 else 'clean')
+    install_stub(lambda n, alg: 'raise' if n == 2 else 'clean')
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        _write_fixture(inp)
         out = Path(td) / 'ai.json'
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        sys.argv = ['enrich.py', str(inp), '-o', str(out)]
         enrich.main()
         result = json.loads(out.read_text(encoding='utf-8'))
 
@@ -328,9 +387,11 @@ def t_partial_failure_is_survivable():
     # --resume 必须自动重试那一条
     install_stub()
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        _write_fixture(inp)
         out = Path(td) / 'ai.json'
         out.write_text(json.dumps(result, ensure_ascii=False), encoding='utf-8')
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out), '--resume']
+        sys.argv = ['enrich.py', str(inp), '-o', str(out), '--resume']
         enrich.main()
         resumed = json.loads(out.read_text(encoding='utf-8'))
     check('resume 之后全部补上',
@@ -345,7 +406,7 @@ def t_truncation_is_reported_clearly():
     「找不到 JSON 对象」，查错方向会完全跑偏。
     """
     install_stub(lambda n, alg: 'truncate')
-    finding = json.loads(FINDINGS.read_text(encoding='utf-8'))[0]
+    finding = _fresh_findings()[0]
     try:
         enrich.enrich_finding(dict(finding), 'full')
         FAILS.append('被截断的响应应该抛异常，却成功返回了')
@@ -354,10 +415,12 @@ def t_truncation_is_reported_clearly():
         check_true('截断错误信息带内容块类型', 'thinking' in str(exc))
 
     # 截断的条目保持占位符，且不拖垮其余条目
-    install_stub(lambda n, alg: 'truncate' if n == 7 else 'clean')
+    install_stub(lambda n, alg: 'truncate' if n == 2 else 'clean')
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        _write_fixture(inp)
         out = Path(td) / 'ai.json'
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        sys.argv = ['enrich.py', str(inp), '-o', str(out)]
         enrich.main()
         result = json.loads(out.read_text(encoding='utf-8'))
     check('截断条目保持占位符',
@@ -367,8 +430,8 @@ def t_truncation_is_reported_clearly():
 
 
 def t_no_leak_in_payload():
-    """两种模式下，真实 91 条发出去的 payload 都不许含源码/绝对路径。"""
-    findings = json.loads(FINDINGS.read_text(encoding='utf-8'))
+    """两种模式下，发出去的 payload 都不许含源码路径或密钥。"""
+    findings = _fresh_findings()
     for mode in ('shape', 'full'):
         blobs = [json.dumps(redact.redact_finding(f, mode), ensure_ascii=False)
                  for f in findings]
@@ -406,10 +469,11 @@ def t_two_stage_redline():
 def t_usage_rewrite_actually_happens():
     """AI 判出的用途必须真的写回 finding，并驱动 remediation。"""
     stub = install_stub(lambda n, alg: 'clean')
-    findings = json.loads(FINDINGS.read_text(encoding='utf-8'))
     with tempfile.TemporaryDirectory() as td:
+        inp = Path(td) / 'findings.json'
+        findings = _write_fixture(inp)
         out = Path(td) / 'ai.json'
-        sys.argv = ['enrich.py', str(FINDINGS), '-o', str(out)]
+        sys.argv = ['enrich.py', str(inp), '-o', str(out)]
         enrich.main()
         result = json.loads(out.read_text(encoding='utf-8'))
 

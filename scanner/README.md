@@ -291,10 +291,9 @@ scanner/
   不报（不猜）。
 - usage 一律 unknown；与外部工具同 (file, alg) 重叠时让位（merge 侧
   剔除）——只补盲区。
-- **schema 对接点（待 C）**：`core/schema/finding.v0.1.json` 的
-  `evidence[].tool` 枚举需加 `'local-literal'` 一行。schema 自己的
-  描述要求「自研模块也要如实填写，不要伪装成第三方」——在 C 加枚举前，
-  `validate.py` 会对本源产出的条目报红，这是预期行为，不是数据错误。
+- **schema 已对接**：`core/schema/finding.v0.1.json` 的
+  `evidence[].tool` 已加入 `'local-literal'`。本地字面量源会如实标为
+  自研来源，真实样例的 findings / leads 已分别通过严格校验。
 
 ### 新增：输出分层（safe / no-algorithm 不进问题清单）
 
@@ -352,11 +351,11 @@ llmcmt 演进：R6-R8 多语言 + must 口径（56.2/70.1）-> cryptoscan usage
 3. PBE 迭代阈值两 benchmark 打架（1020/11010 标 partial vs 1050=corrected）
 4. 跨文件用例 callee 文件不在匿名树、OpenSSL 源码混入语料
 
-- 方案硬指标 P≥85% / R≥90%：**两项均达标**。
+- `cryptoapi-bench` 与 `cambench-cap` 两套语料分别达到 P≥85% / R≥90%；
+  三套已扫描语料按统一口径合计仍未达标，当前可信基线见根 README。
 - 验收：合并名残留 0、拿 type 当算法的残留 0、no-algorithm/safe 混入
   问题清单 0；selftest 当前置 140 项全过（多语言/must 口径/合流各有断言）；逐字节复现一致（findings 与 leads
-  双文件）；leads 27 条 schema 全合规，findings 的 48 条报红**全部且仅**
-  为上述 `local-literal` 枚举待加项。
+  双文件）；`local-literal` 已进入 schema 枚举，findings 与 leads 均可校验。
 - 剩余 14 条 FP 的构成（全部逐条查证过）：11 条 corrected 负样本上
   **真实存在**的弱算法/ECB 字面量调用（try/fallback 写法，工具真实
   命中——benchmark 把这类文件标为已修复负样本，属口径分歧，如实记录

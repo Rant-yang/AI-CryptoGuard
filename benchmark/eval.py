@@ -110,10 +110,25 @@ def match(labels, findings):
                if r.get('expect_misuse') and r['verdict'] == 'out']
     neg = [r for r in labels if not r.get('expect_misuse')]
 
+    # 只评价落在「范围内正样本」或「明确负样本」上的输出。
+    # 只落在范围外正样本上的 finding 不该成为本任务的 FP：同一批样本既已从
+    # Recall 分母排除，就必须从 Precision 分母对称排除。
+    eligible = []
+    excluded_out = []
+    for f in findings:
+        ffile = f.get('file', '')
+        touches_in = any(_same_file(ffile, r['file']) for r in pos_in)
+        touches_neg = any(_same_file(ffile, r['file']) for r in neg)
+        touches_out = any(_same_file(ffile, r['file']) for r in pos_out)
+        if touches_in or touches_neg or not touches_out:
+            eligible.append(f)
+        else:
+            excluded_out.append(f)
+
     used = set()
     tp_detail, line_hits = [], 0
 
-    for f in findings:
+    for f in eligible:
         ffile, falgs, fline = f.get('file', ''), _algo_set(f), f.get('line')
         hit = None
         for i, r in enumerate(pos_in):
@@ -124,8 +139,11 @@ def match(labels, findings):
             algos = _label_algos(r)
             # 算法对得上，或者标签没给算法（部分可比类别有时给不出）
             # 标签给了算法就必须对上；合并名拆开后命中任一即可
-            if algos and falgs and not (algos & falgs):
-                continue
+            if algos:
+                # 标签明确给了算法时，finding 也必须给出算法且能相交。
+                # 旧逻辑会把「无算法线索」仅凭文件名算成 TP。
+                if not falgs or not (algos & falgs):
+                    continue
             hit = i
             if r.get('line') and fline and int(r['line']) == int(fline):
                 line_hits += 1
@@ -135,11 +153,11 @@ def match(labels, findings):
             tp_detail.append((f, pos_in[hit]))
 
     # 落在「公认干净」位置上的 finding = 误报
-    fp_on_neg = [f for f in findings
+    fp_on_neg = [f for f in eligible
                  if any(_same_file(f.get('file', ''), r['file']) for r in neg)]
 
     tp = len(tp_detail)
-    reported = len(findings)
+    reported = len(eligible)
     fn = len(pos_in) - tp
 
     return {
@@ -148,6 +166,7 @@ def match(labels, findings):
         'fp_on_negatives': len(fp_on_neg),
         'fn': fn,
         'n_reported': reported,
+        'n_excluded_out_of_scope': len(excluded_out),
         'n_pos_in_scope': len(pos_in),
         'n_pos_out_of_scope': len(pos_out),
         'n_negative': len(neg),
@@ -164,9 +183,43 @@ def prf(tp, fp, fn):
     return p, r, f
 
 
+def _selftest():
+    labels = [
+        {'file': 'in.java', 'algorithms': ['DES'], 'expect_misuse': True,
+         'verdict': 'in'},
+        {'file': 'out.java', 'algorithms': ['AES'], 'expect_misuse': True,
+         'verdict': 'out'},
+        {'file': 'clean.java', 'algorithms': [], 'expect_misuse': False,
+         'verdict': 'out'},
+    ]
+    findings = [
+        {'file': 'in.java', 'algorithm': 'DES'},
+        {'file': 'in.java', 'algorithm': ''},
+        {'file': 'out.java', 'algorithm': 'AES'},
+        {'file': 'clean.java', 'algorithm': 'RSA'},
+    ]
+    got = match(labels, findings)
+    checks = {
+        '有算法真值必须由同算法 finding 命中': got['tp'] == 1,
+        '无算法线索不能仅凭文件名成为 TP': got['fp'] == 2,
+        '范围外正样本输出对称排除': got['n_excluded_out_of_scope'] == 1,
+        '范围内正样本没有漏报': got['fn'] == 0,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if failed:
+        print('[FAIL] eval.py 自检: ' + '；'.join(failed))
+        return 1
+    empty = match(labels, [])
+    if empty['fn'] != 1:
+        print('[FAIL] eval.py 自检: 零检出必须保留 FN')
+        return 1
+    print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出）')
+    return 0
+
+
 # ------------------------------------------------------------------ 汇报
 
-def report(label_dir, findings_path, verbose=False):
+def report(label_dir, findings_path, verbose=False, scanned_names=None):
     labels = load_labels(label_dir)
     if not labels:
         print('没有标签 —— 先跑 `python -m benchmark.adapters`')
@@ -185,6 +238,7 @@ def report(label_dir, findings_path, verbose=False):
     agg_tp = agg_fp = agg_fn = 0
     scope_note = []
 
+    scanned_names = set(scanned_names) if scanned_names is not None else None
     skipped = []
     for name in sorted(labels):
         recs = labels[name]
@@ -198,7 +252,9 @@ def report(label_dir, findings_path, verbose=False):
         # 全部贡献 FN，合计 Recall 被压到 6.4% —— 那个数字是**口径错误**，
         # 不是我们做得差。判据是「有没有任何一条 finding 落在这个 benchmark 的
         # 标签文件上」；没有就说明这次没扫它。
-        scanned = bool(mine)
+        # 正式跑分应由调用方显式声明扫过哪些 benchmark。仅凭“是否有检出”
+        # 无法区分「没扫描」和「扫描成功但零检出」，后者必须贡献 FN。
+        scanned = (name in scanned_names) if scanned_names is not None else bool(mine)
         if not scanned:
             skipped.append((name, len(recs)))
             print('%-18s %6d %6d %6d %6d %8s %8s' %
@@ -231,6 +287,8 @@ def report(label_dir, findings_path, verbose=False):
     print('    TLS 配置等）我们的规则库不建模，不计入。')
     print('  · 范围外正样本合计 %d 条，**未计入**上面任何指标。'
           % sum(m['n_pos_out_of_scope'] for _, m in scope_note))
+    print('  · 其中仅落在范围外正样本上的检出 %d 条，也从 Precision 分母对称排除。'
+          % sum(m['n_excluded_out_of_scope'] for _, m in scope_note))
     print('  · 负样本 %d 条用于误报统计，不参与 Recall。'
           % sum(m['n_negative'] for _, m in scope_note))
     print('  · 匹配单位 = (文件, 算法)，与 benchmark/README.md 一致 ——'
@@ -238,6 +296,9 @@ def report(label_dir, findings_path, verbose=False):
     if skipped:
         print('  · 本次**未扫描**的 benchmark 未计入合计: %s'
               % '、'.join('%s(%d 条)' % (n, c) for n, c in skipped))
+    if scanned_names is None:
+        print('  · ⚠ 未传 --scanned：本次以「有检出」推断是否扫描，只适合排查；')
+        print('    正式指标必须显式声明，避免零检出语料被错误排除。')
     print('  · 行级命中 %d 次（仅 CamBench_Real 有精确行号，未单独计指标）。'
           % sum(m['line_hits'] for _, m in scope_note))
 
@@ -265,12 +326,22 @@ def main():
     ap.add_argument('--labels', default=os.path.join(here, 'labels'))
     ap.add_argument('-v', '--verbose', action='store_true',
                     help='列出漏报明细')
+    ap.add_argument('--scanned', default=None,
+                    help='正式跑分时显式列出已扫描 benchmark，逗号分隔；'
+                         '例如 cryptoapi-bench,cambench-cap,llmcmt')
+    ap.add_argument('--selftest', action='store_true', help='运行口径回归自检')
     args = ap.parse_args()
+
+    if args.selftest:
+        return _selftest()
 
     if not os.path.exists(args.findings):
         print('找不到检出文件: %s' % args.findings)
         return 2
-    return report(args.labels, args.findings, args.verbose)
+    scanned = None
+    if args.scanned is not None:
+        scanned = [x.strip() for x in args.scanned.split(',') if x.strip()]
+    return report(args.labels, args.findings, args.verbose, scanned)
 
 
 if __name__ == '__main__':
