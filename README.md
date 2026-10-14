@@ -83,6 +83,7 @@ AI-CryptoGuard/
 ├── scanner/               ← A：调用扫描工具，产出统一格式
 ├── ai/                    ← B：LLM 解读，产出解释与建议
 ├── web/                   ← C：结果查看器（单文件，可离线）
+├── repair/                ← 3 类 Python Repair → Verify（临时副本 + 重扫）
 ├── benchmark/             ← C：算准确率用。五个模块 + 1411 条公开 benchmark 标签
 │   ├── scope.py           裁定表：benchmark 的类别 → 我方轴（范围内/部分/范围外）
 │   ├── meta.py            从 benchmark 自带元数据逐文件读真值（算法清单不许手写）
@@ -270,14 +271,14 @@ C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.
 | Recall ≥ 90%（§2.3） | 71.5%（算法 + 凭据新口径） | ❌ |
 | Precision ≥ 85%（§2.3） | 67.3%（算法 + 凭据新口径） | ❌ |
 | `evidence_refs`（§7 / §8.4） | 已实现、集成并在前端显示；真模型语义质量待抽样 | ⚠️ |
-| ≥ 3 类 Repair → Verify（§10） | 未开始 | ❌ |
+| ≥ 3 类 Repair → Verify（§10） | MD5、弱随机、硬编码口令已完成合成闭环；真实项目待验证 | ⚠️ |
 
 ### 四、下一步
 
 | # | 事项 | 归属 | 收益 |
 |---|---|---|---|
 | 1 | 提升凭据专项 P/R，并建立独立留出集 | 当前接手方 | 当前 47.9% / 45.9% |
-| 2 | 实现至少 **3 类 Repair → Verify** | 当前接手方 | 闭环能力 |
+| 2 | 在真实演示项目验证 3 类 Repair → Verify，并补项目测试钩子 | 当前接手方 | 合成闭环已通过 |
 | 3 | 补 `cambench-real` 可获得源码项目 | 当前接手方 | 泛化验证 |
 | 4 | 用真模型抽样审查 `evidence_refs` 是否真的支持解释 | 当前接手方 | AI 可信性 |
 | 5 | 第三方声明、环境模板、演示脚本、最终报告 | 当前接手方 | 交付完整性 |
@@ -291,4 +292,6 @@ python benchmark/scope.py --report   # 范围外 636 条是怎么来的，逐条
 python benchmark/anonymize.py        # 匿名化自检（泄漏清零 + 字面量未被改动）
 python benchmark/eval.py out/verify/_all3.json --scanned cryptoapi-bench,cambench-cap,llmcmt
 python benchmark/eval.py --selftest             # 口径回归
+python scanner/credential_selftest.py            # 8 类凭据 + 零明文泄露
+python repair/selftest.py                        # 3 类临时修复 + 重新验证
 ```
