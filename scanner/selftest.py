@@ -18,7 +18,7 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan           # noqa: E402
+from scanner.adapters import cbom_scan, cryptoscan, local_literal   # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
 from scanner.merge import merge                              # noqa: E402
@@ -27,6 +27,7 @@ from scanner.normalize import (                              # noqa: E402
     max_severity,
     most_severe_risk,
     norm_algorithm,
+    split_combined_algorithm,
     to_relative_path,
     usage_contradicts_algorithm,
 )
@@ -255,6 +256,414 @@ def test_malformed_inputs(check):
           (len(f), f[0]['evidence'][0]['lines']), (1, [1, 2]))
 
 
+def test_split_combined_and_no_algorithm(check):
+    """任务 1（合并名拆词）+ 任务 2（type 不许当算法）的硬性不变式。"""
+    # ---- 任务 1: 拆词规则钉死全部真实形态（cbom-scan asset.algo 实测值域）----
+    check('拆: Legacy cipher 合并名 -> 4 个并列算法',
+          split_combined_algorithm('Legacy cipher (Blowfish/CAST5/IDEA/SEED)'),
+          ['Blowfish', 'CAST5', 'IDEA', 'SEED'])
+    check('拆: SSH 依赖的并列算法',
+          split_combined_algorithm('SSH (RSA/ECDSA/Ed25519)'),
+          ['RSA', 'ECDSA', 'Ed25519'])
+    check('不拆: 无括号原样返回',
+          split_combined_algorithm('AES-128'), ['AES-128'])
+    check('不拆: AES/GCM/NoPadding 是「算法/模式/填充」参数写法，不是并列',
+          split_combined_algorithm('AES/GCM/NoPadding'), ['AES/GCM/NoPadding'])
+    check('不拆: PKCS#8 括号内是说明文字（alg unspecified）',
+          split_combined_algorithm('PKCS#8 private key (alg unspecified)'),
+          ['PKCS#8 private key (alg unspecified)'])
+    check('不拆: JWT/multi 拆出的段含空格，不是算法 token',
+          split_combined_algorithm('JWT/multi (often RS256/ES256)'),
+          ['JWT/multi (often RS256/ES256)'])
+    check('不拆: SHA-384/512 括号内是家族名单段',
+          split_combined_algorithm('SHA-384/512 (SHA-2)'), ['SHA-384/512 (SHA-2)'])
+
+    # ---- 任务 1 端到端: Legacy asset 在 to_groups 里就拆开 ----
+    data = {'assets': [{
+        'id': 'legacy-sym', 'algo': 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)',
+        'prim': 'block-cipher', 'risk': 'broken',
+        'occurrences': [{'file': 'a.go', 'line': 7}],
+    }]}
+    groups = cbom_scan.to_groups(data, 'unused')
+    check('Legacy asset 拆成 4 个独立组', len(groups), 4)
+    check('拆出的组归一名都是单算法（硬性不变式: 不允许 LEGACY 拼接串）',
+          sorted(g['alg_norm'] for g in groups),
+          ['BLOWFISH', 'CAST5', 'IDEA', 'SEED'])
+    check('拆出组的 algorithm 是具体算法名',
+          sorted(g['algorithm'] for g in groups),
+          ['Blowfish', 'CAST5', 'IDEA', 'SEED'])
+    check('raw.algo 保留原始合并名供溯源',
+          groups[0]['raw']['algo'], 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)')
+
+    # ---- 任务 1 补（2026-10-09 cryptoapi-bench 实测抓的坑）: 拆开后命中只归
+    # match 点名的候选 —— 否则只用 Blowfish 的文件会把 CAST5/IDEA/SEED 全带上，
+    # 每个文件 1 条误报变 3 条（TP 不动、FP +13 的回归就这样来的）----
+    data = {'assets': [{
+        'id': 'legacy2', 'algo': 'Legacy cipher (Blowfish/CAST5/IDEA/SEED)',
+        'prim': 'block-cipher', 'risk': 'broken',
+        'occurrences': [
+            {'file': 'b.go', 'line': 1, 'match': 'Blowfish'},
+            {'file': 'b.go', 'line': 2, 'match': 'CAST5'},
+            {'file': 'c.go', 'line': 5, 'match': 'ssh'},   # 对不上任何候选
+            {'file': 'c.go', 'line': 6},                   # 无 match
+        ],
+    }]}
+    got = sorted((g['file'], g['algorithm'], tuple(g['lines']))
+                 for g in cbom_scan.to_groups(data, 'unused'))
+    check('match 点名的候选才继承命中；对不上/缺失时保守归全部',
+          got, [
+        ('b.go', 'Blowfish', (1,)), ('b.go', 'CAST5', (2,)),
+        ('c.go', 'Blowfish', (5, 6)), ('c.go', 'CAST5', (5, 6)),
+        ('c.go', 'IDEA', (5, 6)), ('c.go', 'SEED', (5, 6)),
+    ])
+
+    # ---- 任务 2: 无 algorithm 的 finding 不再拿 type 当算法 ----
+    r = cryptoscan.to_groups({'findings': [
+        {'type': 'Mutual TLS (mTLS)', 'file': r'D:\p\a.py', 'line': 5,
+         'purpose': 'tls-configuration', 'severity': 0}]}, r'D:\p')
+    check('无 algorithm 的 finding 分组键用 TYPE: 前缀',
+          r[0]['alg_norm'], 'TYPE:MUTUALTLSMTLS')
+    f = merge(r)[0]
+    check('algorithm_normalized 如实留空（不打假算法）',
+          f['algorithm_normalized'], '')
+    check('algorithm 同样留空', f['algorithm'], '')
+    check('打 no-algorithm 标记', 'no-algorithm' in f.get('tags', []), True)
+    check('risk 兜底照常工作: 表外 type 落 review（不猜，扩表归 C）',
+          f['risk'], 'review')
+    f_hk = merge(cryptoscan.to_groups({'findings': [
+        {'type': 'Hardcoded Key Size', 'file': r'D:\p\a.py', 'line': 9,
+         'severity': 1}]}, r'D:\p'))[0]
+    check('risk 兜底照常工作: 表内 type 按 RISK_BY_TYPE 裁决',
+          f_hk['risk'], 'grover')
+
+    # ---- 任务 2: finding_id 不撞（同文件同用途、不同 type）----
+    r2 = merge(cryptoscan.to_groups({'findings': [
+        {'type': 'Hardcoded Key Size', 'file': r'D:\p\a.py', 'line': 1},
+        {'type': 'Mutual TLS (mTLS)', 'file': r'D:\p\a.py', 'line': 2},
+    ]}, r'D:\p'))
+    check('同文件不同 type 是两条独立 finding', len(r2), 2)
+    check('两条的 finding_id 不撞（分桶键入指纹）',
+          r2[0]['finding_id'] != r2[1]['finding_id'], True)
+
+    # ---- 任务 2: 有 algorithm 的 finding 走原路径不受影响 ----
+    r3 = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'RSA', 'type': 'RSA Algorithm', 'file': r'D:\p\b.py',
+         'line': 3, 'purpose': 'signing', 'severity': 3}]}, r'D:\p')
+    check('有 algorithm 的 finding 照常归一', r3[0]['alg_norm'], 'RSA')
+
+
+def test_cryptoscan_usage_fuse(check):
+    """同 (file, alg) 的 purpose 摆动在 adapter 层合流成一组。
+
+    llmcmt 实测 124 条 FP 全来自 cryptoscan 逐行 purpose 把同一处使用拆成
+    authentication/encryption 两桶 —— 计数单位 (file, algorithm) 之下它
+    只能是一条。合到行数最多的具体用途桶, 行号全并。
+    """
+    data = {'findings': [
+        # 同文件同算法 3 行: 2 行 encryption、1 行 authentication -> 一组
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 4,
+         'purpose': 'encryption', 'severity': 1, 'confidence': 'LOW'},
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 14,
+         'purpose': 'encryption', 'severity': 1, 'confidence': 'LOW'},
+        {'algorithm': 'PBKDF2', 'file': r'D:\p\a.py', 'line': 27,
+         'purpose': 'authentication', 'severity': 2, 'confidence': 'MEDIUM'},
+        # 同文件另一算法不受影响
+        {'algorithm': 'AES-GCM', 'file': r'D:\p\a.py', 'line': 30,
+         'purpose': 'encryption', 'severity': 0},
+    ]}
+    groups = cryptoscan.to_groups(data, r'D:\p')
+    check('同 (file,alg) 合流成一组（usage=行数最多的 encryption）',
+          [(g['algorithm'], g['usage']) for g in groups],
+          [('PBKDF2', 'encryption'), ('AES-GCM', 'encryption')])
+    main = groups[0]
+    check('行号全并 + 顺序稳定', main['lines'], [4, 14, 27])
+    check('severity 取最严重（跨桶照比）', main['severity'], 'medium')
+    check('confidence 取最大（跨桶照比, MEDIUM=0.6）', main['confidence'], 0.6)
+    check('被并桶的记录不丢（raw.records 3 条）',
+          len(main['raw']['records']), 3)
+    # 全 unknown 的多桶不猜（由 merge 的行号吸收按精确行号细分）
+    data2 = {'findings': [
+        {'algorithm': 'RSA', 'file': r'D:\p\b.py', 'line': 1, 'purpose': None},
+        {'algorithm': 'RSA', 'file': r'D:\p\b.py', 'line': 2},
+    ]}
+    g2 = cryptoscan.to_groups(data2, r'D:\p')
+    check('全 unknown 时保持单桶 unknown（不猜用途）',
+          [(g['usage'], g['lines']) for g in g2], [('unknown', [1, 2])])
+
+
+def test_local_literal(check):
+    """本地字面量源：双条件判定、只补盲区、词表外不猜。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        def put(name, text):
+            with open(os.path.join(root, name), 'w', encoding='utf-8') as fh:
+                fh.write(text)
+            return name
+
+        # 1) 汇点 + 字面量（经变量间接传入的真实形态）
+        put('a.java', 'class A {\n'
+                      '  static final String D = "IDEA";\n'          # 行 2
+                      '  void go(char[] c) throws Exception {\n'
+                      '    Cipher.getInstance(String.valueOf(c));\n'  # 行 4
+                      '  } }\n')
+        # 2) 只有字面量、没有汇点（测试资源/文档 —— 不许触发）
+        put('b.java', 'class B { static final String D = "RC2"; }\n')
+        # 3) 转换串首段命中（调用点字面量、算法表缺词的形态）
+        put('c.java', 'class C { void go() throws Exception {\n'
+                      '  Cipher.getInstance("DES/CBC/PKCS5Padding");\n'  # 行 2
+                      '} }\n')
+        # 4) 健全算法不在词表（AES 不是已淘汰经典算法）
+        put('d.java', 'class D { static final String D = "AES";\n'
+                      '  void go() throws Exception { Cipher.getInstance(D); } }\n')
+        # 5) 注释里出现算法名（无引号 —— 不算写死的算法选择）
+        put('e.java', 'class E { // IDEA is broken\n'
+                      '  void go() throws Exception { Cipher.getInstance(x); } }\n')
+        # 6) 同文件多字面量去重成一个组
+        put('f.java', 'class F {\n'
+                      '  static final String D1 = "MD4";\n'          # 行 2
+                      '  static final String D2 = "MD4";\n'          # 行 3
+                      '  void go(char[] c) throws Exception {\n'
+                      '    MessageDigest.getInstance(String.valueOf(c));\n'  # 行 5
+                      '  } }\n')
+        # 7) R2+R3 跨文件一跳: caller 常量实参 -> callee 的 JCE 汇点
+        put('caller1.java', 'class Caller1 {\n'
+                            '  void go() {\n'
+                            '    Callee1 c = new Callee1();\n'
+                            '    String a = "RC2";\n'
+                            '    c.go(a); }\n'                       # 行 5
+                            '}\n')
+        put('callee1.java', 'class Callee1 {\n'
+                            '  void go(String crypto) throws Exception {\n'
+                            '    Cipher.getInstance(crypto); }\n'    # 行 3
+                            '}\n')
+        # 8) R4 两层嵌套括号（Integer.parseInt(String.valueOf(count))）
+        put('pbe1.java', 'class Pbe1 {\n'
+                         '  void go() throws Exception {\n'
+                         '    int count = 20;\n'
+                         '    byte[] salt = new byte[8];\n'
+                         '    new PBEParameterSpec(salt, '
+                         'Integer.parseInt(String.valueOf(count)));\n'  # 行 5
+                         '  } }\n')
+        # 9) R4 高迭代（>= 1000）不报 + 解析不到常量不报（不猜）
+        put('pbe2.java', 'class Pbe2 {\n'
+                         '  void go() throws Exception {\n'
+                         '    int count = 100000;\n'
+                         '    byte[] salt = new byte[8];\n'
+                         '    new PBEParameterSpec(salt, count);\n'
+                         '  } }\n')
+        put('neg2.java', 'class Neg2 {\n'
+                         '  void go(int count) throws Exception {\n'  # 形参, 无来源
+                         '    byte[] salt = new byte[8];\n'
+                         '    new PBEParameterSpec(salt, count);\n'
+                         '  } }\n')
+        # 10) R4x 跨文件反向: PBE 汇点在 callee, 迭代常量来自 caller
+        put('pcaller.java', 'class Pcaller {\n'
+                            '  void go() {\n'
+                            '    Pcallee p = new Pcallee();\n'
+                            '    int count = 20;\n'
+                            '    p.go(count); }\n'                   # 行 5
+                            '}\n')
+        put('pcallee.java', 'class Pcallee {\n'
+                            '  void go(int count) throws Exception {\n'
+                            '    byte[] salt = new byte[8];\n'
+                            '    new PBEParameterSpec(salt, count); }\n'  # 行 4
+                            '}\n')
+        # 11) R5 转换串 ECB 模式（首段 AES 不在词表, 不触发 R1/R3）
+        put('ecb.java', 'class Ecb {\n'
+                        '  void go() throws Exception {\n'
+                        '    String t = "AES/ECB/PKCS5Padding";\n'
+                        '    Cipher.getInstance(t); }\n'             # 行 4
+                        '}\n')
+        # 12) map put/get 同 key 传播（R1 兜底也覆盖, 此处防传播链崩坏）
+        put('hm.java', 'class Hm {\n'
+                       '  void go() throws Exception {\n'
+                       '    HashMap h = new HashMap();\n'
+                       '    h.put("aaa", "MD2");\n'
+                       '    String c = h.get("aaa");\n'
+                       '    MessageDigest.getInstance(c); }\n'
+                       '}\n')
+        # 13) R4 must 口径: 恒假分支的升值是死代码（llmcmt af10401 形态）
+        put('dead1.java', 'class Dead1 {\n'
+                          '  void go() {\n'
+                          '    int choice = 0;\n'
+                          '    int count = 5;\n'
+                          '    if (choice > 1)\n'
+                          '      count = 1050;\n'          # 恒假 -> 死代码
+                          '    PBEParameterSpec s = new PBEParameterSpec(new byte[8], count); }\n'
+                          '}\n')
+        # 14) R4 must 口径: 可达分支存在合规路径 -> 不报（a1e0131 corrected 形态）
+        put('dead2.java', 'class Dead2 {\n'
+                          '  void go(boolean fix) {\n'
+                          '    int count = 5;\n'
+                          '    if (fix)\n'
+                          '      count = 1050;\n'          # 参数条件可达
+                          '    PBEParameterSpec s = new PBEParameterSpec(new byte[8], count); }\n'
+                          '}\n')
+        # 15) R4 阈值含边界: 恰 1000 也报（llmcmt af10416 形态, PBEKeySpec 第 3 参）
+        put('pbe3.java', 'class Pbe3 {\n'
+                         '  void go() {\n'
+                         '    int iterations = 1000;\n'
+                         '    PBEKeySpec spec = new PBEKeySpec(new char[8], new byte[8], iterations, 128); }\n'
+                         '}\n')
+        # 16) 多语言: py ECB / C 词表+ECB / Go 词表
+        put('ecb.py', 'from Crypto.Cipher import AES\n'
+                      'AES_128 = AES.new(K, AES.MODE_ECB)\n')
+        put('des3.py', 'from Crypto.Cipher import DES3\n'
+                       'cipher = DES3.new(key, DES3.MODE_CBC)\n')
+        put('md4.c', '#include <openssl/md4.h>\n'
+                     'void go() { MD4((const unsigned char*)t, len, out); }\n')
+        put('ecb.c', '#include <openssl/evp.h>\n'
+                     'void go() { EVP_aes_128_ecb(); }\n')
+        put('bf.cpp', 'void go() { BF_ecb_encrypt(p, c, &k, 1); }\n')
+        put('cast.go', 'import "golang.org/x/crypto/cast5"\n'
+                       'func go2() { block, _ := cast5.NewCipher(key) }\n')
+        put('xtea.go', 'import "golang.org/x/crypto/xtea"\n'
+                       'func go3() { block, _ := xtea.NewCipher(key) }\n')
+        put('gmd5.go', 'func go4() { s := gmd5.MustEncryptString(pw) }\n')
+        # 17) R10 ucryptolib (MicroPython): mode = MODE_ECB 变量形态
+        put('ucrypto.py', 'from ucryptolib import aes, MODE_ECB, MODE_CBC\n'
+                          'def enc(key, data, mode):\n'
+                          '    cipher = aes(key, mode)\n'
+                          '    return cipher.encrypt(data)\n'
+                          'def go(key, data):\n'
+                          '    mode = MODE_ECB\n'
+                          '    return enc(key, data, mode)\n')
+        # 18) R12 C 宏迭代数: #define ITERATIONS 1000 (含边界)
+        put('pbemac.c', '#include <openssl/evp.h>\n'
+                        '#define ITERATIONS 1000\n'
+                        'void go() { PKCS5_PBKDF2_HMAC(pw, l, salt, s, ITERATIONS, EVP_sha256(), klen, out); }\n')
+        # 19) JCE PBE 组合名拆词: PBEWithMD5AndDES -> MD5 + DES
+        put('pbec.java', 'class Pbec {\n'
+                         '  void go() throws Exception {\n'
+                         '    Cipher c = Cipher.getInstance("PBEWithMD5AndDES");\n'  # 行 3
+                         '  } }\n')
+        # 20) R2 放宽: 接收者是显式 new 构造、类文件不在树内 -> caller 仍报
+        put('caller2.java', 'class Caller2 {\n'
+                            '  void go() {\n'
+                            '    X9999 bc = new X9999();\n'
+                            '    String a = "IDEA";\n'
+                            '    bc.go(a); }\n'                    # 行 5
+                            '}\n')
+
+        groups = {(g['file'], g['alg_norm']): g
+                  for g in local_literal.scan(root)}
+        check('汇点+字面量 -> IDEA 组', ('a.java', 'IDEA') in groups, True)
+        g = groups[('a.java', 'IDEA')]
+        check('行号 = 字面量行 + 汇点行', g['lines'], [2, 4])
+        check('risk 统一 broken（词表内全是已淘汰经典算法）', g['risk'], 'broken')
+        check('usage 如实 unknown（不猜用途）', g['usage'], 'unknown')
+        check('无汇点不触发（b.java 不产出）',
+              [k for k in groups if k[0] == 'b.java'], [])
+        check('转换串首段命中 -> DES 组', ('c.java', 'DES') in groups, True)
+        check('词表外健全算法不触发（d.java 不产出）',
+              [k for k in groups if k[0] == 'd.java'], [])
+        check('无引号注释不触发（e.java 不产出）',
+              [k for k in groups if k[0] == 'e.java'], [])
+        if ('f.java', 'MD4') in groups:
+            check('同文件多字面量去重成一个组', groups[('f.java', 'MD4')]['lines'],
+                  [2, 3, 5])
+        else:
+            check('同文件多字面量去重成一个组', ('f.java', 'MD4') in groups, True)
+
+        # ---- R2/R3: 跨文件一跳（caller 常量实参 -> callee 形参 -> JCE 汇点）----
+        check('R2: 词表字面量传给树内类 -> caller 侧 RC2',
+              ('caller1.java', 'RC2') in groups, True)
+        check('R2 行号 = 调用行', groups[('caller1.java', 'RC2')]['lines'], [5])
+        check('R3: callee 形参解析到跨文件常量 -> callee 侧 RC2',
+              ('callee1.java', 'RC2') in groups, True)
+        check('R3 行号 = 汇点行', groups[('callee1.java', 'RC2')]['lines'], [3])
+
+        # ---- R4: PBE 低迭代（两层嵌套括号 + 风险档 + 防误报）----
+        check('R4: 两层嵌套括号的低迭代 -> PBKDF2',
+              ('pbe1.java', 'PBKDF2') in groups, True)
+        check('R4 risk=review（健全 KDF 的实现误用, 不是 broken）',
+              groups[('pbe1.java', 'PBKDF2')]['risk'], 'review')
+        check('R4 规则留痕', groups[('pbe1.java', 'PBKDF2')]['raw']['rules'], ['R4'])
+        check('R4 高迭代（100000）不报',
+              [k for k in groups if k[0] == 'pbe2.java'], [])
+        check('R4 解析不到常量就不报（不猜）',
+              [k for k in groups if k[0] == 'neg2.java'], [])
+
+        # ---- R4x: 迭代常量来自 caller -> caller 文件反向同报 ----
+        check('R4x: callee 命中 + caller 反向各一条 PBKDF2',
+              ('pcallee.java', 'PBKDF2') in groups and
+              ('pcaller.java', 'PBKDF2') in groups, True)
+        check('R4x caller 行号 = 真实调用行（不是 None/0）',
+              groups[('pcaller.java', 'PBKDF2')]['lines'], [5])
+
+        # ---- R5: 转换串 ECB 模式 ----
+        ecb_key = ('ecb.java', canon_algorithm('AES/ECB'))
+        check('R5: 转换串模式段 ECB -> AES/ECB 条目', ecb_key in groups, True)
+        check('R5 risk=review（模式误用待复核）',
+              groups[ecb_key]['risk'], 'review')
+
+        # ---- map put/get 同 key 传播 ----
+        check('HashMap put/get 同 key 传播 -> MD2', ('hm.java', 'MD2') in groups, True)
+
+        # ---- R4 must 口径（恒假剔除 + 可达值上界 <= 1000）----
+        check('R4 恒假分支的 1050 是死代码 -> 上界 5, 照报',
+              ('dead1.java', 'PBKDF2') in groups, True)
+        check('R4 可达分支存在 1050 的合规路径 -> 不报（corrected 形态）',
+              [k for k in groups if k[0] == 'dead2.java'], [])
+        check('R4 阈值含边界: PBEKeySpec 恰 1000 也报',
+              ('pbe3.java', 'PBKDF2') in groups, True)
+
+        # ---- 多语言扫描（R6 py / R7 C/Go / 词表映射）----
+        check('R6 py: AES.new(K, AES.MODE_ECB) -> AES/ECB（review）',
+              groups.get(('ecb.py', canon_algorithm('AES/ECB')), {}).get('risk'),
+              'review')
+        check('R6 py: DES3.new(key, MODE_CBC) -> 3DES（broken）',
+              ('des3.py', canon_algorithm('3DES')) in groups, True)
+        check('R7 C: MD4(...) 裸哈希调用',
+              ('md4.c', 'MD4') in groups, True)
+        check('R7 C: EVP_aes_128_ecb -> AES/ECB',
+              ('ecb.c', canon_algorithm('AES/ECB')) in groups, True)
+        check('R7 cpp: BF_ecb_encrypt -> Blowfish（词表算法报纯名, 不带 /ECB）',
+              ('bf.cpp', canon_algorithm('Blowfish')) in groups, True)
+        check('R8 Go: cast5.NewCipher -> CAST（标签口径短名）',
+              ('cast.go', canon_algorithm('CAST')) in groups, True)
+        check('R8 Go: xtea.NewCipher -> XTEA',
+              ('xtea.go', canon_algorithm('XTEA')) in groups, True)
+        check('R8 Go: gmd5.MustEncryptString -> MD5（Encrypt\\w* 覆盖后缀变体）',
+              ('gmd5.go', 'MD5') in groups, True)
+        check('R10: ucryptolib 变量 mode=MODE_ECB -> AES/ECB',
+              ('ucrypto.py', canon_algorithm('AES/ECB')) in groups, True)
+        check('R12: C 宏 #define ITERATIONS 1000 -> PBKDF2（含边界）',
+              ('pbemac.c', 'PBKDF2') in groups, True)
+        check('R1 拆词: PBEWithMD5AndDES -> MD5 与 DES 两条',
+              (('pbec.java', 'MD5') in groups and
+               ('pbec.java', canon_algorithm('DES')) in groups), True)
+        check('R2 放宽: new 构造的接收者类不在树内 -> caller 侧照报',
+              ('caller2.java', 'IDEA') in groups, True)
+
+        # ---- 让位规则：外部工具已覆盖的 (file, alg)，本源不添 unknown 条 ----
+        g_lit = _group('local-literal', 'a.java', 'BLOWFISH', 'unknown', [1],
+                       risk='broken', algorithm='Blowfish')
+        g_cbom = _group('cbom-scan', 'a.java', 'BLOWFISH', 'encryption', [2],
+                        risk='broken', algorithm='Blowfish')
+        f = merge([g_lit, g_cbom])
+        check('工具已覆盖的 (file,alg) 本源让位（不拆成两条）',
+              [(x['usage'], x['evidence'][0]['tool']) for x in f],
+              [('encryption', 'cbom-scan')])
+        f2 = merge([g_lit])
+        check('盲区里本源独立成条（unknown + needs-usage-review）',
+              (len(f2), f2[0]['usage'], f2[0]['risk'],
+               'needs-usage-review' in f2[0].get('tags', [])),
+              (1, 'unknown', 'broken', True))
+
+
+def test_split_output(check):
+    """输出分层：safe 不是问题、no-algorithm 是线索 —— 都不进问题清单。"""
+    from scanner.scan import split_output
+    a = {'risk': 'safe', 'tags': []}
+    b = {'risk': 'review', 'tags': ['no-algorithm']}
+    c = {'risk': 'broken', 'tags': []}
+    d = {'risk': 'broken', 'tags': ['needs-usage-review', 'no-algorithm']}
+    findings, leads = split_output([a, b, c, d])
+    check('safe 条目不进问题清单（CBOM 资产图侧仍保留）', findings, [c])
+    check('no-algorithm 线索进 leads 层（无论风险档）', leads, [b, d])
+
+
 def test_coverage(check):
     a = [_group('cbom-scan', 'a.go', 'RSA', 'unknown', [1, 2])]
     b = [_group('cryptoscan', 'a.go', 'RSA', 'signing', [2, 3])]
@@ -289,7 +698,10 @@ def main():
 
     for fn in (test_normalize, test_relative_path, test_merge_absorb_and_fuse,
                test_merge_risk_overrides_and_tags, test_ed25519_match_refinement,
-               test_malformed_inputs, test_coverage, test_cbom_report):
+               test_split_combined_and_no_algorithm, test_cryptoscan_usage_fuse,
+               test_malformed_inputs,
+               test_local_literal, test_split_output, test_coverage,
+               test_cbom_report):
         fn(check)
 
     if fails:

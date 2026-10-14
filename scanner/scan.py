@@ -6,7 +6,9 @@
 
 流程:
     定位工具(tools/) -> cbom-scan + CryptoScan 各跑一次 -> 各自转成 ToolGroup
-    -> merge 融合 -> 写 findings.json（+ 原始输出与 meta 留档）-> 打印汇总
+    -> 本地字面量源补盲区（无外部依赖）-> merge 融合 -> 输出分层
+    （safe 条目/no-algorithm 线索不进问题清单, 见 split_output）
+    -> 写 findings.json + _leads.json（+ 原始输出与 meta 留档）-> 打印汇总
 
 退出码:
     0  成功（包括「扫描完成但零发现」；单工具失败但另一工具可用时也返回 0，
@@ -31,10 +33,11 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan   # noqa: E402
+from scanner.adapters import cbom_scan, cryptoscan, local_literal   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
+from scanner.merge import TAG_NO_ALGORITHM             # noqa: E402
 from scanner.merge import TAG_UPSTREAM_RISK_CORRECTED  # noqa: E402
 
 
@@ -50,11 +53,11 @@ def _print_safe(text):
 def find_tools_dir(explicit):
     """工具目录定位: --tools-dir > 环境变量 ACG_TOOLS_DIR > <仓库根>/tools/。"""
     if explicit:
-        return explicit
+        return os.path.abspath(explicit)
     env = os.environ.get('ACG_TOOLS_DIR')
     if env:
-        return env
-    return os.path.join(_ROOT, 'tools')
+        return os.path.abspath(env)
+    return os.path.abspath(os.path.join(_ROOT, 'tools'))
 
 
 def run_tool(adapter, target, tools_dir, raw_path, timeout):
@@ -62,6 +65,25 @@ def run_tool(adapter, target, tools_dir, raw_path, timeout):
     data = adapter.run(target, tools_dir, raw_out=raw_path, timeout=timeout)
     groups = adapter.to_groups(data, target)
     return data, groups
+
+
+def split_output(findings_all):
+    """问题清单与线索的输出分层。返回 (findings, leads)。
+
+    findings.json 是**问题清单**，两层口径（2026-10-09 实测定量后定，
+    待 C 确认）:
+        a) risk=safe 的条目不是问题（健全算法的正常使用），不进清单
+           —— 但 CBOM 资产图仍要完整，render_cbom 吃的是 findings_all;
+        b) no-algorithm 线索（TLS 配置/证书/硬编码密钥类，无算法可归一）
+           没有算法主体，分层到 <输出名>_leads.json 交 C 的凭据/配置
+           检测线 —— 线索不丢（单独成文件、仍是 schema 合规的 finding），
+           只是不混进按 (file, algorithm) 计数的算法问题清单。
+    """
+    leads = [f for f in findings_all if TAG_NO_ALGORITHM in f.get('tags', [])]
+    findings = [f for f in findings_all
+                if f['risk'] != 'safe'
+                and TAG_NO_ALGORITHM not in f.get('tags', [])]
+    return findings, leads
 
 
 def main(argv=None):
@@ -139,10 +161,31 @@ def main(argv=None):
         _print_safe('[错误] 选用的工具全部失败，无法继续。')
         return 3
 
-    findings = merge(all_groups)
+    # ---- 本地字面量源（第三层模式证据，无外部依赖，总跑）
+    # 只补外部工具的盲区（算法名经变量间接传入/算法表缺词），
+    # 与工具重叠的分组在 merge 侧让位 —— 见 local_literal.py docstring
+    t0 = time.time()
+    lit_groups = local_literal.scan(target)
+    all_groups.extend(lit_groups)
+    meta_tools[local_literal.TOOL_NAME] = {
+        'ok': True,
+        'seconds': round(time.time() - t0, 2),
+        'groups': len(lit_groups),
+        'raw': None,
+        'summary': None,
+    }
+    _print_safe('[ok] %s 完成（%.2fs，产出 %d 个工具分组）'
+                % (local_literal.TOOL_NAME,
+                   meta_tools[local_literal.TOOL_NAME]['seconds'], len(lit_groups)))
+
+    findings_all = merge(all_groups)
+    findings, leads = split_output(findings_all)
 
     with open(out_path, 'w', encoding='utf-8') as fh:
         json.dump(findings, fh, ensure_ascii=False, indent=1)
+    leads_path = os.path.splitext(out_path)[0] + '_leads.json'
+    with open(leads_path, 'w', encoding='utf-8') as fh:
+        json.dump(leads, fh, ensure_ascii=False, indent=1)
 
     meta = {
         'target': target,
@@ -152,6 +195,8 @@ def main(argv=None):
         'counts': {
             'tool_groups': len(all_groups),
             'findings': len(findings),
+            'leads_excluded': len(leads),
+            'safe_excluded': sum(1 for f in findings_all if f['risk'] == 'safe'),
             'by_risk': _count_by(findings, 'risk'),
             'by_severity': _count_by(findings, 'severity'),
             'by_usage': _count_by(findings, 'usage'),
@@ -172,20 +217,20 @@ def main(argv=None):
             json.dump(cov, fh, ensure_ascii=False, indent=1)
         meta['coverage'] = cov['summary']
 
-    # ---- 融合版 CBOM（可选）
+    # ---- 融合版 CBOM（可选）。用 findings_all —— 资产图要完整，含 safe 条目
     cbom_path = None
     if args.cbom:
         cbom_path = os.path.splitext(out_path)[0] + '.cbom.json'
         with open(cbom_path, 'w', encoding='utf-8') as fh:
-            json.dump(render_cbom(findings, target), fh,
+            json.dump(render_cbom(findings_all, target), fh,
                       ensure_ascii=False, indent=1)
     meta_path = os.path.join(out_dir, os.path.splitext(os.path.basename(out_path))[0]
                              + '.meta.json')
     with open(meta_path, 'w', encoding='utf-8') as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
 
-    _print_summary(findings, meta, out_path, meta_path, cov, cbom_path,
-                   cov_path)
+    _print_summary(findings, meta, out_path, meta_path, leads_path, cov,
+                   cbom_path, cov_path)
     return 0
 
 
@@ -196,12 +241,16 @@ def _count_by(findings, field):
     return dict(sorted(counts.items()))
 
 
-def _print_summary(findings, meta, out_path, meta_path, cov=None, cbom_path=None,
-                   cov_path=None):
+def _print_summary(findings, meta, out_path, meta_path, leads_path=None,
+                   cov=None, cbom_path=None, cov_path=None):
     c = meta['counts']
     _print_safe('')
     _print_safe('====== 扫描完成 ======')
     _print_safe('findings      : %d 条（来自 %d 个工具分组）' % (c['findings'], c['tool_groups']))
+    _print_safe('线索分层      : %d 条 no-algorithm 线索 + %d 条 safe 条目不进问题清单'
+                % (c['leads_excluded'], c['safe_excluded']))
+    if leads_path:
+        _print_safe('线索输出      : %s' % leads_path)
     _print_safe('按量子风险    : %s' % json.dumps(c['by_risk'], ensure_ascii=True))
     _print_safe('按严重程度    : %s' % json.dumps(c['by_severity'], ensure_ascii=True))
     _print_safe('按用途        : %s' % json.dumps(c['by_usage'], ensure_ascii=True))

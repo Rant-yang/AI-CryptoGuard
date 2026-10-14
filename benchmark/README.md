@@ -69,7 +69,8 @@ CamBench_Cap/basic/ecbmode/CorrectedEcbMode.java ← Corrected = 正确写法
 | `insecureasymmetriccrypto` `ecbcrypto` | `predictableseeds` `credentialinstring` |
 | `pbeiteration`（部分） | `dummycertvalidation` `http` … 共 12 类 |
 
-范围外的类别**不进 Recall 分母**，但**必须如实报出来**（`eval.py` 会打出来）。
+范围外的类别**不进 Recall 分母**，也不进入同一任务的 Precision 分母；
+负样本上的检出仍然计为 FP。排除数量必须由 `eval.py` 如实打印。
 把范围藏起来只报好看的数字，就是造假。
 
 裁定表在 `scope.py`。**未裁定的类别会直接抛错** ——
@@ -119,8 +120,9 @@ python scanner/scan.py ../_benchmarks/_anon/cryptoapi-bench \
     --tools-dir <工具目录> -o out/bench/cryptoapi-bench.json
 
 # 4. 评测
-python benchmark/eval.py out/bench/cryptoapi-bench.json
-python benchmark/eval.py out/bench/cryptoapi-bench.json -v   # 看漏报明细
+python benchmark/eval.py out/bench/cryptoapi-bench.json --scanned cryptoapi-bench
+python benchmark/eval.py out/bench/cryptoapi-bench.json --scanned cryptoapi-bench -v
+python benchmark/eval.py --selftest
 ```
 
 自检：

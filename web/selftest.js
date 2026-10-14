@@ -31,7 +31,7 @@ if (!fs.existsSync(TARGET_PATH)) {
 }
 
 const html = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
-const m = html.match(/<script>\n([\s\S]*?)\n<\/script>/);
+const m = html.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 if (!m) { console.error('从 index.html 里提取不到 <script>'); process.exit(1); }
 const code = m[1];
 
@@ -177,6 +177,19 @@ setTimeout(() => {
   check('详情转义了 HTML', !htmlOf('#detail').includes('<script>bad</script>'));
   check('action 文本被转义', !htmlOf('#detail').includes('<b>x</b>'));
   check('列表转义了 HTML', !htmlOf('#list').includes('<script>bad</script>'));
+
+  /* --- 8. evidence_refs 必须能在界面上落到具体证据卡片 --- */
+  const cited = {
+    finding_id: 'cited', file: 'x.java', line: 2,
+    algorithm: 'RSA', usage: 'signing', risk: 'shor', severity: 'high',
+    explanation: '该结论由证据支持。', evidence_refs: ['E1'],
+    evidence: [{tool:'cryptoscan', kind:'pattern', lines:[2]}],
+    remediation: {decided:true, reason:'decided', action:'x', source:'rule-base'},
+  };
+  x.S.sel = cited; x.renderDetail();
+  const citedHtml = htmlOf('#detail');
+  check('AI 解释显示引用编号', citedHtml.includes('引用证据') && citedHtml.includes('E1'));
+  check('证据卡片显示同一编号', citedHtml.includes('class="ref">E1</span>'));
 
   /* ------------------------------ 结果 ------------------------------ */
   console.log(`查看器自检  [${TARGET}]`);

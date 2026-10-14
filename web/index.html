@@ -604,7 +604,7 @@ function renderDetail(){
   const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute', tone:'v-warn', why:''};
   const rk = riskCls(f.risk);
 
-  const evHtml = (f.evidence||[]).map(e => {
+  const evHtml = (f.evidence||[]).map((e, evidenceIndex) => {
     const up = e.raw || {};
     const lines = (e.lines||[]);
     const shown = lines.slice(0, 40).map(n=>`<span class="shape">${esc(n)}</span>`).join('');
@@ -613,6 +613,7 @@ function renderDetail(){
     const ctx = (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
     return `<div class="box ev">
       <div class="top">
+        <span class="ref">E${evidenceIndex + 1}</span>
         <span class="tool">${esc(e.tool||'—')}</span>
         <span class="tag">${esc(e.kind||'pattern')}</span>
         <span class="ln">命中 ${esc(lines.length)} 处</span>
@@ -654,7 +655,12 @@ function renderDetail(){
 
     <section class="blk">
       <h3>AI 解释</h3>
-      <div class="box">${ex_or(f.explanation)}</div>
+      <div class="box">
+        ${ex_or(f.explanation)}
+        ${(f.evidence_refs||[]).length
+          ? `<div class="refs"><span class="loc">引用证据：</span>${f.evidence_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>`
+          : ''}
+      </div>
     </section>
 
     <section class="blk">

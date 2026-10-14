@@ -108,10 +108,23 @@ usage 只能从以下值中选择：
                               signature / kem / key-agree。可直接用作旁证。
 - scanner_usage          —— scanner 层的初步判断，可能有误，需要你复核。
 
+证据引用规则：
+- 必须返回 evidence_refs 数组，至少引用一条有效证据。
+- evidence_refs 中的编号必须对应输入 evidence 数组：
+  evidence[0] 对应 E1，evidence[1] 对应 E2，依此类推。
+- 只能引用输入中实际存在的证据，禁止编造编号。
+- 引用必须与 explanation 和 usage 判断有实际关联。
+- 如果多条证据都能支持结论，应根据实际分析选择相关证据，
+  不要默认所有结论都只引用 E1。
+- 如果现有证据不足以判断用途，应将 usage 设为 unknown，
+  但仍应引用能够说明证据不足的实际证据。
+- 不要为了增加引用数量而引用无关证据。
+
 JSON 格式：
 {
   "usage": "...",
-  "explanation": "..."
+  "explanation": "...",
+  "evidence_refs": ["E1"]
 }
 """
 
@@ -281,6 +294,39 @@ def _refresh_tags(finding, usage):
         finding.pop("tags", None)
 
 
+def _validate_evidence_refs(refs, evidence):
+    """只保留格式正确、且指向当前 Finding 现有证据的引用。"""
+    if not isinstance(refs, list):
+        return []
+
+    if not isinstance(evidence, list):
+        return []
+
+    valid = []
+
+    for ref in refs:
+        if not isinstance(ref, str):
+            continue
+
+        if len(ref) < 2 or ref[0] != "E" or not ref[1:].isdigit():
+            continue
+
+        # E0、E01 等非规范编号不接受
+        number = int(ref[1:])
+        if number < 1 or str(number) != ref[1:]:
+            continue
+
+        # E1 对应 evidence[0]，E2 对应 evidence[1]
+        if number > len(evidence):
+            continue
+
+        # 去重，但保留原始引用顺序
+        if ref not in valid:
+            valid.append(ref)
+
+    return valid
+
+
 def enrich_finding(finding, context="full", max_tokens=None):
     """增强单个 finding。
 
@@ -296,6 +342,17 @@ def enrich_finding(finding, context="full", max_tokens=None):
 
     explanation = ai_result.get("explanation", "AI 未能生成解释。")
 
+    evidence_refs = _validate_evidence_refs(
+        ai_result.get("evidence_refs"),
+        finding.get("evidence") or [],
+    )
+
+    if not evidence_refs:
+        raise ValueError(
+            "AI 未返回有效的 evidence_refs: %s"
+            % finding.get("finding_id", "<unknown>")
+        )
+
     # PQC 路由由规则库决定，不交给 LLM 自由生成。
     remediation = route(
         finding["algorithm"],
@@ -303,11 +360,14 @@ def enrich_finding(finding, context="full", max_tokens=None):
         finding.get("algorithm_normalized"),
     )
 
+
     finding["usage"] = usage
     finding["explanation"] = explanation
+    finding["evidence_refs"] = evidence_refs
     finding["remediation"] = remediation
     _refresh_tags(finding, usage)
     return finding
+
 
 
 def _is_enriched(finding):
@@ -316,8 +376,10 @@ def _is_enriched(finding):
     判据是 remediation.source != 'none' —— 失败的条目会保持 'none'，
     所以 --resume 会自动重试它们，不需要额外的失败清单。
     """
-    return (finding.get("remediation") or {}).get("source") != "none" \
-        and finding.get("remediation") is not None
+    remediation = finding.get("remediation") or {}
+    refs = _validate_evidence_refs(
+        finding.get("evidence_refs"), finding.get("evidence") or [])
+    return remediation.get("source") != "none" and bool(refs)
 
 
 def _write(output_path, findings):
