@@ -1,5 +1,7 @@
 # core/rules/ —— 规则库：密码学确定事实
 
+`quantum_rules.json` 是扫描后、AI 前的量子风险评估规则注册表，提供稳定规则编号与版本；`core/quantum_assessment.py` 负责引用它。PQC 的具体迁移路线仍由 `pqc_routing.py` 按实际用途决定，不能由 AI 或该注册表直接猜测。
+
 > **原则（方案 §8）：AI 不负责密码学确定事实，由规则库回答。**
 
 ---

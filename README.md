@@ -119,6 +119,17 @@ cd AI-CryptoGuard
 
 **想看效果** —— 端到端跑一遍（scanner → ai → 界面）：
 
+本轮统一入口已经能完成“快速扫描 → 前置量子风险评估”，并为尚未合入的
+Java 深度分析和 v0.2 AI 如实记录 `skipped`：
+
+```bash
+python core/pipeline.py <要扫描的目录> --tools-dir <第三方工具目录> -o out/run
+python core/schema/validate_v02.py out/run/findings_assessed.json
+python web/serve.py
+```
+
+下面是兼容旧 v0.1 演示的手动链路：
+
 ```bash
 pip install -r ai/requirements.txt
 

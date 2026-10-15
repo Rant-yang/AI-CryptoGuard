@@ -1,0 +1,40 @@
+{
+  "version": "2026.10.15.1",
+  "rules": {
+    "QR-SHOR-PUBLIC-KEY": {
+      "effect": "shor",
+      "summary": "可扩展量子计算机会直接威胁传统公钥算法。",
+      "references": ["NIST IR 8105", "NIST IR 8547 (Initial Public Draft)"]
+    },
+    "QR-QUANTUM-SEARCH": {
+      "effect": "quantum_search",
+      "summary": "量子搜索会降低对称或哈希原语的有效安全强度，但不等同于直接破解。",
+      "references": ["NIST PQC Security Evaluation Criteria", "NIST IR 8105"]
+    },
+    "QR-CLASSICAL-BROKEN": {
+      "effect": "no_known_quantum_break",
+      "summary": "该项需要整改的直接原因是经典攻击或已淘汰用法，而不是量子攻击。",
+      "references": ["NIST SP 800-131A Rev. 2"]
+    },
+    "QR-NO-KNOWN-QUANTUM-BREAK": {
+      "effect": "no_known_quantum_break",
+      "summary": "当前规则库没有确认会直接破解该原语的量子攻击。",
+      "references": ["NIST PQC Security Evaluation Criteria"]
+    },
+    "PQC-USAGE-SIGNING": {
+      "route_id": "pqc.signing",
+      "usage": "signing",
+      "references": ["FIPS 204", "FIPS 205"]
+    },
+    "PQC-USAGE-ENCRYPTION": {
+      "route_id": "pqc.encryption",
+      "usage": "encryption",
+      "references": ["FIPS 203"]
+    },
+    "PQC-USAGE-KEY-EXCHANGE": {
+      "route_id": "pqc.key-exchange",
+      "usage": "key_exchange",
+      "references": ["FIPS 203"]
+    }
+  }
+}

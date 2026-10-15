@@ -115,6 +115,9 @@ setTimeout(() => {
   check('概览已渲染', stats.length > 200, `${stats.length} 字符`);
   check('列表已渲染', list.includes('<table>') && list.includes('<tbody>'), `${list.length} 字符`);
   check('详情已渲染', detail.includes('迁移 / 加固结论'), `${detail.length} 字符`);
+  if (data.some(f => f.quantum_assessment)) {
+    check('v0.2 前置量子评估已渲染', detail.includes('前置量子风险评估'));
+  }
   check('筛选已渲染', filters.includes('data-set="risk"'), `${filters.length} 字符`);
   check('概览显示问题总数', stats.includes(String(data.length)));
   check('列表行数等于数据条数',

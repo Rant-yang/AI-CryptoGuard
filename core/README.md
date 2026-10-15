@@ -1,18 +1,18 @@
 # core/ —— 统一格式 · 规则库 · 主流程
 
-> **本轮任务（待实现）：C：共享契约、前置量子风险评估、调度和缓存引用约束。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。现有用法继续有效，拟新增字段/参数以 C 的契约提交为准。
+> **2026-10-15：C0 契约、C1 前置量子评估及 C2 统一入口第一阶段已实现。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。
 
 > **负责人：C**
 > **一句话：把 scanner 和 ai 拼起来，并证明整个系统真的有效。**
 
 ```
-scanner/findings.json
+一个项目目录
         ↓
-   core/pipeline.py          ← 主流程（待写）
+   core/pipeline.py          ← 快速扫描 + 任务状态
         ↓
-ai/findings_ai.json
+findings_assessed.json       ← 量子评估在 AI 之前
         ↓
-   报告 + 指标（Precision / Recall）
+AI v0.2（等待 B 合入）+ Java 深度证据（等待 A 合入）
 ```
 
 ---
@@ -21,9 +21,11 @@ ai/findings_ai.json
 
 ```
 core/
-├── schema/         统一 Finding 格式 v0.1（所有人写代码的契约）
-├── rules/          规则库：密码学确定事实（不由大模型回答）
-├── pipeline.py     主流程，串起 scanner 和 ai（待写）
+├── schema/         v0.1 兼容契约 + 本轮 v0.2 阶段契约
+├── rules/          PQC 路由 + 量子评估规则注册表
+├── quantum_assessment.py  扫描后、AI 前的确定性评估
+├── pipeline.py     C 线统一入口
+├── selftest.py     离线入口与评估回归
 └── report.py       渲染报告（待写）
 ```
 
@@ -47,7 +49,7 @@ core/
 
 ## 已有的东西
 
-### `schema/` —— 统一格式 v0.1 ✅
+### `schema/` —— v0.1 兼容 + v0.2 阶段契约 ✅
 
 - 定义：`schema/finding.v0.1.json`（JSON Schema draft-07）
 - 自检：`python core/schema/validate.py <findings.json>`
@@ -75,15 +77,28 @@ python core/rules/pqc_routing.py     # 全部断言通过则退出码 0
 
 ---
 
-## 待做的
+## C 线统一入口（已实现第一阶段）
 
-### 1. `pipeline.py` —— 主流程
+完整快速扫描：
 
-```bash
-python core/pipeline.py <项目路径> -o out/report.md
+```cmd
+python core\pipeline.py D:\待扫描项目 --tools-dir D:\code_competition\_smoke -o out\run
 ```
 
-依次调用 scanner → ai → 生成报告。
+只评估已有扫描结果：
+
+```cmd
+python core\pipeline.py --findings out\findings.json -o out\run
+python core\schema\validate_v02.py out\run\findings_assessed.json
+```
+
+产出 `findings_assessed.json` 与 `task.json`。当前 A/B 的新接口尚未合入，
+相应阶段明确标记 `skipped`，不会把未执行写成成功。`out/` 不入库。
+离线自检：`python core\selftest.py`。
+
+## 待做的
+
+### 1. 接入 A/B v0.2 交付
 
 ### 2. `rules/` 补齐
 

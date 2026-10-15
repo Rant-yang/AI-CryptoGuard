@@ -320,6 +320,8 @@
 /* ============================ 数据载入 ============================ */
 
 const CANDIDATES = [
+  '../out/run/findings_explained.json',
+  '../out/run/findings_assessed.json',
   './findings_ai.json',
   '../out/findings_ai.json',
   '../out/findings.json',
@@ -611,6 +613,29 @@ function renderDetail(){
   const rs = reasonOf(f);
   const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute', tone:'v-warn', why:''};
   const rk = riskCls(f.risk);
+  const qa = f.quantum_assessment || null;
+  const qEffect = {
+    shor:'Shor：传统公钥算法面临直接破解风险',
+    quantum_search:'量子搜索：有效安全强度降低',
+    no_known_quantum_break:'当前无已知量子直接破解；仍需处理经典风险',
+    unknown:'证据不足，暂不能判定',
+    not_applicable:'该问题不适用量子迁移评估'
+  };
+  const qHtml = qa ? `<section class="blk">
+    <h3>前置量子风险评估</h3>
+    <div class="box">
+      <div class="drow">
+        <span class="tag">状态 · ${esc(qa.status)}</span>
+        <span class="tag">规则版本 · ${esc(qa.rule_version)}</span>
+      </div>
+      <div class="txt">${esc(qEffect[qa.quantum_effect]||qa.quantum_effect)}</div>
+      ${(qa.classical_issues||[]).map(x=>`<div class="why">经典问题：${esc(x)}</div>`).join('')}
+      ${(qa.unknowns||[]).map(x=>`<div class="why">待确认：${esc(x)}</div>`).join('')}
+      ${(qa.evidence_refs||[]).length ? `<div class="refs"><span class="loc">扫描证据：</span>${qa.evidence_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>` : ''}
+      ${(qa.rule_refs||[]).length ? `<div class="refs"><span class="loc">规则依据：</span>${qa.rule_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>` : ''}
+      ${(qa.migration_candidates||[]).length ? `<div class="why">条件路线（尚未选定）：${qa.migration_candidates.map(x=>`${esc(x.usage)} → ${esc(x.route_id)}`).join('；')}</div>` : ''}
+    </div>
+  </section>` : '';
 
   const evHtml = (f.evidence||[]).map((e, evidenceIndex) => {
     const up = e.raw || {};
@@ -646,6 +671,8 @@ function renderDetail(){
         ${(f.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}
       </div>
     </div>
+
+    ${qHtml}
 
     <section class="blk">
       <h3>迁移 / 加固结论</h3>
