@@ -50,6 +50,72 @@
   .m{font-family:var(--mono)}
   .num{font-variant-numeric:tabular-nums}
 
+  /* ============================ 本地扫描入口 ============================ */
+  .scan-gate{
+    position:relative; overflow:hidden; color:#dce7f3;
+    background:
+      radial-gradient(circle at 82% 20%,rgba(65,211,156,.12),transparent 32%),
+      linear-gradient(135deg,#0b1118,#101923 58%,#0d151d);
+    border-bottom:1px solid #263442; padding:24px 22px;
+  }
+  .scan-gate::before{
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:.18;
+    background-image:linear-gradient(rgba(132,166,198,.16) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(132,166,198,.12) 1px,transparent 1px);
+    background-size:28px 28px;
+  }
+  .scan-shell{position:relative; max-width:1240px; margin:auto; display:grid;
+              grid-template-columns:minmax(280px,.85fr) minmax(420px,1.35fr); gap:28px; align-items:stretch}
+  .scan-copy{padding:8px 0}
+  .scan-kicker{font:11px var(--mono); letter-spacing:2px; color:#63d5ad; text-transform:uppercase}
+  .scan-copy h2{font:700 clamp(22px,3vw,34px)/1.18 var(--mono); margin:9px 0 10px; color:#f5f9fd}
+  .scan-copy p{margin:0; max-width:520px; color:#91a4b8; font-size:13px}
+  .privacy{margin-top:15px; display:flex; gap:8px; align-items:flex-start; color:#71879b;
+           font:11.5px/1.55 var(--mono)}
+  .privacy i{width:7px;height:7px;margin-top:5px;border-radius:50%;background:#48c998;
+             box-shadow:0 0 12px #48c998;flex:none}
+  .scan-drop{
+    min-height:190px; border:1px solid #34495d; border-radius:8px;
+    background:rgba(11,18,26,.72); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding:24px;
+    cursor:pointer; transition:border-color .2s,background .2s,transform .2s;
+  }
+  .scan-drop:hover,.scan-drop.over{border-color:#63d5ad;background:rgba(20,37,47,.88);transform:translateY(-1px)}
+  .lockmark{width:42px;height:35px;border:2px solid #63d5ad;border-radius:6px;position:relative;
+            margin-bottom:16px;box-shadow:0 0 24px rgba(99,213,173,.16)}
+  .lockmark::before{content:"";position:absolute;width:22px;height:18px;border:2px solid #63d5ad;
+                    border-bottom:0;border-radius:14px 14px 0 0;left:8px;top:-17px}
+  .scan-drop b{font:600 15px var(--mono);color:#eef7ff}
+  .scan-drop span{margin-top:7px;color:#7890a5;font-size:12px}
+  .scan-drop button,.scan-action{margin-top:16px;border:1px solid #426276;background:#172633;color:#dbeaf5;
+                    border-radius:4px;padding:7px 13px;font:12px var(--mono);cursor:pointer}
+  .scan-drop button:hover,.scan-action:hover{border-color:#63d5ad;color:#fff}
+  .scan-state{min-height:190px;border:1px solid #34495d;border-radius:8px;background:#0a1118;
+              padding:19px 20px;display:grid;grid-template-columns:170px 1fr;gap:22px;align-items:center}
+  .scan-state[hidden]{display:none}
+  .cipher-viz{height:150px;position:relative;overflow:hidden;border:1px solid #243543;border-radius:5px;
+              background:radial-gradient(circle,#142b2b,#081017 72%)}
+  .cipher-viz::after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 49%,rgba(99,213,173,.08) 50%);background-size:100% 5px}
+  .rotor{position:absolute;width:86px;height:86px;border:1px solid #3ba982;border-radius:50%;left:41px;top:31px;
+         box-shadow:0 0 32px rgba(68,207,158,.2),inset 0 0 24px rgba(68,207,158,.1);animation:rotate 5s linear infinite}
+  .rotor::before,.rotor::after{content:"";position:absolute;border:1px dashed #4d7d74;border-radius:50%}
+  .rotor::before{inset:11px}.rotor::after{inset:27px;background:#62d4aa;box-shadow:0 0 15px #62d4aa}
+  .cipher-feed{position:absolute;inset:7px;margin:0;overflow:hidden;color:#5fc89f;opacity:.48;
+               font:9px/1.45 var(--mono);word-break:break-all;pointer-events:none}
+  @keyframes rotate{to{transform:rotate(360deg)}}
+  .scan-message{font:600 14px var(--mono);color:#f0f7fc;margin-bottom:5px}
+  .scan-count{font:11px var(--mono);color:#71879b;margin-bottom:13px}
+  .scan-bar{height:3px;background:#1d2a35;overflow:hidden;margin-bottom:15px}
+  .scan-bar i{display:block;width:0;height:100%;background:#63d5ad;box-shadow:0 0 12px #63d5ad;transition:width .3s}
+  .scan-phases{display:grid;gap:6px}
+  .scan-phase{display:flex;align-items:center;gap:8px;color:#657b8e;font:11.5px var(--mono)}
+  .scan-phase i{width:6px;height:6px;border-radius:50%;background:#344757;flex:none}
+  .scan-phase.active{color:#dce9f3}.scan-phase.active i{background:#e5ad4f;box-shadow:0 0 9px #e5ad4f}
+  .scan-phase.done{color:#70cbaa}.scan-phase.done i{background:#58c99e}
+  .scan-phase.skip{color:#617180}.scan-phase.skip i{background:#617180}
+  .scan-phase.fail{color:#ef8a7e}.scan-phase.fail i{background:#e65e50}
+  @media(max-width:850px){.scan-shell{grid-template-columns:1fr}.scan-state{grid-template-columns:130px 1fr}.cipher-viz{height:130px}.rotor{left:21px;top:21px}}
+
   /* ============================ 报头 ============================ */
   header{
     background:var(--surface); border-bottom:1px solid var(--rule);
@@ -275,7 +341,7 @@
   .sortmark{font-size:9px; opacity:.6; margin-left:2px}
 
   @media (prefers-reduced-motion:reduce){
-    .seg{animation:none !important}
+    .seg,.rotor{animation:none !important}
   }
 </style>
 </head>
@@ -290,6 +356,40 @@
   </div>
   <div class="hmeta" id="hmeta"></div>
 </header>
+
+<section class="scan-gate" id="scanGate">
+  <div class="scan-shell">
+    <div class="scan-copy">
+      <div class="scan-kicker">local-first cryptographic audit</div>
+      <h2>把代码放进审计引擎</h2>
+      <p>拖入一个项目文件夹。系统会在本机完成密码资产发现、证据融合与前置量子风险评估，完成后自动进入报告视图。</p>
+      <div class="privacy"><i></i><span>仅发送到本机 127.0.0.1；默认不保留第三方原始输出。临时任务 24 小时后自动清理。</span></div>
+    </div>
+    <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
+      <div class="lockmark"></div>
+      <b>拖入项目文件夹开始扫描</b>
+      <span>或选择文件夹 · 最多 4000 个文件 / 64 MiB</span>
+      <button type="button" id="projectPick">选择项目文件夹</button>
+      <input type="file" id="projectPicker" webkitdirectory directory multiple hidden>
+    </div>
+    <div class="scan-state" id="scanState" hidden>
+      <div class="cipher-viz"><div class="rotor"></div><pre class="cipher-feed" id="cipherFeed"></pre></div>
+      <div>
+        <div class="scan-message" id="scanMessage">正在建立本地任务…</div>
+        <div class="scan-count" id="scanCount">0 个文件</div>
+        <div class="scan-bar"><i id="scanProgress"></i></div>
+        <div class="scan-phases">
+          <div class="scan-phase" data-phase="upload"><i></i>本地封装</div>
+          <div class="scan-phase" data-phase="scan"><i></i>多源密码扫描</div>
+          <div class="scan-phase" data-phase="quantum"><i></i>量子风险评估</div>
+          <div class="scan-phase" data-phase="ai"><i></i>AI 用途解释</div>
+          <div class="scan-phase" data-phase="report"><i></i>生成风险视图</div>
+        </div>
+        <button class="scan-action" id="scanReset" type="button">扫描另一个项目</button>
+      </div>
+    </div>
+  </div>
+</section>
 
 <div class="hero" id="stats"></div>
 <div class="figs" id="figs"></div>
@@ -747,10 +847,204 @@ function readFile(file){
 $('#pick').onclick = () => $('#picker').click();
 $('#picker').onchange = e => { if(e.target.files[0]) readFile(e.target.files[0]); };
 $('#reload').onclick = () => $('#drop').classList.add('on');
+
+/* ============================ 项目扫描入口 ============================ */
+
+const PROJECT_IGNORE_DIRS = new Set([
+  '.git','node_modules','build','target','.gradle','.idea','.vscode',
+  'venv','.venv','__pycache__','workspace','out'
+]);
+const PROJECT_IGNORE_EXT = new Set([
+  '.png','.jpg','.jpeg','.gif','.webp','.mp3','.mp4','.mov','.avi','.pdf',
+  '.zip','.7z','.rar','.tar','.gz','.exe','.dll','.so','.dylib','.class'
+]);
+let currentTask = null;
+let scanBusy = false;
+let cipherTimer = null;
+
+function phase(name, status){
+  const el = document.querySelector(`[data-phase="${name}"]`);
+  if(el) el.className = 'scan-phase ' + (status||'');
+}
+
+function setScanState(message, count, progress){
+  $('#scanMessage').textContent = message;
+  $('#scanCount').textContent = count || '';
+  $('#scanProgress').style.width = Math.max(0, Math.min(100, progress||0)) + '%';
+}
+
+function startCipher(){
+  if(cipherTimer) clearInterval(cipherTimer);
+  cipherTimer = setInterval(() => {
+    let lines = [];
+    for(let i=0;i<10;i++){
+      const hex = cryptoHex(28);
+      lines.push(hex.slice(0,14)+'  '+hex.slice(14));
+    }
+    $('#cipherFeed').textContent = lines.join('\n');
+  }, 140);
+}
+
+function stopCipher(){ if(cipherTimer){ clearInterval(cipherTimer); cipherTimer=null; } }
+function cryptoHex(n){
+  const a = new Uint8Array(Math.ceil(n/2));
+  if(window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(a);
+  else for(let i=0;i<a.length;i++) a[i]=Math.floor(Math.random()*256);
+  return [...a].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,n).toUpperCase();
+}
+function sleep(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+
+async function api(url, options){
+  const response = await fetch(url, options||{});
+  if(response.status===204) return null;
+  const data = await response.json().catch(()=>({error:'本地服务返回了无法解析的响应'}));
+  if(!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+function usableProjectFiles(items){
+  return items.filter(item => {
+    const rel = item.path.replace(/\\/g,'/');
+    const parts = rel.split('/');
+    if(parts.some(p=>PROJECT_IGNORE_DIRS.has(p))) return false;
+    const dot = item.file.name.lastIndexOf('.');
+    const ext = dot>=0 ? item.file.name.slice(dot).toLowerCase() : '';
+    return !PROJECT_IGNORE_EXT.has(ext) && item.file.size <= 8*1024*1024;
+  });
+}
+
+function filesFromPicker(list){
+  return [...list].map(file => ({file, path:file.webkitRelativePath || file.name}));
+}
+
+function entryFiles(entry, prefix=''){
+  return new Promise(resolve => {
+    if(entry.isFile){
+      entry.file(file=>resolve([{file,path:prefix+file.name}]),()=>resolve([]));
+      return;
+    }
+    if(!entry.isDirectory){ resolve([]); return; }
+    const next = prefix + entry.name + '/';
+    const reader = entry.createReader();
+    const children = [];
+    const readBatch = () => reader.readEntries(async entries => {
+      if(!entries.length){
+        const nested = [];
+        for(const child of children) nested.push(...await entryFiles(child,next));
+        resolve(nested); return;
+      }
+      children.push(...entries); readBatch();
+    },()=>resolve([]));
+    readBatch();
+  });
+}
+
+async function filesFromDrop(items){
+  const entries = [...items].map(x=>x.webkitGetAsEntry && x.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length) return [];
+  const result=[];
+  for(const entry of entries) result.push(...await entryFiles(entry));
+  return result;
+}
+
+function syncPipelinePhases(task){
+  phase('upload','done');
+  const stages = ((task.pipeline||{}).stages||[]);
+  const byName = Object.fromEntries(stages.map(s=>[s.name,s.status]));
+  const cls = value => value==='completed'?'done':value==='failed'||value==='timeout'?'fail':value==='skipped'?'skip':'active';
+  phase('scan', byName.scan ? cls(byName.scan) : 'active');
+  phase('quantum', byName.quantum_assessment ? cls(byName.quantum_assessment) : '');
+  phase('ai', byName.ai ? cls(byName.ai) : '');
+}
+
+async function uploadProject(rawItems){
+  const items = usableProjectFiles(rawItems);
+  if(!items.length) throw new Error('文件夹里没有可扫描的源码或配置文件。');
+  if(items.length>4000) throw new Error('项目超过 4000 个文件，请先排除生成目录。');
+  const total = items.reduce((n,x)=>n+x.file.size,0);
+  if(total>64*1024*1024) throw new Error('项目超过 64 MiB，请先排除依赖和构建产物。');
+
+  scanBusy=true;
+  $('#projectDrop').hidden=true; $('#scanState').hidden=false;
+  ['upload','scan','quantum','ai','report'].forEach(x=>phase(x,''));
+  phase('upload','active'); startCipher();
+  setScanState('正在建立本地加密审计任务',`${items.length} 个文件 · ${(total/1024).toFixed(1)} KiB`,2);
+  if(currentTask) await fetch(`/api/tasks/${currentTask}`,{method:'DELETE'}).catch(()=>{});
+  const rootName=(items[0].path.split('/')[0]||'project').slice(0,100);
+  const task=await api('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:rootName,file_count:items.length,total_bytes:total})});
+  currentTask=task.task_id;
+
+  let cursor=0, uploaded=0;
+  async function worker(){
+    while(cursor<items.length){
+      const item=items[cursor++];
+      await api(`/api/tasks/${currentTask}/files?path=${encodeURIComponent(item.path)}`,
+                {method:'POST',headers:{'Content-Type':'application/octet-stream'},body:item.file});
+      uploaded+=item.file.size;
+      setScanState('正在本地封装项目',`${cursor} / ${items.length} 个文件`,5+20*(uploaded/Math.max(total,1)));
+    }
+  }
+  await Promise.all([worker(),worker(),worker()]);
+  phase('upload','done'); phase('scan','active');
+  setScanState('正在识别密码资产与危险用法',`${items.length} 个文件已进入本地扫描器`,28);
+  await api(`/api/tasks/${currentTask}/start`,{method:'POST'});
+  await pollTask(currentTask);
+}
+
+async function pollTask(taskId){
+  while(true){
+    const task=await api(`/api/tasks/${taskId}`);
+    syncPipelinePhases(task);
+    if(task.state==='failed'){
+      scanBusy=false; stopCipher(); phase('report','fail');
+      setScanState(task.message,'任务失败；临时文件仍留在本机，便于排查',100);
+      return;
+    }
+    if(task.state==='completed'){
+      phase('scan','done'); phase('quantum','done'); phase('report','active');
+      setScanState('正在装载统一风险视图',`${task.findings_count||0} 条发现`,94);
+      const rows=await api(`/api/tasks/${taskId}/result`);
+      phase('report','done'); scanBusy=false; stopCipher();
+      setScanState('本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
+      boot(rows,`本地任务 ${taskId}`);
+      setTimeout(()=>document.querySelector('#stats').scrollIntoView({behavior:'smooth'}),500);
+      return;
+    }
+    const q=((task.pipeline||{}).stages||[]).find(s=>s.name==='quantum_assessment');
+    if(q && q.status==='running') setScanState('正在按规则库评估量子风险','确定性判断不交给大模型',76);
+    else setScanState(task.message||'正在执行本地扫描','多源证据正在归并',45);
+    await sleep(650);
+  }
+}
+
+async function beginProject(items){
+  try{ await uploadProject(items); }
+  catch(error){ scanBusy=false; stopCipher(); phase('report','fail');
+    $('#projectDrop').hidden=true; $('#scanState').hidden=false;
+    setScanState('无法开始扫描',error.message||String(error),100); }
+}
+
+$('#projectPick').onclick=e=>{e.stopPropagation();$('#projectPicker').click();};
+$('#projectDrop').onclick=()=>$('#projectPicker').click();
+$('#projectDrop').onkeydown=e=>{if(e.key==='Enter'||e.key===' ')$('#projectPicker').click();};
+$('#projectPicker').onchange=e=>{if(e.target.files.length)beginProject(filesFromPicker(e.target.files));};
+$('#projectDrop').ondragover=e=>{e.preventDefault();e.stopPropagation();$('#projectDrop').classList.add('over');};
+$('#projectDrop').ondragleave=()=>$('#projectDrop').classList.remove('over');
+$('#projectDrop').ondrop=async e=>{e.preventDefault();e.stopPropagation();$('#projectDrop').classList.remove('over');beginProject(await filesFromDrop(e.dataTransfer.items));};
+$('#scanReset').onclick=async()=>{
+  if(scanBusy){alert('扫描正在进行，请等待当前任务结束。');return;}
+  if(currentTask) await fetch(`/api/tasks/${currentTask}`,{method:'DELETE'}).catch(()=>{});
+  currentTask=null; $('#scanState').hidden=true; $('#projectDrop').hidden=false;
+  $('#projectPicker').value='';
+};
+
 document.addEventListener('dragover', e => { e.preventDefault(); });
 document.addEventListener('drop', e => {
+  if(e.target && e.target.closest && e.target.closest('#projectDrop')) return;
   e.preventDefault();
-  if(e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+  const file=e.dataTransfer.files[0];
+  if(file && file.name.toLowerCase().endsWith('.json')) readFile(file);
 });
 
 start();

@@ -1,75 +1,307 @@
-"""起一个本地静态服务器并打开查看器 —— 给演示用。
+"""AI-CryptoGuard 本地 Web 入口：静态页面 + 项目上传 + 扫描任务 API。
 
-为什么需要它：浏览器不允许 file:// 页面 fetch 本地文件（CORS 限制）。
-直接双击 web/index.html 会读不到数据，得走 HTTP。
-
-    python web/serve.py
-
-会打开 http://127.0.0.1:8000/web/index.html
-查看器会自动去找 out/findings_ai.json，找不到就退到 out/findings.json。
-
-只监听 127.0.0.1（本机），不对外暴露。
-纯标准库，无依赖。
+仅监听 127.0.0.1。拖入的项目写入 workspace/web_tasks/<task_id>/，
+不会上传到互联网；流水线默认不保留第三方工具原始输出。
 """
+import hashlib
 import http.server
+import json
 import os
+import shutil
 import socket
 import socketserver
+import subprocess
 import sys
 import threading
+import time
+import urllib.parse
 import webbrowser
+from pathlib import Path, PurePosixPath
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)          # 仓库根目录 —— 从这里起服务，
-                                      # 这样 ../out/findings_ai.json 才够得着
-PORT = int(os.environ.get('ACG_WEB_PORT', '8000'))
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+TASK_BASE = ROOT / "workspace" / "web_tasks"
+PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
+TOOLS_DIR = Path(os.environ.get("ACG_TOOLS_DIR", str(ROOT.parent / "_smoke")))
+MAX_FILES = 4000
+MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_TASK_BYTES = 64 * 1024 * 1024
+TASK_TTL_SECONDS = 24 * 60 * 60
+TASKS = {}
+LOCK = threading.Lock()
+
+
+def _json_bytes(data):
+    return (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _safe_relative(raw):
+    value = urllib.parse.unquote(raw or "").replace("\\", "/")
+    path = PurePosixPath(value)
+    if (not value or path.is_absolute() or ".." in path.parts or
+            any(":" in part or part in ("", ".") for part in path.parts)):
+        raise ValueError("非法相对路径")
+    return Path(*path.parts)
+
+
+def _task_dir(task_id):
+    if not task_id.startswith("web-") or not task_id[4:].isalnum():
+        raise ValueError("非法任务编号")
+    path = (TASK_BASE / task_id).resolve()
+    path.relative_to(TASK_BASE.resolve())
+    return path
+
+
+def _remove_task(task_id):
+    path = _task_dir(task_id)
+    if path.exists():
+        shutil.rmtree(path)
+    with LOCK:
+        TASKS.pop(task_id, None)
+
+
+def _cleanup_expired():
+    TASK_BASE.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for child in TASK_BASE.iterdir():
+        if not child.is_dir() or not child.name.startswith("web-"):
+            continue
+        try:
+            if now - child.stat().st_mtime > TASK_TTL_SECONDS:
+                _remove_task(child.name)
+        except (OSError, ValueError):
+            continue
+
+
+def _new_task(meta):
+    salt = "%s|%s|%s" % (time.time_ns(), meta.get("name", "project"), os.getpid())
+    task_id = "web-" + hashlib.sha256(salt.encode("utf-8")).hexdigest()[:16]
+    task_dir = _task_dir(task_id)
+    (task_dir / "input").mkdir(parents=True)
+    task = {
+        "task_id": task_id,
+        "name": str(meta.get("name") or "project")[:100],
+        "state": "uploading",
+        "message": "正在接收项目文件",
+        "uploaded_files": 0,
+        "uploaded_bytes": 0,
+        "expected_files": min(int(meta.get("file_count") or 0), MAX_FILES),
+        "expected_bytes": min(int(meta.get("total_bytes") or 0), MAX_TASK_BYTES),
+        "created_at": time.time(),
+        "return_code": None,
+        "findings_count": None,
+    }
+    with LOCK:
+        TASKS[task_id] = task
+    return task
+
+
+def _snapshot(task_id):
+    with LOCK:
+        task = dict(TASKS.get(task_id) or {})
+    if not task:
+        raise KeyError(task_id)
+    task_json = _task_dir(task_id) / "out" / "task.json"
+    if task_json.is_file():
+        try:
+            task["pipeline"] = json.loads(task_json.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            task["pipeline"] = None
+    return task
+
+
+def _set_task(task_id, **values):
+    with LOCK:
+        if task_id in TASKS:
+            TASKS[task_id].update(values)
+
+
+def _run_task(task_id):
+    task_dir = _task_dir(task_id)
+    input_dir = task_dir / "input"
+    output_dir = task_dir / "out"
+    log_path = task_dir / "pipeline.log"
+    if not TOOLS_DIR.is_dir():
+        _set_task(task_id, state="failed",
+                  message="找不到第三方工具目录，请设置 ACG_TOOLS_DIR。")
+        return
+    _set_task(task_id, state="running", message="正在执行密码资产扫描")
+    cmd = [sys.executable, str(ROOT / "core" / "pipeline.py"), str(input_dir),
+           "--tools-dir", str(TOOLS_DIR), "-o", str(output_dir)]
+    try:
+        with log_path.open("wb") as log:
+            proc = subprocess.run(cmd, cwd=str(ROOT), stdout=log,
+                                  stderr=subprocess.STDOUT, timeout=900)
+    except subprocess.TimeoutExpired:
+        _set_task(task_id, state="failed", message="扫描超过 15 分钟，任务已终止。")
+        return
+    except OSError:
+        _set_task(task_id, state="failed", message="无法启动本地扫描进程。")
+        return
+    result = output_dir / "findings_assessed.json"
+    if proc.returncode != 0 or not result.is_file():
+        _set_task(task_id, state="failed", return_code=proc.returncode,
+                  message="扫描未完成，请查看本机任务日志。")
+        return
+    try:
+        rows = json.loads(result.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _set_task(task_id, state="failed", message="扫描结果无法解析。")
+        return
+    _set_task(task_id, state="completed", return_code=0,
+              findings_count=len(rows), message="扫描完成，正在生成风险视图")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *a, **kw):
-        super().__init__(*a, directory=ROOT, **kw)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def end_headers(self):
-        # 演示时改了数据刷新就能看到，不要缓存
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
     def log_message(self, fmt, *args):
-        # 默认日志太吵，只看非 200
-        if args and str(args[1]) != '200':
-            sys.stderr.write('  %s\n' % (fmt % args))
+        if args and str(args[1]) not in ("200", "201", "204"):
+            sys.stderr.write("  %s\n" % (fmt % args))
+
+    def _send_json(self, status, data):
+        body = _json_bytes(data)
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _body(self, limit=1024 * 1024):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length < 0 or length > limit:
+            raise ValueError("请求体过大")
+        return self.rfile.read(length)
+
+    def _api_parts(self):
+        parsed = urllib.parse.urlparse(self.path)
+        return parsed, parsed.path.strip("/").split("/")
+
+    def do_POST(self):
+        parsed, parts = self._api_parts()
+        try:
+            if parsed.path == "/api/tasks":
+                meta = json.loads(self._body().decode("utf-8"))
+                if int(meta.get("file_count") or 0) > MAX_FILES:
+                    raise ValueError("文件数量超过上限")
+                if int(meta.get("total_bytes") or 0) > MAX_TASK_BYTES:
+                    raise ValueError("项目大小超过上限")
+                task = _new_task(meta)
+                return self._send_json(201, _snapshot(task["task_id"]))
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "files":
+                task_id = parts[2]
+                rel = _safe_relative(urllib.parse.parse_qs(parsed.query).get("path", [""])[0])
+                body = self._body(MAX_FILE_BYTES)
+                base = (_task_dir(task_id) / "input").resolve()
+                target = (base / rel).resolve()
+                target.relative_to(base)
+                with LOCK:
+                    task = TASKS.get(task_id)
+                    if not task or task["state"] != "uploading":
+                        raise ValueError("任务不在上传阶段")
+                    if target.exists():
+                        raise ValueError("文件路径重复")
+                    if task["uploaded_files"] >= MAX_FILES:
+                        raise ValueError("文件数量超过上限")
+                    if task["uploaded_bytes"] + len(body) > MAX_TASK_BYTES:
+                        raise ValueError("项目大小超过上限")
+                    # 浏览器并行上传时，检查、落盘和计数必须处于同一临界区。
+                    # ``xb`` 还保证同一路径不会被另一个请求覆盖。
+                    try:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        with target.open("xb") as handle:
+                            handle.write(body)
+                    except FileExistsError:
+                        raise ValueError("文件路径重复")
+                    except OSError:
+                        raise ValueError("文件写入失败")
+                    task["uploaded_files"] += 1
+                    task["uploaded_bytes"] += len(body)
+                return self._send_json(201, {"ok": True})
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "start":
+                task_id = parts[2]
+                with LOCK:
+                    task = TASKS.get(task_id)
+                    if not task or task["state"] != "uploading" or task["uploaded_files"] < 1:
+                        raise ValueError("没有可扫描的文件")
+                    task["state"] = "queued"
+                    task["message"] = "项目已接收，准备扫描"
+                threading.Thread(target=_run_task, args=(task_id,), daemon=True).start()
+                return self._send_json(202, _snapshot(task_id))
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            return self._send_json(400, {"error": str(exc)})
+        return self._send_json(404, {"error": "not found"})
+
+    def do_GET(self):
+        parsed, parts = self._api_parts()
+        try:
+            if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
+                return self._send_json(200, _snapshot(parts[2]))
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "result":
+                result = _task_dir(parts[2]) / "out" / "findings_assessed.json"
+                if not result.is_file():
+                    return self._send_json(409, {"error": "result not ready"})
+                body = result.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        except (ValueError, KeyError):
+            return self._send_json(404, {"error": "task not found"})
+        return super().do_GET()
+
+    def do_DELETE(self):
+        _, parts = self._api_parts()
+        if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
+            try:
+                _remove_task(parts[2])
+                self.send_response(204)
+                self.end_headers()
+                return
+            except ValueError:
+                pass
+        self._send_json(404, {"error": "task not found"})
+
+
+class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
 
 
 def port_busy(port):
-    with socket.socket() as s:
-        return s.connect_ex(('127.0.0.1', port)) == 0
+    with socket.socket() as sock:
+        return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
 def main():
+    _cleanup_expired()
     port = PORT
     while port_busy(port):
-        print('[!] 端口 %d 被占用，试 %d' % (port, port + 1))
+        print("[!] 端口 %d 被占用，试 %d" % (port, port + 1))
         port += 1
-
-    url = 'http://127.0.0.1:%d/web/index.html' % port
-
-    with socketserver.TCPServer(('127.0.0.1', port), Handler) as httpd:
-        print('AI-CryptoGuard 查看器')
-        print('  根目录 : %s' % ROOT)
-        print('  地址   : %s' % url)
-        print('  停止   : Ctrl+C')
-        print()
-        for name in ('findings_ai.json', 'findings.json'):
-            p = os.path.join(ROOT, 'out', name)
-            print('  %-20s %s' % (name, '找到' if os.path.exists(p) else '缺失'))
-        print()
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    url = "http://127.0.0.1:%d/web/index.html" % port
+    with Server(("127.0.0.1", port), Handler) as httpd:
+        print("AI-CryptoGuard 本地审计入口")
+        print("  地址     : %s" % url)
+        print("  工具目录 : %s" % TOOLS_DIR)
+        print("  临时任务 : %s（24 小时后自动清理）" % TASK_BASE)
+        print("  停止     : Ctrl+C")
+        if os.environ.get("ACG_NO_BROWSER") != "1":
+            threading.Timer(0.6, lambda: webbrowser.open(url)).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print('\n已停止。')
+            print("\n已停止。")
     return 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

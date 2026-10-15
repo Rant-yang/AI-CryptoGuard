@@ -128,6 +128,9 @@ python core/schema/validate_v02.py out/run/findings_assessed.json
 python web/serve.py
 ```
 
+也可以只运行 `python web/serve.py`，在页面顶部把项目文件夹拖进本地审计入口；
+扫描进度和结果会在同一页面连续展示。拖入内容只进入本机临时工作区，不发送到云端。
+
 下面是兼容旧 v0.1 演示的手动链路：
 
 ```bash
