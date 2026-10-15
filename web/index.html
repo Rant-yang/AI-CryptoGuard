@@ -90,6 +90,11 @@
   .scan-drop button,.scan-action{margin-top:16px;border:1px solid #426276;background:#172633;color:#dbeaf5;
                     border-radius:4px;padding:7px 13px;font:12px var(--mono);cursor:pointer}
   .scan-drop button:hover,.scan-action:hover{border-color:#63d5ad;color:#fff}
+  .scan-examples{margin-top:16px;padding-top:13px;border-top:1px solid rgba(120,144,165,.22);
+                 color:#7890a5;font-size:11.5px;line-height:1.75}
+  .scan-examples b{color:#b8cbd9;font-weight:600}
+  .scan-examples code{display:block;color:#8ee3c2;font-family:var(--mono);font-size:11px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .scan-state{min-height:190px;border:1px solid #34495d;border-radius:8px;background:#0a1118;
               padding:19px 20px;display:grid;grid-template-columns:170px 1fr;gap:22px;align-items:center}
   .scan-state[hidden]{display:none}
@@ -352,7 +357,7 @@
     <h1>AI-CryptoGuard</h1>
     <span class="role">基于多源证据融合与大模型推理的密码安全审计</span>
     <span class="spacer"></span>
-    <button class="chip" id="reload">换一份数据</button>
+    <button class="chip" id="reload" title="读取已经生成的 findings JSON，不会扫描源码项目">导入已有报告</button>
   </div>
   <div class="hmeta" id="hmeta"></div>
 </header>
@@ -364,6 +369,11 @@
       <h2>把代码放进审计引擎</h2>
       <p>拖入一个项目文件夹。系统会在本机完成密码资产发现、证据融合与前置量子风险评估，完成后自动进入报告视图。</p>
       <div class="privacy"><i></i><span>仅发送到本机 127.0.0.1；默认不保留第三方原始输出。临时任务 24 小时后自动清理。</span></div>
+      <div class="scan-examples">
+        <b>第一次体验，建议拖入这个小样例：</b>
+        <code>D:\code_competition\_smoke\cryptoscan-src\crypto-samples</code>
+        也可扫描 <code>D:\code_competition\AI-CryptoGuard\core\samples</code>
+      </div>
     </div>
     <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
       <div class="lockmark"></div>
@@ -404,13 +414,12 @@
 
 <div id="drop">
   <div class="inner">
-    <h2>没有自动读到数据</h2>
-    <p>直接打开 HTML 文件时，浏览器不允许读取本地文件 —— 这是浏览器的限制，不是程序出错。</p>
-    <p>两种办法，任选一种：</p>
-    <p><b>①</b> 在仓库根目录跑 <code>python web/serve.py</code>，它会自动打开页面。</p>
-    <p><b>②</b> 直接把 <code>findings_ai.json</code> 拖到本窗口。</p>
+    <h2>导入已有扫描报告</h2>
+    <p>这里读取已经生成的 <code>*.json</code> 报告，只用于查看历史结果，不会重新扫描源码项目。</p>
+    <p>要扫描一个新项目，请关闭此窗口，使用页面上方的“选择项目文件夹”。</p>
     <input type="file" id="picker" accept=".json" style="display:none">
     <button class="btn" id="pick">选择 JSON 文件</button>
+    <button class="btn" id="dropClose" type="button">返回项目扫描</button>
   </div>
 </div>
 
@@ -830,7 +839,8 @@ function boot(rows, from){
 async function start(){
   const got = await autoLoad();
   if(got) return boot(got.rows, got.from);
-  $('#drop').classList.add('on');
+  $('#hmeta').innerHTML = '<span>尚无报告</span><span>请扫描项目或导入已有 JSON</span>';
+  $('#list').innerHTML = '<div class="empty">尚无扫描结果。请使用上方入口选择项目文件夹。</div>';
 }
 
 function readFile(file){
@@ -847,6 +857,7 @@ function readFile(file){
 $('#pick').onclick = () => $('#picker').click();
 $('#picker').onchange = e => { if(e.target.files[0]) readFile(e.target.files[0]); };
 $('#reload').onclick = () => $('#drop').classList.add('on');
+$('#dropClose').onclick = () => $('#drop').classList.remove('on');
 
 /* ============================ 项目扫描入口 ============================ */
 
