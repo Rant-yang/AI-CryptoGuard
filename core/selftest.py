@@ -1,4 +1,5 @@
 """C 线离线自检：不运行第三方工具，不调用云模型。"""
+import copy
 import json
 import sys
 import tempfile
@@ -10,19 +11,26 @@ if str(ROOT) not in sys.path:
 
 from core.pipeline import main as pipeline_main
 from core.quantum_assessment import assess_one
+from core.quantum_timeline import make_profile
 from core.schema.validate_v02 import errors
 
 SAMPLES = json.loads((ROOT / "core/samples/example_finding.json").read_text(encoding="utf-8"))
 
 
 def main():
-    rsa = assess_one(SAMPLES[0])
+    timeline = make_profile(10, 3, 8, "yes")
+    rsa = assess_one(SAMPLES[0], timeline)
     assert rsa["stage"] == "assessed"
     assert rsa["quantum_assessment"]["quantum_effect"] == "shor"
     assert {x["usage"] for x in rsa["quantum_assessment"]["migration_candidates"]} == {
         "signing", "encryption", "key_exchange"
     }
+    assert rsa["quantum_assessment"]["quantum_timeline"]["urgency"] == "immediate"
+    assert rsa["quantum_assessment"]["quantum_timeline"]["hndl_status"] == "unknown"
     assert not errors(rsa)
+    stale_timeline = copy.deepcopy(rsa)
+    stale_timeline["quantum_assessment"]["quantum_timeline"]["years_until_action"] = 99
+    assert "timeline action year mismatch" in errors(stale_timeline)
 
     md5 = assess_one(SAMPLES[1])
     assert md5["quantum_assessment"]["quantum_effect"] == "no_known_quantum_break"
@@ -44,7 +52,10 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="acg-core-") as temp:
         code = pipeline_main(["--findings", str(ROOT / "core/samples/example_finding.json"),
-                              "-o", temp])
+                              "-o", temp, "--data-lifetime-years", "10",
+                              "--migration-lead-years", "3",
+                              "--threat-horizon-years", "8",
+                              "--hndl-exposure", "yes"])
         assert code == 0
         task = json.loads((Path(temp) / "task.json").read_text(encoding="utf-8"))
         assessed = json.loads((Path(temp) / "findings_assessed.json").read_text(
@@ -53,6 +64,8 @@ def main():
             "skipped", "skipped", "completed", "skipped"
         ]
         assert len(assessed) == 2
+        assert task["quantum_timeline_profile"]["source"] == "user-input"
+        assert assessed[0]["quantum_assessment"]["quantum_timeline"]["urgency"] == "immediate"
 
         bad_input = Path(temp) / "bad.json"
         bad_input.write_text('[{"schema_version":"0.1"}]\n', encoding="utf-8")

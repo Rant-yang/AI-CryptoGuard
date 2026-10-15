@@ -95,6 +95,13 @@
   .scan-examples b{color:#b8cbd9;font-weight:600}
   .scan-examples code{display:block;color:#8ee3c2;font-family:var(--mono);font-size:11px;
                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .timeline-config{margin-top:12px;border-top:1px solid rgba(120,144,165,.22);padding-top:10px}
+  .timeline-config summary{cursor:pointer;color:#b8cbd9;font:600 11.5px var(--mono)}
+  .timeline-help{margin:7px 0!important;color:#6f8497!important;font-size:11px!important}
+  .timeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 9px;margin-top:8px}
+  .timeline-field{display:grid;gap:3px;color:#7890a5;font:10.5px var(--mono)}
+  .timeline-field input,.timeline-field select{min-width:0;border:1px solid #34495d;border-radius:3px;
+    background:#0b141d;color:#dce7f3;padding:5px 7px;font:11px var(--mono)}
   .scan-state{min-height:190px;border:1px solid #34495d;border-radius:8px;background:#0a1118;
               padding:19px 20px;display:grid;grid-template-columns:170px 1fr;gap:22px;align-items:center}
   .scan-state[hidden]{display:none}
@@ -374,6 +381,16 @@
         <code>D:\code_competition\_smoke\cryptoscan-src\crypto-samples</code>
         也可扫描 <code>D:\code_competition\AI-CryptoGuard\core\samples</code>
       </div>
+      <details class="timeline-config" open>
+        <summary>量子危机时间窗口（可选，不填则不下结论）</summary>
+        <p class="timeline-help">X + Y ≥ Z 时立即迁移。三个数字必须同时填写，系统不会预测 Q-Day。</p>
+        <div class="timeline-grid">
+          <label class="timeline-field">保密有效期 X（年）<input id="qtX" type="number" min="0" max="200" step="0.5" placeholder="例如 10"></label>
+          <label class="timeline-field">迁移准备期 Y（年）<input id="qtY" type="number" min="0" max="200" step="0.5" placeholder="例如 3"></label>
+          <label class="timeline-field">威胁时间窗 Z（年）<input id="qtZ" type="number" min="0" max="200" step="0.5" placeholder="由组织策略给出"></label>
+          <label class="timeline-field">先收集后解密暴露<select id="qtHndl"><option value="unknown">尚未确认</option><option value="yes">存在暴露</option><option value="no">无已知暴露</option></select></label>
+        </div>
+      </details>
     </div>
     <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
       <div class="lockmark"></div>
@@ -723,6 +740,7 @@ function renderDetail(){
   const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute', tone:'v-warn', why:''};
   const rk = riskCls(f.risk);
   const qa = f.quantum_assessment || null;
+  const qt = qa && qa.quantum_timeline || null;
   const qEffect = {
     shor:'Shor：传统公钥算法面临直接破解风险',
     quantum_search:'量子搜索：有效安全强度降低',
@@ -730,6 +748,26 @@ function renderDetail(){
     unknown:'证据不足，暂不能判定',
     not_applicable:'该问题不适用量子迁移评估'
   };
+  const urgencyText = qt ? {
+    immediate:'已进入迁移窗口：应立即启动',
+    scheduled:`计划迁移：建议在 ${esc(qt.years_until_action)} 年内启动`,
+    unknown:'未配置完整 X / Y / Z，不计算时间结论',
+    not_applicable:'该发现不适用 Shor 时间窗口'
+  }[qt.urgency] : '';
+  const hndlText = qt ? {
+    at_risk:'HNDL 高风险：密文可能在保密期内被未来解密',
+    watch:'HNDL 需关注：当前时间参数下尚未跨越保密期',
+    not_indicated:'未发现先收集后解密暴露',
+    unknown:'HNDL 暴露尚未确认',
+    not_applicable:'该用途不适用密文先收集后解密评估'
+  }[qt.hndl_status] : '';
+  const timelineHtml = qt ? `<div class="box">
+      <div class="drow"><span class="tag">量子危机时间窗 · ${esc(qt.status)}</span>${qt.rule_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>
+      <div class="txt">${urgencyText||esc(qt.urgency)}</div>
+      <div class="why">${hndlText||esc(qt.hndl_status)}</div>
+      ${qt.status==='assessed' ? `<div class="why">X=${esc(qt.data_lifetime_years)} 年 · Y=${esc(qt.migration_lead_years)} 年 · Z=${esc(qt.threat_horizon_years)} 年</div>` : ''}
+      ${(qt.assumptions||[]).map(x=>`<div class="why">前提：${esc(x)}</div>`).join('')}
+    </div>` : '';
   const qHtml = qa ? `<section class="blk">
     <h3>前置量子风险评估</h3>
     <div class="box">
@@ -744,6 +782,7 @@ function renderDetail(){
       ${(qa.rule_refs||[]).length ? `<div class="refs"><span class="loc">规则依据：</span>${qa.rule_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>` : ''}
       ${(qa.migration_candidates||[]).length ? `<div class="why">条件路线（尚未选定）：${qa.migration_candidates.map(x=>`${esc(x.usage)} → ${esc(x.route_id)}`).join('；')}</div>` : ''}
     </div>
+    ${timelineHtml}
   </section>` : '';
 
   const evHtml = (f.evidence||[]).map((e, evidenceIndex) => {
@@ -924,6 +963,18 @@ function usableProjectFiles(items){
   });
 }
 
+function timelineProfile(){
+  const raw=[$('#qtX').value,$('#qtY').value,$('#qtZ').value];
+  const exposure=$('#qtHndl').value;
+  if(raw.every(x=>x==='') && exposure==='unknown') return null;
+  if(raw.some(x=>x==='')) throw new Error('量子时间窗口的 X、Y、Z 必须同时填写。');
+  const values=raw.map(Number);
+  if(values.some(x=>!Number.isFinite(x)||x<0||x>200))
+    throw new Error('量子时间参数必须是 0 到 200 之间的数字。');
+  return {data_lifetime_years:values[0],migration_lead_years:values[1],
+          threat_horizon_years:values[2],hndl_exposure:exposure};
+}
+
 function filesFromPicker(list){
   return [...list].map(file => ({file, path:file.webkitRelativePath || file.name}));
 }
@@ -970,6 +1021,7 @@ function syncPipelinePhases(task){
 
 async function uploadProject(rawItems){
   const items = usableProjectFiles(rawItems);
+  const timeline=timelineProfile();
   if(!items.length) throw new Error('文件夹里没有可扫描的源码或配置文件。');
   if(items.length>4000) throw new Error('项目超过 4000 个文件，请先排除生成目录。');
   const total = items.reduce((n,x)=>n+x.file.size,0);
@@ -983,7 +1035,8 @@ async function uploadProject(rawItems){
   if(currentTask) await fetch(`/api/tasks/${currentTask}`,{method:'DELETE'}).catch(()=>{});
   const rootName=(items[0].path.split('/')[0]||'project').slice(0,100);
   const task=await api('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:rootName,file_count:items.length,total_bytes:total})});
+    body:JSON.stringify({name:rootName,file_count:items.length,total_bytes:total,
+                         quantum_timeline_profile:timeline})});
   currentTask=task.task_id;
 
   let cursor=0, uploaded=0;

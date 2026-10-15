@@ -1,8 +1,8 @@
-> **2026-10-14：本轮共享契约已发布。** 请先阅读 [v0.2 接口与交接说明](core/schema/CONTRACT_V0.2.md)。当前 v0.1 演示保持可用，新能力按 v0.2 开发。
+> **2026-10-15：本轮共享契约与 C 端量子评估已发布。** 请先阅读 [v0.2 接口与交接说明](core/schema/CONTRACT_V0.2.md)。当前 v0.1 演示保持可用，新能力按 v0.2 开发。
 
 # AI-CryptoGuard
 
-> **本轮工作已确定（2026-10-14，新增功能待实现）：** Java 深度证据 → 量子风险评估 → AI 用途解释与具体整改。
+> **本轮工作（2026-10-15）：** Java 深度证据 → 量子风险评估（含危机时间窗口）→ AI 用途解释与具体整改。C 的评估与 Web 已完成，等待 A/B 接入。
 > 三人按 [本轮操作指南](docs/本轮操作指南_2026-10-14.md) 开工，任务依赖与后续安排见 [下一步计划](docs/下一步计划.md)。
 
 **基于多源证据融合与大模型推理的智能密码安全审计与抗量子迁移系统**
@@ -119,11 +119,12 @@ cd AI-CryptoGuard
 
 **想看效果** —— 端到端跑一遍（scanner → ai → 界面）：
 
-本轮统一入口已经能完成“快速扫描 → 前置量子风险评估”，并为尚未合入的
+本轮统一入口已经能完成“快速扫描 → 前置量子风险评估 → 可选量子危机时间窗口”，并为尚未合入的
 Java 深度分析和 v0.2 AI 如实记录 `skipped`：
 
 ```bash
 python core/pipeline.py <要扫描的目录> --tools-dir <第三方工具目录> -o out/run
+# 需要时间窗口时再加：--data-lifetime-years X --migration-lead-years Y --threat-horizon-years Z --hndl-exposure yes
 python core/schema/validate_v02.py out/run/findings_assessed.json
 python web/serve.py
 ```

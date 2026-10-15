@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.quantum_assessment import assess_file, rule_version  # noqa: E402
+from core.quantum_timeline import make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 from scanner.scan import main as scanner_main  # noqa: E402
 
@@ -55,11 +56,13 @@ def _task_id(seed):
 
 
 def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
-        tool="both", timeout=300, keep_raw=False, cbom=False):
+        tool="both", timeout=300, keep_raw=False, cbom=False,
+        timeline_profile=None):
     out_dir = Path(output_dir).resolve()
     scan_path = out_dir / "findings.json"
     assessed_path = out_dir / "findings_assessed.json"
     task_path = out_dir / "task.json"
+    timeline_profile = timeline_profile or make_profile(source="not-provided")
     task = {
         "schema_version": "0.2",
         "task_id": _task_id(target or findings_path),
@@ -71,6 +74,7 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
             _stage("quantum_assessment"),
             _stage("ai", "skipped", "B 的 v0.2 AI 输出尚未合入统一入口。"),
         ],
+        "quantum_timeline_profile": timeline_profile,
         "unresolved_deep_evidence": [],
     }
     _write(task_path, task)
@@ -110,7 +114,7 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
     _write(task_path, task)
     started = time.time()
     try:
-        result = assess_file(source, assessed_path)
+        result = assess_file(source, assessed_path, timeline_profile)
     except Exception:
         task["stages"][2] = _stage(
             "quantum_assessment", "failed",
@@ -139,13 +143,27 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--keep-raw", action="store_true")
     parser.add_argument("--cbom", action="store_true")
+    parser.add_argument("--data-lifetime-years", type=float,
+                        help="X：数据/安全有效期（年）")
+    parser.add_argument("--migration-lead-years", type=float,
+                        help="Y：完成迁移所需时间（年）")
+    parser.add_argument("--threat-horizon-years", type=float,
+                        help="Z：组织采用的量子威胁时间窗（年）")
+    parser.add_argument("--hndl-exposure", choices=["yes", "no", "unknown"],
+                        default="unknown", help="是否存在先收集后解密暴露")
     args = parser.parse_args(argv)
     if bool(args.target) == bool(args.findings):
         parser.error("项目目录与 --findings 必须且只能提供一个")
     try:
+        timeline_profile = make_profile(
+            args.data_lifetime_years, args.migration_lead_years,
+            args.threat_horizon_years, args.hndl_exposure,
+            "user-input" if args.data_lifetime_years is not None
+            else "not-provided")
         result, task, assessed, task_path = run(
             args.target, args.findings, args.output_dir, args.tools_dir,
-            args.tool, args.timeout, args.keep_raw, args.cbom)
+            args.tool, args.timeout, args.keep_raw, args.cbom,
+            timeline_profile)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print("[错误] 流水线失败: %s" % exc)
         return 2

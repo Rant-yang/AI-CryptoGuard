@@ -1,6 +1,6 @@
 # core/ —— 统一格式 · 规则库 · 主流程
 
-> **2026-10-15：C0 契约、C1 前置量子评估及 C2 统一入口第一阶段已实现。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。
+> **2026-10-15：C0 契约、C1 前置量子评估、量子危机时间窗口及 C2 统一入口第一阶段已实现。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。
 
 > **负责人：C**
 > **一句话：把 scanner 和 ai 拼起来，并证明整个系统真的有效。**
@@ -24,6 +24,7 @@ core/
 ├── schema/         v0.1 兼容契约 + 本轮 v0.2 阶段契约
 ├── rules/          PQC 路由 + 量子评估规则注册表
 ├── quantum_assessment.py  扫描后、AI 前的确定性评估
+├── quantum_timeline.py    X/Y/Z 迁移窗口 + HNDL 评估
 ├── pipeline.py     C 线统一入口
 ├── selftest.py     离线入口与评估回归
 └── report.py       渲染报告（待写）
@@ -84,6 +85,14 @@ python core/rules/pqc_routing.py     # 全部断言通过则退出码 0
 ```cmd
 python core\pipeline.py D:\待扫描项目 --tools-dir D:\code_competition\_smoke -o out\run
 ```
+
+可选的量子危机时间窗口（X/Y/Z 必须一起给）：
+
+```cmd
+python core\pipeline.py D:\待扫描项目 --tools-dir D:\code_competition\_smoke -o out\run --data-lifetime-years 10 --migration-lead-years 3 --threat-horizon-years 8 --hndl-exposure yes
+```
+
+这里的 Z 是用户或组织采用的威胁时间窗，不是系统预测的 Q-Day。
 
 只评估已有扫描结果：
 

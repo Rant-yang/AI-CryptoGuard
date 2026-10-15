@@ -39,6 +39,12 @@ quantum_effect 区分 shor、quantum_search、no_known_quantum_break、unknown�
 
 rule_refs 是规则标识，evidence_refs 是扫描证据标识，两者不能混用。C1 将维护实际规则注册表；当前夹具中的 fixture.* 只为接口测试，不能当正式规则。注册表存在后还需检查规则真实存在和版本一致。
 
+### 4.1 量子危机时间窗口（2026-10-15 新增，可选）
+
+`quantum_assessment.quantum_timeline` 由 C 的确定性规则生成。输入是任务级 X/Y/Z：数据或安全有效期 X、迁移准备期 Y、组织采用的量子威胁时间窗 Z。`X + Y >= Z` 时 urgency 为 `immediate`；否则给出 `years_until_action = Z-X-Y`。系统不预测 Q-Day，不允许 AI 代填 X/Y/Z。
+
+HNDL（先收集后解密）另用 `hndl_exposure` 和 `hndl_status` 表示。签名用途不按密文 HNDL 评估；用途未知时保持 unknown。未填写完整 X/Y/Z 时 status=`not_configured`，不能用默认年份冒充结论。该字段为可选扩展，因此 A/B 已在开发中的 v0.2 输出不会因缺少它而失效；C 调度器产出的 assessed 记录会带上它。
+
 ## 5. B：解释与整改
 
 usage_assessment 给出 usage/reason/evidence_refs/unknowns，并与最终 usage 一致。explanation 用中文讲清楚发现、用途、影响和不确定性。每个整改步骤都包含 action、target、evidence_refs、rule_refs、prerequisites、verification、execution_status。没有可靠位置时 target=null；尚未执行的步骤必须标 not_run。没有可支持的整改时 steps 可以为空，必须在解释和 unknowns 中说明原因。

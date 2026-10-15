@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.rules.pqc_routing import route  # noqa: E402
+from core.quantum_timeline import assess as assess_timeline, make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 
 RULES_PATH = ROOT / "core" / "rules" / "quantum_rules.json"
@@ -88,7 +89,7 @@ def _migration_candidates(finding):
     return candidates
 
 
-def assess_one(finding):
+def assess_one(finding, timeline_profile=None):
     out = prepare_scanned(finding)
     refs = _evidence_refs(out)
     version = rule_version()
@@ -133,6 +134,9 @@ def assess_one(finding):
             "migration_candidates": [],
         }
 
+    assessment["quantum_timeline"] = assess_timeline(
+        assessment["quantum_effect"], out.get("usage", "unknown"),
+        timeline_profile)
     out["quantum_assessment"] = assessment
     out["stage"] = "assessed"
     problems = contract_errors(out)
@@ -141,15 +145,15 @@ def assess_one(finding):
     return out
 
 
-def assess_all(findings):
-    return [assess_one(f) for f in findings]
+def assess_all(findings, timeline_profile=None):
+    return [assess_one(f, timeline_profile) for f in findings]
 
 
-def assess_file(input_path, output_path):
+def assess_file(input_path, output_path, timeline_profile=None):
     rows = json.loads(Path(input_path).read_text(encoding="utf-8-sig"))
     if not isinstance(rows, list):
         rows = [rows]
-    result = assess_all(rows)
+    result = assess_all(rows, timeline_profile)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
@@ -161,9 +165,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="执行本地前置量子风险评估")
     parser.add_argument("input", help="scanner 产出的 v0.1 findings.json")
     parser.add_argument("-o", "--output", default="out/findings_assessed.json")
+    parser.add_argument("--data-lifetime-years", type=float)
+    parser.add_argument("--migration-lead-years", type=float)
+    parser.add_argument("--threat-horizon-years", type=float)
+    parser.add_argument("--hndl-exposure", choices=["yes", "no", "unknown"],
+                        default="unknown")
     args = parser.parse_args(argv)
     try:
-        result = assess_file(args.input, args.output)
+        profile = make_profile(args.data_lifetime_years, args.migration_lead_years,
+                               args.threat_horizon_years, args.hndl_exposure,
+                               "user-input" if args.data_lifetime_years is not None
+                               else "not-provided")
+        result = assess_file(args.input, args.output, profile)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print("[错误] 量子风险评估失败: %s" % exc)
         return 2

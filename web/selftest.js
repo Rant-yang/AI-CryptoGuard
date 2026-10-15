@@ -117,6 +117,20 @@ setTimeout(() => {
   check('详情已渲染', detail.includes('迁移 / 加固结论'), `${detail.length} 字符`);
   if (data.some(f => f.quantum_assessment)) {
     check('v0.2 前置量子评估已渲染', detail.includes('前置量子风险评估'));
+    const timed = JSON.parse(JSON.stringify(data.find(f => f.quantum_assessment)));
+    timed.quantum_assessment.quantum_timeline = {
+      status:'assessed', urgency:'immediate', data_lifetime_years:10,
+      migration_lead_years:3, threat_horizon_years:8, years_until_action:0,
+      hndl_exposure:'yes', hndl_status:'at_risk', profile_version:'test',
+      source:'user-input', rule_refs:['QT-MOSCA-WINDOW','QT-HNDL-CONFIDENTIALITY'],
+      assumptions:['test fixture']
+    };
+    const timedApi = load(['S', 'renderDetail']);
+    timedApi.S.sel = timed; timedApi.renderDetail();
+    const timedDetail = htmlOf('#detail');
+    check('量子危机时间窗口已渲染', timedDetail.includes('量子危机时间窗'));
+    check('立即迁移与 HNDL 风险已渲染',
+          timedDetail.includes('应立即启动') && timedDetail.includes('HNDL 高风险'));
   }
   check('筛选已渲染', filters.includes('data-set="risk"'), `${filters.length} 字符`);
   check('概览显示问题总数', stats.includes(String(data.length)));

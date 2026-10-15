@@ -35,8 +35,15 @@ def main():
         try:
             _, task = request(base, "/api/tasks", "POST",
                               json.dumps({"name": "demo", "file_count": 1,
-                                          "total_bytes": 12}).encode("utf-8"))
+                                          "total_bytes": 12,
+                                          "quantum_timeline_profile": {
+                                              "data_lifetime_years": 10,
+                                              "migration_lead_years": 3,
+                                              "threat_horizon_years": 8,
+                                              "hndl_exposure": "yes",
+                                          }}).encode("utf-8"))
             task_id = task["task_id"]
+            assert task["quantum_timeline_profile"]["data_lifetime_years"] == 10
             path = urllib.parse.quote("demo/src/a.py", safe="")
             status, _ = request(base, "/api/tasks/%s/files?path=%s" % (task_id, path),
                                 "POST", b"print('ok')\n", "application/octet-stream")
@@ -67,7 +74,13 @@ def main():
 
             if "--integration" in sys.argv:
                 live = serve._new_task({"name": "integration", "file_count": 1,
-                                        "total_bytes": 56})
+                                        "total_bytes": 56,
+                                        "quantum_timeline_profile": {
+                                            "data_lifetime_years": 10,
+                                            "migration_lead_years": 3,
+                                            "threat_horizon_years": 8,
+                                            "hndl_exposure": "yes",
+                                        }})
                 live_id = live["task_id"]
                 sample = serve._task_dir(live_id) / "input" / "demo.py"
                 sample.write_text("import hashlib\nprint(hashlib.md5(b'demo').hexdigest())\n",
@@ -80,6 +93,11 @@ def main():
                 assert completed["findings_count"] is not None
                 assert (serve._task_dir(live_id) / "out" /
                         "findings_assessed.json").is_file()
+                rows = json.loads((serve._task_dir(live_id) / "out" /
+                                   "findings_assessed.json").read_text(encoding="utf-8"))
+                assert rows
+                assert all(row["quantum_assessment"]["quantum_timeline"]
+                           ["data_lifetime_years"] == 10 for row in rows)
                 serve._remove_task(live_id)
         finally:
             server.shutdown()

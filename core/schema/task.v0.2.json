@@ -74,6 +74,22 @@
       },
       "minItems": 1
     },
+    "quantum_timeline_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile_version": {"type": "string", "minLength": 1},
+        "data_lifetime_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+        "migration_lead_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+        "threat_horizon_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+        "hndl_exposure": {"enum": ["yes", "no", "unknown"]},
+        "source": {"enum": ["user-input", "policy", "not-provided"]}
+      },
+      "required": [
+        "profile_version", "data_lifetime_years", "migration_lead_years",
+        "threat_horizon_years", "hndl_exposure", "source"
+      ]
+    },
     "unresolved_deep_evidence": {
       "type": "array",
       "items": {

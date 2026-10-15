@@ -1,5 +1,5 @@
 {
-  "version": "2026.10.15.1",
+  "version": "2026.10.15.2",
   "rules": {
     "QR-SHOR-PUBLIC-KEY": {
       "effect": "shor",
@@ -20,6 +20,14 @@
       "effect": "no_known_quantum_break",
       "summary": "当前规则库没有确认会直接破解该原语的量子攻击。",
       "references": ["NIST PQC Security Evaluation Criteria"]
+    },
+    "QT-MOSCA-WINDOW": {
+      "summary": "当安全有效期 X 与迁移准备期 Y 之和不小于量子威胁时间窗 Z 时，应立即启动迁移。",
+      "references": ["Michele Mosca, Cybersecurity in an Era with Quantum Computers: Will We Be Ready? (2018)"]
+    },
+    "QT-HNDL-CONFIDENTIALITY": {
+      "summary": "可被当前收集且在量子能力成熟时仍有价值的密文，存在先收集后解密风险。",
+      "references": ["NIST IR 8547 (Initial Public Draft)"]
     },
     "PQC-USAGE-SIGNING": {
       "route_id": "pqc.signing",

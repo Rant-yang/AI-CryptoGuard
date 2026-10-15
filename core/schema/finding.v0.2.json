@@ -493,6 +493,43 @@
             ]
           },
           "minItems": 0
+        },
+        "quantum_timeline": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "可选的量子危机时间窗口。X/Y/Z 均来自任务输入；程序不预测 Q-Day。",
+          "properties": {
+            "status": {
+              "enum": ["assessed", "not_configured", "not_applicable"]
+            },
+            "urgency": {
+              "enum": ["immediate", "scheduled", "unknown", "not_applicable"]
+            },
+            "data_lifetime_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+            "migration_lead_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+            "threat_horizon_years": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+            "years_until_action": {"type": ["number", "null"], "minimum": 0, "maximum": 200},
+            "hndl_exposure": {"enum": ["yes", "no", "unknown"]},
+            "hndl_status": {
+              "enum": ["at_risk", "watch", "not_indicated", "unknown", "not_applicable"]
+            },
+            "profile_version": {"type": "string", "minLength": 1},
+            "source": {"enum": ["user-input", "policy", "not-provided"]},
+            "rule_refs": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1},
+              "uniqueItems": true
+            },
+            "assumptions": {
+              "type": "array",
+              "items": {"type": "string", "minLength": 1}
+            }
+          },
+          "required": [
+            "status", "urgency", "data_lifetime_years", "migration_lead_years",
+            "threat_horizon_years", "years_until_action", "hndl_exposure",
+            "hndl_status", "profile_version", "source", "rule_refs", "assumptions"
+          ]
         }
       },
       "required": [

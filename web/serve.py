@@ -20,6 +20,11 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.quantum_timeline import make_profile  # noqa: E402
+
 TASK_BASE = ROOT / "workspace" / "web_tasks"
 PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
 TOOLS_DIR = Path(os.environ.get("ACG_TOOLS_DIR", str(ROOT.parent / "_smoke")))
@@ -78,6 +83,13 @@ def _new_task(meta):
     task_id = "web-" + hashlib.sha256(salt.encode("utf-8")).hexdigest()[:16]
     task_dir = _task_dir(task_id)
     (task_dir / "input").mkdir(parents=True)
+    raw_timeline = meta.get("quantum_timeline_profile") or {}
+    timeline_profile = make_profile(
+        raw_timeline.get("data_lifetime_years"),
+        raw_timeline.get("migration_lead_years"),
+        raw_timeline.get("threat_horizon_years"),
+        raw_timeline.get("hndl_exposure", "unknown"),
+        "user-input" if raw_timeline else "not-provided")
     task = {
         "task_id": task_id,
         "name": str(meta.get("name") or "project")[:100],
@@ -90,6 +102,7 @@ def _new_task(meta):
         "created_at": time.time(),
         "return_code": None,
         "findings_count": None,
+        "quantum_timeline_profile": timeline_profile,
     }
     with LOCK:
         TASKS[task_id] = task
@@ -128,6 +141,12 @@ def _run_task(task_id):
     _set_task(task_id, state="running", message="正在执行密码资产扫描")
     cmd = [sys.executable, str(ROOT / "core" / "pipeline.py"), str(input_dir),
            "--tools-dir", str(TOOLS_DIR), "-o", str(output_dir)]
+    profile = _snapshot(task_id).get("quantum_timeline_profile") or {}
+    if profile.get("data_lifetime_years") is not None:
+        cmd += ["--data-lifetime-years", str(profile["data_lifetime_years"]),
+                "--migration-lead-years", str(profile["migration_lead_years"]),
+                "--threat-horizon-years", str(profile["threat_horizon_years"]),
+                "--hndl-exposure", profile["hndl_exposure"]]
     try:
         with log_path.open("wb") as log:
             proc = subprocess.run(cmd, cwd=str(ROOT), stdout=log,

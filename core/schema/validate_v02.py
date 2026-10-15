@@ -26,6 +26,11 @@ def errors(f):
         for s in f['stages']:
             if s['status'] in ('skipped','failed','timeout') and not s['reason']: issues.append('non-success stage requires reason')
         for e in f['unresolved_deep_evidence']: flowcheck(e['flow'])
+        profile=f.get('quantum_timeline_profile')
+        if profile:
+            values=[profile[k] for k in ('data_lifetime_years','migration_lead_years','threat_horizon_years')]
+            if any(v is None for v in values) != all(v is None for v in values):
+                issues.append('timeline profile requires all X/Y/Z or none')
         return issues
     if f['file'].startswith(('/',chr(92))) or re.match(r'^[A-Za-z]:',f['file']) or '..' in f['file'].replace(chr(92),'/').split('/'):
         issues.append('file must be project-relative')
@@ -46,6 +51,22 @@ def errors(f):
         if q['status']=='insufficient_evidence' and not q['unknowns']: issues.append('insufficient evidence requires unknowns')
         if f['finding_kind']=='credential' and (q['status']!='not_applicable' or q['quantum_effect']!='not_applicable' or q['migration_candidates']): issues.append('credential must not receive PQC migration')
         if q['status']=='not_applicable' and q['quantum_effect']!='not_applicable': issues.append('inconsistent quantum applicability')
+        timeline=q.get('quantum_timeline')
+        if timeline:
+            values=[timeline[k] for k in ('data_lifetime_years','migration_lead_years','threat_horizon_years')]
+            if timeline['status']=='assessed':
+                if any(v is None for v in values): issues.append('assessed timeline requires X/Y/Z')
+                else:
+                    expected=max(0,round(values[2]-values[0]-values[1],3))
+                    if timeline['years_until_action']!=expected: issues.append('timeline action year mismatch')
+                    expected_urgency='immediate' if expected==0 else 'scheduled'
+                    if timeline['urgency']!=expected_urgency: issues.append('timeline urgency mismatch')
+            if timeline['status']=='not_configured' and not all(v is None for v in values):
+                issues.append('not_configured timeline must not contain partial values')
+            if timeline['status']=='not_applicable' and (timeline['urgency']!='not_applicable' or timeline['hndl_status']!='not_applicable'):
+                issues.append('inconsistent timeline applicability')
+            if timeline['hndl_status']=='at_risk' and 'QT-HNDL-CONFIDENTIALITY' not in timeline['rule_refs']:
+                issues.append('HNDL risk requires rule reference')
     if f['stage']!='explained' and any(k in f for k in ('usage_assessment','remediation_steps','analysis_provenance')): issues.append('AI fields require explained stage')
     if f['stage']=='explained':
         if f['usage']!=f['usage_assessment']['usage']: issues.append('usage mismatch')
