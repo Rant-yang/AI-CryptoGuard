@@ -63,28 +63,54 @@ _DIRECT_KEY_LITERAL_RE = re.compile(
 _URL_RE = re.compile(r'\b[a-zA-Z][a-zA-Z0-9+.-]*://([^\s/:@]+):([^\s/@]+)@')
 _PEM_RE = re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----')
 _LOG_RE = re.compile(r'(?i)\b(?:print|println|printf|console\.log|log\.(?:trace|debug|info|warn|error)|logger\.(?:trace|debug|info|warn|error))\s*\((.*)')
+# 去掉字符串字面量后剩的部分才是「被输出/插值的变量」。
+# `logger.info("Dumping LSA Secrets")` 只在消息文本里提到 secret，不是输出
+# 凭据值；`logger.info(secret)` 输出的才是变量 secret。
+_STRING_LITERAL_RE = re.compile(r'(["\'])(?:\\.|(?!\1).)*\1')
 
 _PASSWORD = re.compile(r'(?i)(?:pass(?:word|wd|phrase)?|pwd|keystorepass|storepass)')
 _TOKEN = re.compile(r'(?i)(?:api[_-]?(?:key|token)|access[_-]?token|auth[_-]?token|bearer|jwt[_-]?secret|client[_-]?secret|secret[_-]?key|credential)')
 _CRYPTO_KEY = re.compile(r'(?i)(?:aes|des|rsa|hmac|crypto|cipher|encrypt|decrypt)[_.-]*(?:key|secret)|(?:private|master|signing)[_.-]*key')
 _SENSITIVE = re.compile(r'(?i)(?:pass(?:word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)')
-_PLACEHOLDER = re.compile(r'(?i)^(?:example|sample|dummy|placeholder|replace[_-]?me|changeme|your[_-].*|<.*>|\$\{.*\}|%\w+%)$')
+_PLACEHOLDER = re.compile(
+    r'(?i)^(?:example|sample|dummy|placeholder|replace[_-]?me|changeme|'
+    r'some[_-]?(?:password|pwd|pass|token|key|secret)|'
+    r'new[_-]?(?:password|pwd|pass|token|key|secret)|'
+    r'your[_-].*|<.*>|\$\{.*\}|%\w+%)$')
 _WEAK = {'admin', 'admin123', 'password', 'password1', 'passw0rd', '123456',
-         '12345678', 'root', 'guest', 'test', 'default', 'changeme', 'secret'}
+         '12345678', 'root', 'guest', 'test', 'default', 'changeme',
+         'changeit', 'secret'}
 _CRYPTO_CONTEXT_RE = re.compile(
     r'(?i)(?:SecretKeySpec|PBE(?:KeySpec|ParameterSpec)|KeyStore|javax\.crypto|'
     r'java\.security\.(?:KeyStore|Key)|Crypto\.Cipher|cryptography\.hazmat|'
     r'golang\.org/x/crypto|crypto/(?:aes|des|rsa|hmac)|openssl/|'
     r'aes\.NewCipher|AES\.new|DES(?:3)?\.new|algorithms\.(?:AES|TripleDES|ChaCha20)|'
     r'Fernet|EVP_|AES_set_(?:encrypt|decrypt)_key|NewCipher|_set_key|setKey\s*\(|'
-    r'privateKey|signingKey|encryptionKey)')
+    r'privateKey|signingKey|encryptionKey|ucryptolib|SecretBox|nacl)')
 _PASSWORD_CONTEXT_RE = re.compile(
     r'(?i)(?:PBE(?:KeySpec|ParameterSpec)|KeyStore(?:\.load|\.getInstance|\b))')
 _GENERIC_KEY_NAME = re.compile(
     r'(?i)^(?:g[_-])?(?:default[_-]?)?(?:crypto[_-]?)?'
     r'key(?:bytes?|fernet|\d+)?$')
+#: 纯算法 / 原语名。`String key = "DES"` 的 "DES" 是算法名，不是密钥材料；
+#: 密钥不会是一个短算法名。只对「密钥类变量名」（_CRYPTO_KEY / 通用 key）生效。
+_ALGO_NAME_VALUES = frozenset({
+    'DES', 'DESEDE', 'TRIPLEDES', '3DES',
+    'AES', 'AES128', 'AES192', 'AES256',
+    'BLOWFISH', 'RC2', 'RC4', 'RC5', 'RC6', 'IDEA',
+    'CAST5', 'CAST6', 'CHACHA20', 'CHACHA', 'XTEA', 'TEA', 'SEED',
+    'CAMELLIA', 'SERPENT', 'TWOFISH',
+    'RSA', 'DSA', 'ECDSA', 'DH', 'ECDH', 'EC', 'ECC', 'ED25519', 'X25519',
+    'MD5', 'MD4', 'MD2', 'SHA1', 'SHA224', 'SHA256', 'SHA384', 'SHA512',
+    'HMAC', 'HMACMD5', 'HMACSHA1', 'HMACSHA256', 'HMACSHA512',
+    'PBKDF2', 'BCRYPT', 'SCRYPT', 'ARGON2',
+})
 _RUNTIME_SOURCE_RE = re.compile(
     r'(?i)(?:getenv|environ|getProperty|process\.env|config\.|vault|secretManager)')
+#: 方法调用实参：`key.getBytes("UTF-8")` 的 "UTF-8" 是编码参数，不是密钥。
+#: 只认 `.方法(` —— `[]byte("...")` / `bytes("...")` 是类型转换，字面量就是
+#: 密钥本身，不能跳过。见 _scan_line 的 `_ASSIGN_RE` 循环。
+_METHOD_CALL_RE = re.compile(r'\.[A-Za-z_]\w*\s*\(')
 
 
 def scan(root):
@@ -145,7 +171,7 @@ def _scan_line(rel, line_no, line, pepper, context=None):
                             pepper, kind='pattern'))
 
     log = _LOG_RE.search(line)
-    if log and _SENSITIVE.search(log.group(1)):
+    if log and _SENSITIVE.search(_STRING_LITERAL_RE.sub(' ', log.group(1))):
         # 指纹只基于位置和规则，不保存或散列整行源码。
         out.append(_finding(rel, line_no, log.start(), 'CRED-IN-LOG',
                             '%s:%s' % (rel, line_no), pepper, kind='ast',
@@ -159,9 +185,20 @@ def _scan_line(rel, line_no, line, pepper, context=None):
 
     for m in _ASSIGN_RE.finditer(line):
         name, value = m.group('name'), m.group('value')
-        if _RUNTIME_SOURCE_RE.search(m.group('prefix')):
+        prefix = m.group('prefix')
+        if _RUNTIME_SOURCE_RE.search(prefix):
             continue
         if _PLACEHOLDER.match(value.strip()):
+            continue
+        # 字面量落在「方法调用实参」或「下标」位置时不是赋值右值：
+        # `key.getBytes("UTF-8")` 的 "UTF-8" 是编码、`record['Secret']` 的
+        # 'Secret' 是键。只认 `.方法(` 与未配平 `[`；`[]byte("…")` / `bytes("…")`
+        # 是类型转换，字面量就是密钥，必须保留。
+        if _METHOD_CALL_RE.search(prefix) or prefix.count('[') > prefix.count(']'):
+            continue
+        # 字符串拼接片段：`key := "Login:" + …` 或 URL 参数误匹配（value 内
+        # 混入 ` + `）。真凭据字面量不是拼接中间件。
+        if ' + ' in value or line[m.end():m.end() + 2].lstrip().startswith('+'):
             continue
         rule = _assignment_rule(name, value, context)
         is_weak = value.lower() in _WEAK and _SENSITIVE.search(name)
@@ -194,15 +231,32 @@ def _scan_line(rel, line_no, line, pepper, context=None):
     return _dedup(out)
 
 
+def _is_algo_name(value):
+    return value.strip().upper() in _ALGO_NAME_VALUES
+
+
 def _assignment_rule(name, value, context=None):
+    v = value.strip()
     if _PASSWORD.search(name):
+        # 纯数字开关值（"0" / "1" / "90"）是配置开关或周期，不是口令。
+        if re.fullmatch(r'\d{1,3}', v):
+            return None
         return 'CRED-HARDCODED-PASSWORD'
     if _TOKEN.search(name):
         return 'CRED-HARDCODED-TOKEN'
     if _CRYPTO_KEY.search(name):
+        if _is_algo_name(v):
+            return None
+        # 已知默认/弱口令值（如 Java keytool 的 changeit）归口令，不归密钥。
+        if v.lower() in _WEAK:
+            return 'CRED-DEFAULT-WEAK'
         return 'CRED-HARDCODED-CRYPTO-KEY'
     if ((context or {}).get('generic_key_sensitive')
             and _GENERIC_KEY_NAME.fullmatch(name)):
+        if _is_algo_name(v):
+            return None
+        if v.lower() in _WEAK:
+            return 'CRED-DEFAULT-WEAK'
         return (context or {}).get('generic_key_rule',
                                    'CRED-HARDCODED-CRYPTO-KEY')
     return None

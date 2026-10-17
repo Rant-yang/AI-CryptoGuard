@@ -161,13 +161,20 @@ def _line_of(text, pos):
 
 
 def _split_jce_combined(s):
-    """JCE 的 PBE 组合算法名拆底层算法: PBEWithMD5AndDES -> ['MD5', 'DES']。
+    """JCE 的 PBE/PBKDF 组合算法名拆底层算法。
 
-    只拆 PBEWith 前缀的定向写法（不做泛子串匹配 —— 那会把 BROWSEED
-    匹配成 SEED）。PBEWithMD5AndDES 底层确实是 MD5 派生 + DES 加密,
-    两个都是词表内已淘汰算法, benchmark 标签也按底层算法记。
+    - PBEWithMD5AndDES -> ['MD5', 'DES']   (MD5 派生 + DES 加密)
+    - PBKDF2WithHmacMD5 -> ['MD5']         (HMAC 的底层 PRF 是 MD5)
+
+    只拆 PBEWith / PBKDF2WithHmac 前缀的定向写法（不做泛子串匹配 ——
+    那会把 BROWSEED 匹配成 SEED）。拆出的底层算法都是词表内已淘汰
+    算法, benchmark 标签也按底层算法记。
     """
-    m = re.fullmatch(r'PBEWith(.+)', s.split('/', 1)[0].strip())
+    head = s.split('/', 1)[0].strip()
+    m = re.fullmatch(r'PBKDF2WithHmac(.+)', head)
+    if m:
+        return [m.group(1).strip()]
+    m = re.fullmatch(r'PBEWith(.+)', head)
     if not m:
         return []
     parts = re.split(r'With|And', m.group(1))
@@ -207,6 +214,30 @@ def _split_args(raw):
     if not raw or not raw.strip():
         return []
     return [p.strip() for p in _strip_strings(raw).split(',') if p.strip()]
+
+
+def _split_args_top(raw):
+    """顶层逗号切分（括号配平）：`aes(bytes("a", "u"), MODE_ECB)` 的实参
+    内嵌函数调用含逗号，朴素 split(',') 会把它切坏 —— 只在括号深度 0 处切。
+    字面量已由调用方抹掉，引号内的逗号不会干扰。"""
+    if not raw or not raw.strip():
+        return []
+    s = _strip_strings(raw)
+    parts, depth, cur = [], 0, []
+    for ch in s:
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(''.join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    tail = ''.join(cur).strip()
+    if tail:
+        parts.append(tail)
+    return parts
 
 
 def _unquote(p):
@@ -501,6 +532,71 @@ def _emit_alg_or_ecb(rel, src, pos, alg, is_ecb, why, emit):
         emit(rel, alg + '/ECB', [_line_of(src, pos)], why, risk='review')
 
 
+def _ucryptolib_mode_env(text):
+    """ucryptolib 同文件常量传播: 变量名 -> {'ECB'} | {'CBC'} | 混合集合。
+
+    只认 ECB 来源 = 字面量 MODE_ECB 或数值 1（MicroPython ucryptolib 里
+    MODE_ECB == 1，MODE_CBC == 2）；别名链与函数调用实参->形参各绑一跳
+    （不动点）。must 口径: 变量在文件内所有赋值路径都解析到「仅 ECB」才
+    判 ECB，一旦混入 CBC 即判未知（不报）—— 防止不同作用域同名变量互相
+    污染。解析不到常量就不报（不猜）。"""
+    env = {}
+
+    def lit(e):
+        e = e.strip()
+        if e == 'MODE_ECB' or e == '1':
+            return {'ECB'}
+        if e == 'MODE_CBC' or e == '2':
+            return {'CBC'}
+        return None
+
+    def resolve(e):
+        e = e.strip()
+        v = lit(e)
+        if v is not None:
+            return v
+        if re.fullmatch(r'\w+', e):
+            return env.get(e)
+        return None
+
+    methods = {}
+    for m in re.finditer(r'\bdef\s+(\w+)\s*\(([^)]*)\)\s*:', text):
+        params = [_unquote(p) for p in _split_args(m.group(2))
+                  if _unquote(p) and _unquote(p) != 'self']
+        methods[m.group(1)] = params
+
+    assigns = [(m.group(1), m.group(2)) for m in re.finditer(
+        r'\b(\w+)\s*=\s*([^;\n]+)', text)]
+    calls = [(m.group(1), _split_args(m.group(2))) for m in re.finditer(
+        r'\b(\w+)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)', text)]
+
+    for _ in range(_MAX_FIXED_ROUNDS):
+        changed = False
+        for var, expr in assigns:
+            v = resolve(expr)
+            if v is None:
+                continue
+            new = env[var] | v if var in env else v
+            if env.get(var) != new:
+                env[var] = new
+                changed = True
+        for name, args in calls:
+            params = methods.get(name)
+            if not params or len(args) != len(params):
+                continue
+            for p, a in zip(params, args):
+                v = resolve(a)
+                if v is None:
+                    continue
+                new = env[p] | v if p in env else v
+                if env.get(p) != new:
+                    env[p] = new
+                    changed = True
+        if not changed:
+            break
+    return env
+
+
 def _scan_py(rel, src, emit):
     """R6 Python: pycryptodome（`MOD.new(key, MOD.MODE_ECB)`）与
     cryptography 库（`Cipher(algorithms.AES(key), modes.ECB())`，
@@ -534,27 +630,42 @@ def _scan_py(rel, src, emit):
                     _emit_alg_or_ecb(rel, src, m.start(), alg, True, 'R6',
                                      emit)
 
-    # R10: ucryptolib (MicroPython) —— `aes(key, MODE_ECB)` 构造器小写直呼;
-    # 模式常是 `mode = MODE_ECB` 变量再作实参传入（llmcmt 实测 28 个 ecb 类
-    # 漏报全是此形态）。文件级判定: 模块内存在该变量的 MODE_ECB 赋值,
-    # aes() 的实参位出现它或直接量 MODE_ECB 即报（MODE_CBC 赋值不触发）。
-    uc_vars = {m.group(1) for m in re.finditer(
-        r'\b(\w+)\s*=\s*MODE_ECB\b', text)}
-    if uc_vars or re.search(r'\bMODE_ECB\s*[,)]', text):
-        for m in re.finditer(r'\b(?:ucryptolib\.)?aes\s*\(([^()]*)\)', text):
-            args = _split_args(m.group(1))
-            if any(a == 'MODE_ECB' or a in uc_vars for a in args):
+    # R10: ucryptolib (MicroPython) —— `aes(key, MODE_ECB)` 构造器小写直呼。
+    # 模式常经变量传入: `mode = MODE_ECB` / `mode = 1`（数值 1 == MODE_ECB）
+    # 再作第二实参，或直接 `aes(bytes(...), MODE_ECB)`（实参内嵌调用含逗号）。
+    # 文件级轻量传播解析第二实参到「仅 ECB」才报；MODE_CBC/2 不触发。
+    if 'ucryptolib' in text:
+        env = _ucryptolib_mode_env(text)
+        for m in re.finditer(r'\b(?:ucryptolib\.)?aes\s*\(', text):
+            args_raw, _end = _paren_span(text, m.end() - 1)
+            if args_raw is None:
+                continue
+            args = _split_args_top(args_raw)
+            if len(args) < 2:
+                continue
+            mode = args[1]
+            if mode == 'MODE_ECB' or mode == '1' or env.get(mode) == {'ECB'}:
                 emit(rel, 'AES/ECB', [_line_of(src, m.start())], 'R10',
                      risk='review')
 
 
 _C_EVP_ECB_RE = re.compile(r'\bEVP_(\w+)_ecb\w*\s*\(')
+#: EVP_<alg> 既可能是调用点 `EVP_des_cbc(...)`，也可能是 OpenSSL 密码
+#: 注册表里以函数指针引用（`{ ..., EVP_des_cbc, ... }`，后面跟 `,`/`;`/`}`）。
+#: 两者都是「用了这个算法」—— 前者是调用、后者是注册进 cipher 表。
 _C_EVP_RE = re.compile(
     r'\bEVP_(md2|md4|md5|sha1|des_ede3|des3|des|bf|cast5|cast|rc2|rc4|rc5|'
-    r'idea|seed)\w*\s*\(')
+    r'idea|seed)\w*\s*(?:\(|[,;}])')
 _C_BARE_CALL_RE = re.compile(
     r'\b(AES|DES|BF|CAST5|RC2|RC4|RC5|IDEA|SEED)_(\w*encrypt\w*)\s*\(')
 _C_BARE_HASH_RE = re.compile(r'\b(MD2|MD4|MD5)\s*\(')
+#: OpenSSL 摘要 NID 常量（NID_md5 / NID_sha1）—— 以数字标识符引用摘要算法
+#: 本身即「用了该算法」: asn_mime.c 里 `case NID_md5: BIO_puts(out, "md5")`
+#: 是把摘要名写进 MIME micalg 头（代码符号，不是字符串）。
+_C_NID_RE = re.compile(r'\bNID_(md2|md4|md5|sha1)\b')
+#: OpenSSL 弱曲线 NID（P-192/SECP192 已被 NIST 弃用）—— 曲线名常量本身
+#: 即「用了该曲线」，报 ECC（Shor 威胁），与 weak-curve 标签口径一致。
+_C_NID_EC_RE = re.compile(r'\bNID_(X9_62_prime192v1|secp192r1|secp192k1)\b')
 
 
 def _scan_c(rel, src, emit):
@@ -577,6 +688,13 @@ def _scan_c(rel, src, emit):
                              m.group(2).lower().startswith('ecb'), 'R7', emit)
     for m in _C_BARE_HASH_RE.finditer(text):
         emit(rel, m.group(1), [_line_of(src, m.start())], 'R7')
+    for m in _C_NID_RE.finditer(text):
+        alg = _C_OPENSSL_BASES.get(m.group(1))
+        if alg and norm_algorithm(alg) in BROKEN_ALGORITHMS:
+            emit(rel, alg, [_line_of(src, m.start())], 'R7')
+    # R13: 弱曲线 NID（P-192 已被 NIST 弃用）—— ECC 受 Shor 威胁且曲线本身偏弱
+    for m in _C_NID_EC_RE.finditer(text):
+        emit(rel, 'ECC', [_line_of(src, m.start())], 'R13', risk='shor')
 
     # R12: OpenSSL PKCS5_PBKDF2_HMAC 第 5 参是迭代数 —— must 口径 <=1000
     # （含边界, 与 R4 一致）。实参常见 #define 宏（ITERATIONS）, 先建宏表代入;
@@ -611,6 +729,17 @@ def _scan_go(rel, src, emit):
             emit(rel, alg, [_line_of(src, m.start())], 'R8')
     for m in re.finditer(r'\bg?md5\s*\.\s*(?:Must)?Encrypt\w*\s*\(', text):
         emit(rel, 'MD5', [_line_of(src, m.start())], 'R8')
+    # TLS 密码套件常量 tls.TLS_*_RC4_128_* / tls.TLS_*_3DES_EDE_*：常量名里的
+    # 算法即被启用的密码套件（af10075.go 的 GetCipherName switch 用代码符号
+    # 引用, 不是字符串）。只收词表内已淘汰的 RC4/3DES/DES。
+    for m in re.finditer(r'\btls\.TLS_[A-Z0-9_]+', text):
+        name = m.group(0)
+        if 'RC4' in name:
+            emit(rel, 'RC4', [_line_of(src, m.start())], 'R8')
+        elif '3DES' in name:
+            emit(rel, '3DES', [_line_of(src, m.start())], 'R8')
+        elif 'DES' in name:
+            emit(rel, 'DES', [_line_of(src, m.start())], 'R8')
 
 
 def scan(target):
@@ -796,6 +925,12 @@ def scan(target):
 
         _pbe_check(_PBE_HEAD_RE, 1, 'R4')
         _pbe_check(_PBEKS_HEAD_RE, 2, 'R4b')
+
+        # R9: NullCipher —— javax.crypto.NullCipher 明文原样通过、根本不加密，
+        # 属于「调了加密 API 却没加密」的确定性缺陷。JCE getInstance 汇点
+        # 走不到它（直接 `new NullCipher()`），单列直报。
+        for m in re.finditer(r'\bnew\s+NullCipher\s*\(', src):
+            emit(info.rel, 'NullCipher', [_line_of(src, m.start())], 'R9')
 
     # ---- 多语言轻量扫描（py/C/Go: llmcmt 实测范围内漏报的 43% 在这些
     # 文件上 —— 样本形态全是同文件直接调用, 无跨文件传播需求）----

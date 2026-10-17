@@ -30,6 +30,7 @@ from scanner.normalize import (
     norm_algorithm,
     to_relative_path,
 )
+from scanner.adapters.source_filter import keep_record
 
 TOOL_NAME = 'cryptoscan'
 
@@ -136,6 +137,11 @@ def to_groups(data, target):
         line = f.get('line')
         if not rel or not isinstance(line, int) or line < 1:
             continue
+        # 过滤字符串/注释提及（帮助文本、密码套件名、枚举表等）：算法名作为
+        # 密码学 API 参数 / 变换描述符 / 常量右值 / 代码符号仍会保留。
+        rec = {k: f.get(k) for k in RAW_FIELDS}
+        if not keep_record(rec):
+            continue
         key = (rel, alg_norm, usage)
         g = buckets.get(key)
         if g is None:
@@ -168,7 +174,7 @@ def to_groups(data, target):
         qr = CRYPTOSCAN_QUANTUM_RISK_AS_SEEN.get(f.get('quantumRisk'))
         if qr:
             g['quantum_as_seen'].append(qr)
-        g['raw']['records'].append({k: f.get(k) for k in RAW_FIELDS})
+        g['raw']['records'].append(rec)
 
     # ---- 同 (file, alg) 的 usage 摆动合流 ----
     # purpose 是逐行启发式: 同文件同算法的命中行常被拆成 authentication/

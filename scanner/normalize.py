@@ -147,22 +147,37 @@ RISK_BY_TYPE = {
     'SHA-1 Hash Function': 'broken',
     'DES Algorithm': 'broken',
     'Triple DES Algorithm': 'broken',
+    #: 经典攻破（CryptoScan type 此前缺映射落到 review —— 补 broken）。
+    #: RC4/Blowfish 经典攻破、HMAC-MD5/HMAC-SHA1 底层哈希已破。
+    'RC4 Stream Cipher': 'broken',
+    'Blowfish Algorithm': 'broken',
+    'HMAC-MD5': 'broken',
+    'HMAC-SHA1': 'broken',
     'RSA-1024 Key Size': 'broken',
     'RSA Algorithm': 'shor',
     'Elliptic Curve Cryptography': 'shor',
     'TLS Configuration': 'shor',
+    #: 传统公钥（Shor 直接威胁，此前缺映射落到 review —— 补 shor）
+    'DSA Algorithm': 'shor',
+    'Diffie-Hellman Key Exchange': 'shor',
     'AES-GCM Authenticated Encryption': 'safe',
     #: ↑ 原 grover（量子密钥减半只是迁移规划提示, 不是当前缺陷）。AES-GCM
     #: 是 AEAD 最佳实践、CamBench 修复版的标准形态 —— grover 档会把它当
     #: 问题进清单, 在「公认干净位置」上全成 FP（cambench-cap 实测 9 条）。
     #: safe 档由 split_output 移出问题清单, CBOM 资产图仍保留条目。
-    'ChaCha20-Poly1305': 'grover',
-    'Poly1305': 'grover',
-    'KMAC': 'grover',
-    'HKDF': 'grover',
+    'ChaCha20-Poly1305': 'safe',
+    'Poly1305': 'safe',
+    'KMAC': 'safe',
+    'HKDF': 'safe',
+    #: 安全 MAC/哈希（Grover 折半后仍 ≥128-bit 安全，与 AES-GCM 同类）
+    #: —— 判 safe 移出问题清单，消除负样本 FP（llmcmt 实测）。
+    'HMAC-SHA2': 'safe',
+    'CMAC': 'safe',
+    'BLAKE2 Hash Function': 'safe',
+    'SHA-3 Hash Function': 'safe',
     'PBKDF2': 'grover',
-    'bcrypt': 'grover',
-    'Argon2': 'grover',
+    'bcrypt': 'safe',
+    'Argon2': 'safe',
     'Hardcoded Key Size': 'grover',
     'ML-KEM Key Encapsulation': 'safe',
     'ML-DSA Digital Signature': 'safe',

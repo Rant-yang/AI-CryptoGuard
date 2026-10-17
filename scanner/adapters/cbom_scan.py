@@ -23,8 +23,37 @@ from scanner.normalize import (
     split_combined_algorithm,
     to_relative_path,
 )
+from scanner.adapters.source_filter import is_string_or_comment_mention
 
 TOOL_NAME = 'cbom-scan'
+
+#: 源文件行读取缓存：cbom-scan 的 occurrence 只带 (file, match, line)，
+#: 没有整行上下文，判断 match 是否落在字符串/注释里需要读源文件。
+_file_lines_cache = {}
+
+
+def _read_line(target, rel, lineno):
+    """读 target/rel 的第 lineno 行（1 基）。失败返回 None。"""
+    lines = _file_lines_cache.get(rel)
+    if lines is None:
+        try:
+            with open(os.path.join(target, rel), encoding='utf-8-sig',
+                      errors='replace') as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            lines = []
+        _file_lines_cache[rel] = lines
+    if not lines or lineno < 1 or lineno > len(lines):
+        return None
+    return lines[lineno - 1]
+
+
+def _match_mention(linetext, match):
+    """cbom 的 match 可能把引号一起匹配进来（'"DES"'），剥外层引号再判。"""
+    m = str(match or '')
+    if len(m) >= 2 and m[0] in ('"', "'") and m[-1] == m[0]:
+        m = m[1:-1]
+    return is_string_or_comment_mention(linetext, m)
 
 #: cbom-scan 把 Ed25519 / X25519 捆成一个 asset 且 prim=signature ——
 #: 对 Ed25519（签名）那半是对的，对 X25519（密钥交换）那半是错的。
@@ -134,6 +163,13 @@ def to_groups(data, target):
             if not rel:
                 continue
             match = occ.get('match')
+            line = occ.get('line')
+            # 过滤字符串/注释提及（帮助文本、密码套件名、枚举表、import 路径等）：
+            # 算法名作为密码学 API 参数 / 变换描述符 / 常量右值仍会保留。
+            if match and isinstance(line, int):
+                linetext = _read_line(target, rel, line)
+                if linetext is not None and _match_mention(linetext, match):
+                    continue
             tok = norm_algorithm(match) if match else ''
             owners = tok_to_cands.get(tok) if tok else None
             if owners is None:

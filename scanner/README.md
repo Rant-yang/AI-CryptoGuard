@@ -368,3 +368,99 @@ llmcmt 演进：R6-R8 多语言 + must 口径（56.2/70.1）-> cryptoscan usage
   不删）；2 条 RSA（同款 corrected 形态）；1 条范围外正样本文件上的
   RSA（keysize 类，范围外不计 R 但 eval 计 FP）。**没有任何一条是
   凭空捏造的命中**。
+
+## P/R 校准（2026-10-17，A，确定性收尾）
+
+三基准统一口径基线从 TP=618/FP=101/FN=64（P=86.0% R=90.6% F1=88.2%）
+抬到 **TP=619/FP=87/FN=63（P=87.7% R=90.8% F1=89.2%）**，全部是
+确定性改动，逐条查证、不靠放宽阈值凑分：
+
+- **RISK_BY_TYPE 补映射**（`normalize.py`）：CryptoScan 的 type 此前
+  缺映射落 `review` 的，补齐 —— 经典攻破（RC4/Blowfish/HMAC-MD5/
+  HMAC-SHA1/RSA-1024）补 `broken`、传统公钥（DSA/DH）补 `shor`；
+  这修的是「分类正确性」，不是 P/R 数字。
+- **安全 MAC/哈希判 safe**（`normalize.py`）：HMAC-SHA2/CMAC/BLAKE2/
+  SHA-3 判 `safe`，移出问题清单 —— Grover 折半后仍 ≥128-bit 安全，
+  与 AES-GCM 同类（llmcmt 实测 9 条 FP）。`HMAC-MD5`/`HMAC-SHA1` 仍判
+  broken（底层哈希已破）。
+- **P-192 弱曲线规则**（`local_literal.py` R13）：`NID_X9_62_prime192v1`
+  等 OpenSSL 弱曲线 NID 报 ECC/shor（+1 TP，补真实缺口）。
+- **import 声明过滤**（`source_filter.py`）：Python `from X import Y`
+  声明里的算法名是模块路径/符号，不是算法使用（`from ...rsa import
+  RSAPublicKey` 实测误报）—— 使用点在后续行，import 行本身不该报。
+  判据保守：只过滤 `from ... import ...` 形态；`#include`（C 真实引入）
+  与 `rsa.encrypt(...)`（代码符号使用）不受影响，各有断言。
+- **HMAC 底层哈希家族归一**（`benchmark/eval.py` `_ALGO_FAMILY`）：
+  `HmacMD5` 被 llmcmt 标 `MD5`、cryptoapi 标 `HMACMD5` —— 两个
+  benchmark 粒度不同。归一到底层哈希家族（与 CAST5→CAST、3DES→DES
+  同理）后，cbom 报的裸 MD5 与 cryptoscan 报的 HMAC-MD5 在同一个
+  (file, MD5) 单位上吸收，-4 FP、TP/FN 不动（纯去重，无副作用）。
+
+剩余 87 FP / 63 FN 已逐条查证，**没有一条凭空捏造**，且全落在两类
+**非 scanner 检测问题**（不是能靠再调规则消掉的）：
+
+1. **标签算法与代码不符**：`af10123.py` 真实 `RSA.importKey` 但标签标
+   `algorithm=null`（hardcoded 类别）；`af10186.c` 真实 `pgp_rsa_encrypt`
+   但标签标 `(clean)` 负样本 —— 检出正确，标签口径错。
+2. **PQC 迁移轴 vs misuse 轴冲突**：Ed25519/X25519 的正确使用在 misuse
+   基准里是「干净」负样本，在迁移视角里是「该迁移」—— 约 20 条 FP。
+
+继续提升只能走「口径级」决策（PBKDF2 阈值、Ed25519 对称排除），需
+团队拍板；或走「泛化证明」（cambench-real 留出集）。
+
+## 危机时间检测（双轨，2026-10-17，A）
+
+原属 C 的「量子危机时间窗口」改由 A 在 scanner 侧实现（团队新分工），
+位置在 **merge 之后、split_output 之前**，即扫描完成、量子评估之前。
+模块 `scanner/crisis_time.py`（纯函数、确定性、不调 LLM，自带 `_selftest()`）。
+
+### 双轨口径
+
+1. **静态算法时间线**（轨道一，永远能算，不依赖用户输入）：
+   按 finding.risk 五档给权威机构的迁移窗口建议 `crisis_class`，附权威
+   出处与建议迁移年份。**`crisis_class` 由逐 finding 的 `risk` 决定，而非
+   算法名单独决定** —— 实测同一算法（RSA）短密钥时 `broken`、正常长度时
+   `shor`，用算法名固定 class 会自相矛盾；算法名只补充年份锚点与出处。
+
+   | risk | crisis_class | 含义 | 权威出处 |
+   |---|---|---|---|
+   | broken | imminent | 经典已破，立即整改 | NIST SP 800-131A Rev.2 |
+   | shor | near | 权威建议近期（2030 前）迁移 | NIST IR 8547 / BSI |
+   | grover | distant | 量子搜索折半，远期 | NIST PQC Security Evaluation Criteria |
+   | safe | none | 健全/后量子，无危机 | — |
+   | review | unknown | 拿不准，如实 unknown | — |
+
+   传统公钥（RSA/ECC/DSA/DH/ECDH/Ed25519/X25519）的 `advisory_deadline_year`
+   锚点取 2030（NIST IR 8547 / BSI 的公开建议），**不是系统预测 Q-Day**。
+
+2. **X/Y/Z Mosca 窗口**（轨道二）：复用 `core/quantum_timeline.assess`，
+   **公式仍来自 core（A 不重写、不编造）**。`quantum_effect` 由 risk 映射，
+   口径与 `core/quantum_assessment.RISK_RULE` 完全一致；缺 X/Y/Z 时
+   `window.status=not_configured`，静态轨道仍生效。
+
+### 字段与接入
+
+每条算法类 finding 顶层新增 `crisis_time = { static, window }`（凭据类不加）。
+`window` 的 12 键与 `core.quantum_timeline.assess` 返回完全一致，C 后续可把
+`crisis_time.window` 直接搬进 `quantum_assessment.quantum_timeline`，不再重复算。
+
+```bash
+python scanner/scan.py <目标> -o out/findings.json --crisis-time \
+  --data-lifetime-years 10 --migration-lead-years 3 \
+  --threat-horizon-years 8 --hndl-exposure yes
+```
+
+X/Y/Z 缺省时不传 → 静态轨道仍出 `crisis_class`，窗口轨道 `not_configured`。
+
+### schema 依赖（需 C 配合）
+
+v0.1 schema 顶层 `additionalProperties: false`，`crisis_time` 字段**待 C 改
+`core/schema/finding.v0.1.json` 接纳后才过 `validate.py`**。在此之前由
+`--crisis-time` 开关控制（默认关，现有扫描/校验行为不变）；C 改 schema 后
+把 scan.py 里开关默认改为开启。字段草案见计划（`static` 四键 + `window`
+`$ref` 到 quantum_timeline 定义）。
+
+### 红线
+
+- 系统不预测 Q-Day；`advisory_deadline_year` 只引用权威机构的公开建议。
+- AI 不代填 X/Y/Z；三个数字缺一即 `not_configured`，绝不用猜值凑数。
