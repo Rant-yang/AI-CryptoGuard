@@ -19,6 +19,7 @@ CamBench_Cap 的 `Corrected*`、LLM-CMT 的 `If_CAM=0`，都是现成的负样�
 import csv
 import json
 import os
+import re
 
 from . import meta
 from . import scope
@@ -267,6 +268,7 @@ def adapt_llmcmt(src_root, amap):
         return [], [('llmcmt', '找不到 %s' % csv_path)]
 
     out, unknown = [], []
+    aes_cache = {}
     with open(csv_path, 'r', encoding='utf-8', errors='replace', newline='') as f:
         for row in csv.DictReader(f):
             raw_path = _norm_rel(row.get('path', ''))
@@ -301,6 +303,14 @@ def adapt_llmcmt(src_root, amap):
                 if cat is None:
                     unknown.append((raw_path, '标签 %r 不在裁定表里' % lab))
                     continue
+                if cat == 'ecb':
+                    others = {_match_llmcmt_label(x) for x in labels if x != lab}
+                    if others & _ECB_SUBSUMED_BY and not _file_has_aes(
+                            src_root, raw_path, aes_cache):
+                        # 同文件已有 DES/Blowfish/CAST/... 标签点名了算法，且
+                        # 源码里没有 AES —— `ECB used` 再映射成 AESECB 是幻影
+                        # 单位（文件实际是那个分组密码的 ECB）。跳过该标签。
+                        continue
                 out.append(_rec('llmcmt', anon_rel, raw_path, cat,
                                 expect_misuse=expect, raw_labels=labels))
     return out, unknown
@@ -318,6 +328,45 @@ def _match_llmcmt_label(label):
     if not hits:
         return None
     return max(hits, key=len)
+
+
+#: 「点名具体分组密码」的 llmcmt 标签类别。`ECB used` 是模式标签、不携带
+#: 算法，scope.py 把它近似成 AESECB。当它与这些标签同现时，算法已被
+#: 那个标签捕获 —— `ECB used` 再映射成 AESECB 只会制造幻影单位
+#: （文件实际是 DES/Blowfish/... 的 ECB，不是 AES）。见 adapt_llmcmt。
+_ECB_SUBSUMED_BY = frozenset((
+    '3des', 'des used', 'rc4', 'rc2', 'rc5', 'blowfish', 'idea',
+    'cast', 'tea used', 'xtea',
+))
+
+#: 判定 `ECB used` 是否真指 AES 的 ECBC 源码标记。若文件里根本没有 AES，
+#: `ECB used` 与 DES/Blowfish/... 标签同现时的 ECB 只能是那个分组密码的
+#: ECB —— 此时「ECB 默认配 AES」近似不成立，应丢弃幻影 AESECB 单位。
+#: 反之（文件确实含 AES 的 ECB，如 OpenSSL 的多算法源文件），保留近似。
+_AES_ECB_RE = re.compile(r'\bAES\b', re.I)
+
+
+def _src_file(src_root, raw_path):
+    """labels.csv 的原路径（`Dsub/crawl/...`）→ 相对 src_root（已指向 Dsub）的文件。"""
+    p = raw_path
+    if p.lower().startswith('dsub/'):
+        p = p[len('dsub/'):]
+    return os.path.join(src_root, p)
+
+
+def _file_has_aes(src_root, raw_path, cache):
+    """该源码文件里是否出现 AES（据此判断 `ECB used` 是否真指 AES）。"""
+    if raw_path in cache:
+        return cache[raw_path]
+    has = False
+    try:
+        with open(_src_file(src_root, raw_path), 'r', encoding='utf-8',
+                  errors='replace') as fh:
+            has = bool(_AES_ECB_RE.search(fh.read()))
+    except OSError:
+        has = False
+    cache[raw_path] = has
+    return has
 
 
 # ------------------------------------------------------------------ 入口

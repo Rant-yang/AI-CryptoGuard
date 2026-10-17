@@ -266,14 +266,26 @@ LLMCMT_LABEL_KEYWORDS = {
                           'NullCipher 是「什么都不做」的假加密，等于明文。'
                           '⚠️ 规则库未收录（已知缺口）。'),
 
+    # ---------- 非对称：范围内 ----------
+    # `RSA/ECB/PKCS1Padding` 明确点名 RSA —— 比 `ecb` 更长，最长命中会先拿到它。
+    'rsa/ecb/pkcs1padding': Verdict(IN, ('RSA',), 'encryption', 'shor',
+                                    '`RSA/ECB/PKCS1Padding` 明确点名 RSA，'
+                                    '受 Shor 威胁。'),
+
     # ---------- 工作模式：范围内（规则库有 AESECB 等条目）----------
+    # `ECB used` 本身不携带算法（AES/ECB、DES/ECB、RSA/ECB 都叫 ECB），
+    # 这里标 AESECB 是「ECB 默认配 AES」的近似 —— 实测 llmcmt 里绝大多数
+    # ECB 用例的代码确含 `EVP_aes_*_ecb`/`AES/ECB`，检测器也按 AES/ECB 报，
+    # 两者对得上；少数 DES/ECB 的用例会因这个近似漏掉，属标签信息不足，
+    # 已在 FN 分析中记录。
     'ecb': Verdict(IN, ('AESECB',), 'encryption', 'review',
                    'ECB 泄露明文结构；属工作模式问题，非算法强度问题，'
                    '所以风险档是 review 而不是 grover。'),
-    'pkcs5padding': Verdict(IN, ('AESECB',), 'encryption', 'review',
-                            'PKCS5/PKCS7 填充本身可接受，但它在本数据里'
-                            '总是与 ECB 同现（`AES/ECB/PKCS5Padding`）——'
-                            '问题在 ECB 而不在填充。'),
+    'pkcs5padding': Verdict(OUT, (), None, None,
+                            'PKCS5/PKCS7 填充本身可接受；问题应在工作模式（ECB），'
+                            '但实测本数据里 `PKCS5Padding` 与 CBC 同现 4 次、'
+                            '与 ECB 同现 1 次 —— 「总与 ECB 同现」不成立，'
+                            '填充标签本身不携带算法信息。'),
     'nopadding': Verdict(OUT, (), None, None,
                          '无填充是模式配错（如 CBC 需要填充），属参数配置。'),
     'no padding': Verdict(OUT, (), None, None, '同上：无填充属参数配置。'),
@@ -288,15 +300,19 @@ LLMCMT_LABEL_KEYWORDS = {
                            '属填充协议，非算法选择。'),
     'pkcs1v15': Verdict(OUT, (), None, None, '同上：RSA 填充方案问题。'),
 
-    # ---------- 密钥长度：部分范围内 ----------
-    'insufficient key length': Verdict(PART, ('RSA',), None, 'shor',
-                                       '密钥长度不足。算法层面可比，'
-                                       '但「多小算小」的阈值我们不校验。'),
-    'insufficient key size': Verdict(PART, ('RSA',), None, 'shor', '同上。'),
-    'insufficient key': Verdict(PART, ('RSA',), None, 'shor', '同上。'),
-    'default key length': Verdict(PART, ('RSA',), None, 'shor',
-                                  '用了默认密钥长度 —— 同「长度不足」。'),
-    'insecure key length': Verdict(PART, ('RSA',), None, 'shor', '同上。'),
+    # ---------- 密钥长度：范围外（参数级） ----------
+    # 早先这里标 PART+('RSA',)，理由是「密钥长度不足 → 算法是 RSA」。
+    # 实测推翻了这个假设：`Insufficient key length` 标签下的 31 个文件里，
+    # 只有 5 个真用 `getInstance("RSA")`，其余是 Blowfish/RC2/DSA/AES/3DES
+    # 或可预测密钥 —— 关键词「key length」根本推不出算法。密钥长度是
+    # **参数**问题，与「该不该迁到抗量子算法」正交，故归范围外。
+    'insufficient key length': Verdict(OUT, (), None, None,
+                                       '密钥长度不足是参数问题，与算法选择正交。'
+                                       '该标签下多数文件并非 RSA。'),
+    'insufficient key size': Verdict(OUT, (), None, None, '同上：密钥长度属参数。'),
+    'insufficient key': Verdict(OUT, (), None, None, '同上：密钥长度属参数。'),
+    'default key length': Verdict(OUT, (), None, None, '默认密钥长度同上：参数配置。'),
+    'insecure key length': Verdict(OUT, (), None, None, '同上：密钥长度属参数。'),
 
     # ---------- 迭代次数：部分范围内 ----------
     'iteration': Verdict(PART, ('PBKDF2',), None, 'grover',

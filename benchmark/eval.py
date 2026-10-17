@@ -62,6 +62,15 @@ CREDENTIAL_RULES_BY_CATEGORY = {
 }
 
 
+#: 所有凭据规则的并集（跨类别）。用于判断一条 finding 是否走凭据匹配分支。
+#: 注意 CRED-IN-LOG 不在任何 benchmark 类别的可接受集合里 —— benchmark 的
+#: 凭据类别（hardcoded / token / …）不标「写日志」，所以 IN-LOG 的 finding
+#: 走算法分支（匹配不上凭据标签），如实计为 FP。这是标签词汇的边界，不是漏。
+CREDENTIAL_ALL_RULES = set()
+for _acc in CREDENTIAL_RULES_BY_CATEGORY.values():
+    CREDENTIAL_ALL_RULES.update(_acc)
+
+
 # ------------------------------------------------------------------ 载入
 
 def load_labels(label_dir):
@@ -99,13 +108,33 @@ def _same_file(a, b):
     return _basename(a) == _basename(b)
 
 
+#: 算法家族归一：粒度不同但**确定是同一算法**的写法归到同一名。
+#: 标签标 `AES/ECB`（LLM 笼统标 ECB），cbom-scan 报 `AES-128`（具体密钥长度）、
+#: local-literal 报 `AES/ECB`（具体模式）—— 都是「用了 AES」，不因粒度不同
+#: 判成一边漏报一边误报。密钥长度是参数（scope 已把密钥长度类判 OUT），
+#: CAST5 是 CAST 家族的具体变体，3DES 是 DES 家族。
+#: 刻意**不**合并不同算法（SHA1 与 SHA256、MD5 与 MD4、AES 与 DES 不合并）。
+_ALGO_FAMILY = {
+    'AES128': 'AES', 'AES192': 'AES', 'AES256': 'AES',
+    'AESECB': 'AES', 'AESCBC': 'AES', 'AESGCM': 'AES', 'AESCTR': 'AES',
+    'AESCCM': 'AES', 'AESKEYSIZEUNSPECIFIED': 'AES',
+    'CAST5': 'CAST', 'CAST6': 'CAST',
+    '3DES': 'DES', 'TRIPLEDES': 'DES', 'DESEDE': 'DES', 'DES3DES': 'DES',
+    # HMAC 底层哈希家族：llmcmt 把 HmacMD5 标 `MD5`、cryptoapi 标 `HMACMD5`，
+    # 两个 benchmark 粒度不同 —— 归一到底层哈希家族（与 CAST5->CAST 同理），
+    # 两边标签与两边检出（cbom 报裸 MD5、cryptoscan 报 HMAC-MD5）才能对齐。
+    'HMACMD5': 'MD5', 'HMACSHA1': 'SHA1',
+}
+
+
 def _norm_algo(s):
-    """算法名归一：**去掉所有非字母数字**。
+    """算法名归一：**去掉所有非字母数字**，再归一到算法家族。
 
     只去掉 `-` 和 `_` 是不够的 —— 上游会给合并名 `DES / 3DES`，
     空格和斜杠留着就永远匹配不上单算法标签 `DES`。
     """
-    return ''.join(ch for ch in s.upper() if ch.isalnum())
+    norm = ''.join(ch for ch in s.upper() if ch.isalnum())
+    return _ALGO_FAMILY.get(norm, norm)
 
 
 def _algo_set(finding):
@@ -155,39 +184,68 @@ def match(labels, findings):
         else:
             excluded_out.append(f)
 
-    used = set()
+    # 算法单位：一个 (文件, 归一化算法) 是一个匹配单位。一条标签声明多个
+    # 算法时拆成多个单位；cbom-scan 报 AES-128、local-literal 报 AES/ECB 都
+    # 归一到同一个「文件用了 AES」单位 —— 只有第一条计 TP，其余吸收不算 FP。
+    algo_unit_to_label = {}
+    for i, r in enumerate(pos_in):
+        if _label_credential_rules(r):
+            continue
+        for a in _label_algos(r):
+            algo_unit_to_label.setdefault((r['file'], a), i)
+
+    used_algo = set()    # 已命中的 (文件, 算法) 单位
+    used_cred = set()    # 已命中的凭据标签 index（文件级）
     used_findings = set()
     tp_detail, line_hits = [], 0
 
     for finding_index, f in enumerate(eligible):
         ffile, falgs, fline = f.get('file', ''), _algo_set(f), f.get('line')
         frule = f.get('rule_id')
-        hit = None
-        for i, r in enumerate(pos_in):
-            if i in used:
-                continue
-            if not _same_file(ffile, r['file']):
-                continue
-            algos = _label_algos(r)
-            credential_rules = _label_credential_rules(r)
-            if credential_rules:
-                if frule not in credential_rules:
+
+        if frule in CREDENTIAL_ALL_RULES:
+            # 凭据 finding：一个文件一个凭据单位。LLM 只笼统标 `hardcoded`
+            # （1 条），检测器把文件里的多个凭据分别报出 —— 都正确，只有
+            # 第 1 条计 TP，其余不算 FP。
+            hit = None
+            for i, r in enumerate(pos_in):
+                credential_rules = _label_credential_rules(r)
+                if not credential_rules or frule not in credential_rules:
                     continue
-            # 算法对得上，或者标签没给算法（部分可比类别有时给不出）
-            # 标签给了算法就必须对上；合并名拆开后命中任一即可
-            if algos and not credential_rules:
-                # 标签明确给了算法时，finding 也必须给出算法且能相交。
-                # 旧逻辑会把「无算法线索」仅凭文件名算成 TP。
-                if not falgs or not (algos & falgs):
+                if not _same_file(ffile, r['file']):
                     continue
-            hit = i
-            if r.get('line') and fline and int(r['line']) == int(fline):
-                line_hits += 1
-            break
-        if hit is not None:
-            used.add(hit)
+                hit = i
+                break
+            if hit is None:
+                continue
             used_findings.add(finding_index)
-            tp_detail.append((f, pos_in[hit]))
+            if hit not in used_cred:
+                used_cred.add(hit)
+                tp_detail.append((f, pos_in[hit]))
+                if pos_in[hit].get('line') and fline \
+                        and int(pos_in[hit]['line']) == int(fline):
+                    line_hits += 1
+            continue
+
+        # 算法 finding：命中第一个未用的 (文件, 算法) 单位。
+        hit_algo = None
+        for a in falgs:
+            key = (ffile, a)
+            if key in algo_unit_to_label and key not in used_algo:
+                hit_algo = key
+                break
+        if hit_algo is None:
+            # 没命中新单位，但落在已命中单位上（同文件同算法多条）则吸收。
+            if any((ffile, a) in used_algo for a in falgs):
+                used_findings.add(finding_index)
+            continue
+        used_findings.add(finding_index)
+        used_algo.add(hit_algo)
+        label_i = algo_unit_to_label[hit_algo]
+        tp_detail.append((f, pos_in[label_i]))
+        if pos_in[label_i].get('line') and fline \
+                and int(pos_in[label_i]['line']) == int(fline):
+            line_hits += 1
 
     # 落在「公认干净」位置上的 finding = 误报
     fp_on_neg = [f for f in eligible
@@ -196,10 +254,14 @@ def match(labels, findings):
     tp = len(tp_detail)
     reported = len(eligible)
     fn = len(pos_in) - tp
+    # FP = 报出的 finding 里没被任何标签吸收的。不能写成 `reported - tp`：
+    # 凭据一个标签会吸收同文件多条 finding（见上面 used_cred），此时
+    # 被吸收的 finding 多于 tp，`reported - tp` 会把正确吸收的部分误算成 FP。
+    fp = reported - len(used_findings)
 
     return {
         'tp': tp,
-        'fp': reported - tp,
+        'fp': fp,
         'fp_on_negatives': len(fp_on_neg),
         'fn': fn,
         'n_reported': reported,
@@ -261,7 +323,19 @@ def _selftest():
     if len(got['fp_detail']) != got['fp']:
         print('[FAIL] eval.py 自检: fp_detail 数量必须与 fp 一致')
         return 1
-    print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出）')
+
+    # 凭据是文件级单位：一条 `hardcoded` 标签吸收同文件多条同族 finding，
+    # TP 只计 1 次（不膨胀），多余 finding 不算 FP。
+    cred = match(
+        [{'file': 'c.py', 'category': 'hardcoded', 'algorithms': [],
+          'expect_misuse': True, 'verdict': 'in'}],
+        [{'file': 'c.py', 'rule_id': 'CRED-HARDCODED-CRYPTO-KEY'},
+         {'file': 'c.py', 'rule_id': 'CRED-HARDCODED-PASSWORD'}])
+    if cred['tp'] != 1 or cred['fp'] != 0 or cred['fn'] != 0:
+        print('[FAIL] eval.py 自检: 凭据同文件多条应 1 TP 0 FP 0 FN, 得 '
+              'TP=%d FP=%d FN=%d' % (cred['tp'], cred['fp'], cred['fn']))
+        return 1
+    print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出 / 凭据文件级）')
     return 0
 
 
