@@ -29,7 +29,9 @@ import re
 #: 密码学 API 调用形态：这些调用里，字符串参数是「用了哪个算法」的真实证据。
 _CRYPTO_API_CALL_RE = re.compile(
     r'(?i)(?:getInstance|SecretKeySpec|IvParameterSpec|PBEKeySpec|'
-    r'PBEParameterSpec|GCMParameterSpec|EVP_[a-z0-9_]+byname)\s*\(')
+    r'PBEParameterSpec|GCMParameterSpec|ECGenParameterSpec|'
+    r'createCipheriv|createCipher|createDecipheriv|createECDH|'
+    r'KeyEncapsulation|Signature|EVP_[a-z0-9_]+byname)\s*\(')
 
 #: 变换/算法描述符：算法/模式/填充用斜杠连接的形态（"AES/ECB/PKCS5Padding"）。
 #: 单算法名（"MD5"）不进这里 —— 它需要靠上下文（API 实参 / 常量右值）区分。
@@ -38,7 +40,8 @@ _TRANSFORM_RE = re.compile(r'^[A-Za-z0-9]+(?:/[A-Za-z0-9]+)+$')
 #: 密码学相关的变量名（常量定义 `String crypto = "AES"` 的左值）。
 _CRYPTO_NAME_RE = re.compile(
     r'(?i)(?:crypto|cipher|algorithm|algo|transformation|digest|hash|mac|'
-    r'secret|key|scheme|suite|mode|padding|keystore|signature|kdf|prf)')
+    r'secret|key|scheme|suite|mode|padding|keystore|signature|kdf|prf|'
+    r'auth|curve|version|kem)')
 
 #: C/C++ 预处理器指令 —— 不是注释（`#include <openssl/blowfish.h>` 是真实使用）。
 _PREPROCESSOR_RE = re.compile(
@@ -130,7 +133,7 @@ def _is_crypto_const_rhs(line, qpos):
     左侧紧邻 `=`，且 `=` 左侧的标识符含密码学词。
     """
     before = line[:qpos].rstrip()
-    if not before.endswith('='):
+    if not before.endswith(('=', ':')):
         return False
     lhs = before[:-1].rstrip()
     # 取 lhs 末尾的标识符（跨 `final` / 类型名等）
@@ -148,6 +151,8 @@ def is_string_or_comment_mention(line, match):
     if not line or not match:
         return False
     stripped = line.lstrip()
+    if stripped.startswith(('"""', "'''")):
+        return True
     if _FROM_IMPORT_RE.match(stripped):
         return True
     if _PREPROCESSOR_RE.match(stripped):
@@ -156,6 +161,10 @@ def is_string_or_comment_mention(line, match):
         return True
     if stripped.startswith('#'):
         # 非预处理器的 '#'（Python / shell 注释）
+        return True
+    # Go/Rust 等 import 块中的裸路径字面量，不是使用点。
+    if (stripped[:1] in ('"', "'") and stripped[-1:] == stripped[:1]
+            and '/' in stripped):
         return True
     idx = line.lower().find(match.lower())
     if idx < 0:
@@ -175,6 +184,10 @@ def is_string_or_comment_mention(line, match):
         return False
     if start is not None and _is_crypto_const_rhs(line, start):
         return False
+    # 异常/日志/打印文本只是在解释允许值或展示说明，不是密码调用。
+    if re.search(r'(?i)\b(?:throw|raise|print|println|printf|log(?:ger)?\.)\b',
+                 line[:start if start is not None else idx]):
+        return True
     return True
 
 

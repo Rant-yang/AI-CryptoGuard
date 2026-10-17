@@ -204,9 +204,10 @@ def match(labels, findings):
         frule = f.get('rule_id')
 
         if frule in CREDENTIAL_ALL_RULES:
-            # 凭据 finding：一个文件一个凭据单位。LLM 只笼统标 `hardcoded`
-            # （1 条），检测器把文件里的多个凭据分别报出 —— 都正确，只有
-            # 第 1 条计 TP，其余不算 FP。
+            # 凭据 finding：benchmark 只给文件级宽泛标签（如 `hardcoded`），
+            # 无法验证同文件里 password/token/key 等每个细分类是否都正确。
+            # 因此第 1 条计 TP，其余属于「被宽泛标签覆盖但未单独验证」：
+            # 不膨胀 TP，也不武断计 FP；数量会单独报告，不能隐身。
             hit = None
             for i, r in enumerate(pos_in):
                 credential_rules = _label_credential_rules(r)
@@ -265,6 +266,7 @@ def match(labels, findings):
         'fp_on_negatives': len(fp_on_neg),
         'fn': fn,
         'n_reported': reported,
+        'n_absorbed_unverified': len(used_findings) - tp,
         'n_excluded_out_of_scope': len(excluded_out),
         'n_pos_in_scope': len(pos_in),
         'n_pos_out_of_scope': len(pos_out),
@@ -324,16 +326,19 @@ def _selftest():
         print('[FAIL] eval.py 自检: fp_detail 数量必须与 fp 一致')
         return 1
 
-    # 凭据是文件级单位：一条 `hardcoded` 标签吸收同文件多条同族 finding，
-    # TP 只计 1 次（不膨胀），多余 finding 不算 FP。
+    # 凭据是文件级单位：一条 `hardcoded` 标签覆盖同文件多条细分 finding，
+    # TP 只计 1 次；其余单列为未验证，不算 TP/FP。
     cred = match(
         [{'file': 'c.py', 'category': 'hardcoded', 'algorithms': [],
           'expect_misuse': True, 'verdict': 'in'}],
         [{'file': 'c.py', 'rule_id': 'CRED-HARDCODED-CRYPTO-KEY'},
          {'file': 'c.py', 'rule_id': 'CRED-HARDCODED-PASSWORD'}])
-    if cred['tp'] != 1 or cred['fp'] != 0 or cred['fn'] != 0:
-        print('[FAIL] eval.py 自检: 凭据同文件多条应 1 TP 0 FP 0 FN, 得 '
-              'TP=%d FP=%d FN=%d' % (cred['tp'], cred['fp'], cred['fn']))
+    if (cred['tp'] != 1 or cred['fp'] != 0 or cred['fn'] != 0
+            or cred['n_absorbed_unverified'] != 1):
+        print('[FAIL] eval.py 自检: 凭据同文件多条应 1 TP 0 FP 0 FN + 1 未验证, 得 '
+              'TP=%d FP=%d FN=%d U=%d' %
+              (cred['tp'], cred['fp'], cred['fn'],
+               cred['n_absorbed_unverified']))
         return 1
     print('[PASS] eval.py 自检通过（算法匹配 / 范围对称 / 零检出 / 凭据文件级）')
     return 0
@@ -415,6 +420,9 @@ def report(label_dir, findings_path, verbose=False, scanned_names=None):
           % sum(m['n_negative'] for _, m in scope_note))
     print('  · 匹配单位 = (文件, 算法)，与 benchmark/README.md 一致 ——'
           '上游的合并名（`DES / 3DES`）拆开后命中任一即算匹配。')
+    print('  · 凭据标签按 (文件, benchmark 宽泛类别) 计数；同文件多条细分凭据'
+          '不重复计 TP/FP，而是列为「标签覆盖但未单独验证」: %d 条。'
+          % sum(m['n_absorbed_unverified'] for _, m in scope_note))
     if skipped:
         print('  · 本次**未扫描**的 benchmark 未计入合计: %s'
               % '、'.join('%s(%d 条)' % (n, c) for n, c in skipped))

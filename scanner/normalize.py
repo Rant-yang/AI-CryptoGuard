@@ -9,11 +9,13 @@ risk 五档的裁决依据（core/schema/finding.v0.1.json 的口径）:
     CryptoScan 独有的发现按 core/rules/zh_map.json 的 quantum_class 初版判定，
     两边都没有的落到 review（不猜）。
 
-关于 RISK_BY_TYPE 的出处: 取值集合 = CryptoScan 1.4.0 的 25 个 type（封闭集合），
-分类口径 = core/rules/zh_map.json quantum_class.by_type（C 的 smoke 阶段初版），
-其中 classical_broken 归一为 schema 的 broken。
-C 后续在 core/rules/ 建立正式规则表后，这里应切换为引用它。
+关于 RISK_BY_TYPE 的出处: 直接读取 core/rules/zh_map.json 的
+quantum_class.by_type；其中 classical_broken 归一为 schema 的 broken。
+scanner 不再维护第二张手抄表，避免 CLI、Web 与规则评估互相打架。
 """
+
+import json as _json
+import os as _os
 
 # ---------------------------------------------------------------- 算法名归一化
 
@@ -139,55 +141,17 @@ SEVERITY_FROM_RISK = {
 
 # ---------------------------------------------------------------- 量子风险裁决
 
-#: CryptoScan 25 个 type -> 我们的五档（不透传它的 quantumRisk 字段）。
-#: 出处见模块 docstring。TLS Configuration 按 zh_map 判 shor
-#: （TLS 1.3 的 ECDHE 密钥交换环节量子脆弱）。
-RISK_BY_TYPE = {
-    'MD5 Hash Function': 'broken',
-    'SHA-1 Hash Function': 'broken',
-    'DES Algorithm': 'broken',
-    'Triple DES Algorithm': 'broken',
-    #: 经典攻破（CryptoScan type 此前缺映射落到 review —— 补 broken）。
-    #: RC4/Blowfish 经典攻破、HMAC-MD5/HMAC-SHA1 底层哈希已破。
-    'RC4 Stream Cipher': 'broken',
-    'Blowfish Algorithm': 'broken',
-    'HMAC-MD5': 'broken',
-    'HMAC-SHA1': 'broken',
-    'RSA-1024 Key Size': 'broken',
-    'RSA Algorithm': 'shor',
-    'Elliptic Curve Cryptography': 'shor',
-    'TLS Configuration': 'shor',
-    #: 传统公钥（Shor 直接威胁，此前缺映射落到 review —— 补 shor）
-    'DSA Algorithm': 'shor',
-    'Diffie-Hellman Key Exchange': 'shor',
-    'AES-GCM Authenticated Encryption': 'safe',
-    #: ↑ 原 grover（量子密钥减半只是迁移规划提示, 不是当前缺陷）。AES-GCM
-    #: 是 AEAD 最佳实践、CamBench 修复版的标准形态 —— grover 档会把它当
-    #: 问题进清单, 在「公认干净位置」上全成 FP（cambench-cap 实测 9 条）。
-    #: safe 档由 split_output 移出问题清单, CBOM 资产图仍保留条目。
-    'ChaCha20-Poly1305': 'safe',
-    'Poly1305': 'safe',
-    'KMAC': 'safe',
-    'HKDF': 'safe',
-    #: 安全 MAC/哈希（Grover 折半后仍 ≥128-bit 安全，与 AES-GCM 同类）
-    #: —— 判 safe 移出问题清单，消除负样本 FP（llmcmt 实测）。
-    'HMAC-SHA2': 'safe',
-    'CMAC': 'safe',
-    'BLAKE2 Hash Function': 'safe',
-    'SHA-3 Hash Function': 'safe',
-    'PBKDF2': 'grover',
-    'bcrypt': 'safe',
-    'Argon2': 'safe',
-    'Hardcoded Key Size': 'grover',
-    'ML-KEM Key Encapsulation': 'safe',
-    'ML-DSA Digital Signature': 'safe',
-    'SLH-DSA Hash-Based Signature': 'safe',
-    'XMSS Stateful Signature': 'safe',
-    'LMS/HSS Stateful Signature': 'safe',
-    'Post-Quantum Crypto Library': 'safe',
-    'Hybrid Key Exchange': 'safe',
-    'Composite Digital Signature': 'safe',
-}
+def _load_risk_by_type():
+    path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
+                         'core', 'rules', 'zh_map.json')
+    with open(path, encoding='utf-8') as fh:
+        raw = _json.load(fh)['quantum_class']['by_type']
+    convert = {'classical_broken': 'broken'}
+    return {name: convert.get(value, value) for name, value in raw.items()}
+
+
+#: CryptoScan type -> 我们的五档。唯一真源是 core/rules/zh_map.json。
+RISK_BY_TYPE = _load_risk_by_type()
 
 #: risk 全序（合并取最严重用）。shor 与 broken 同级 —— 都属于「必须处理」，
 #: 平级时取 shor（量子迁移是本作品的主叙事）。

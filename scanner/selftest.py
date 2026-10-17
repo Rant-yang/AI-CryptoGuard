@@ -21,7 +21,6 @@ if _ROOT not in sys.path:
 from scanner.adapters import cbom_scan, cryptoscan, local_literal, source_filter  # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
-from scanner import crisis_time                              # noqa: E402
 from scanner.merge import merge                              # noqa: E402
 from scanner.normalize import (                              # noqa: E402
     canon_algorithm,
@@ -673,6 +672,19 @@ def test_source_filter(check):
     # Java 的 import 声明（无 from）走原逻辑，代码符号保留
     check('Java import java.security.MessageDigest 保留',
           f('import java.security.MessageDigest;', 'MessageDigest'), False)
+    # 字符串经常就是密码 API / 配置的真实参数，不能为了降 FP 一刀切掉。
+    check('createCipheriv 的变换参数保留',
+          f("const c = crypto.createCipheriv('chacha20-poly1305', key, iv);",
+            'chacha20-poly1305'), False)
+    check('ECGenParameterSpec 的曲线参数保留',
+          f('keyGen.initialize(new ECGenParameterSpec("secp256r1"));',
+            'secp256r1'), False)
+    check('TLS 配置值保留', f("minVersion: 'TLSv1.3',", 'TLSv1.3'), False)
+    check('错误提示中的算法名过滤',
+          f('throw new IllegalArgumentException("valid RSA key required");',
+            'RSA'), True)
+    check('Go import 路径过滤',
+          f('"golang.org/x/crypto/bcrypt"', 'bcrypt'), True)
 
 
 def test_split_output(check):
@@ -695,68 +707,6 @@ def test_coverage(check):
     check('行级差异: both=1', s['both'], 1)
     check('行级差异: cbom-scan_only=1', s['cbom-scan_only'], 1)
     check('行级差异: cryptoscan_only=1', s['cryptoscan_only'], 1)
-
-
-def test_crisis_time(check):
-    """危机时间双轨：静态时间线由 risk 决定、Mosca 窗口复用 core 且口径对齐 C。"""
-    from core.quantum_timeline import make_profile
-
-    # 静态轨道：risk 五档 → crisis_class
-    check('broken -> imminent',
-          crisis_time.static_crisis({'risk': 'broken'})['crisis_class'], 'imminent')
-    check('shor -> near',
-          crisis_time.static_crisis({'risk': 'shor'})['crisis_class'], 'near')
-    check('grover -> distant',
-          crisis_time.static_crisis({'risk': 'grover'})['crisis_class'], 'distant')
-    check('safe -> none',
-          crisis_time.static_crisis({'risk': 'safe'})['crisis_class'], 'none')
-    check('review -> unknown',
-          crisis_time.static_crisis({'risk': 'review'})['crisis_class'], 'unknown')
-    check('not_applicable -> none',
-          crisis_time.static_crisis({'risk': 'not_applicable'})['crisis_class'], 'none')
-
-    # 年份锚点 + 权威出处
-    check('near 给 2030 锚点',
-          crisis_time.static_crisis({'risk': 'shor', 'algorithm_normalized': 'RSA'})[
-              'advisory_deadline_year'], 2030)
-    check('imminent 无年份锚点',
-          crisis_time.static_crisis({'risk': 'broken'})['advisory_deadline_year'], None)
-    check('imminent 出处 SP 800-131A',
-          crisis_time.static_crisis({'risk': 'broken'})['references'],
-          ['NIST SP 800-131A Rev.2'])
-    check('near 出处 NIST IR 8547 + BSI',
-          crisis_time.static_crisis({'risk': 'shor'})['references'],
-          ['NIST IR 8547', 'BSI'])
-
-    # 同一算法不同 risk 不矛盾（实测 RSA 短密钥 broken / 正常长度 shor 双档）
-    check('RSA broken -> imminent（短密钥）',
-          crisis_time.static_crisis({'risk': 'broken', 'algorithm_normalized': 'RSA'})[
-              'crisis_class'], 'imminent')
-    check('RSA shor -> near（正常长度）',
-          crisis_time.static_crisis({'risk': 'shor', 'algorithm_normalized': 'RSA'})[
-              'crisis_class'], 'near')
-
-    # Mosca 窗口复用 core，与 quantum_timeline.assess 结果逐键一致
-    prof = make_profile(10, 3, 8, 'yes')
-    w = crisis_time.annotate({'risk': 'shor', 'usage': 'encryption'}, prof)['window']
-    check('Mosca X+Y>=Z -> immediate', w['urgency'], 'immediate')
-    check('Mosca HNDL 密文可收集 -> at_risk', w['hndl_status'], 'at_risk')
-    check('非 shor 不参与 Mosca（not_applicable）',
-          crisis_time.annotate({'risk': 'grover', 'usage': 'hashing'}, prof)[
-              'window']['status'], 'not_applicable')
-
-    # 缺 X/Y/Z -> not_configured，静态轨道仍出结果
-    out = crisis_time.annotate({'risk': 'shor', 'usage': 'encryption'})
-    check('缺 X/Y/Z -> window not_configured', out['window']['status'], 'not_configured')
-    check('缺 X/Y/Z 静态轨道仍出结果', out['static']['crisis_class'], 'near')
-    check('crisis_time 结构 = static + window', set(out.keys()), {'static', 'window'})
-
-    # annotate_all：算法类加字段、凭据类跳过
-    rows = [{'risk': 'broken', 'usage': 'hashing'},
-            {'risk': 'not_applicable', 'finding_kind': 'credential'}]
-    crisis_time.annotate_all(rows)
-    check('算法类加 crisis_time', 'crisis_time' in rows[0], True)
-    check('凭据类跳过（无量子危机）', 'crisis_time' in rows[1], False)
 
 
 def test_cbom_report(check):
@@ -787,7 +737,7 @@ def main():
                test_malformed_inputs,
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,
-               test_crisis_time, test_cbom_report):
+               test_cbom_report):
         fn(check)
 
     if fails:

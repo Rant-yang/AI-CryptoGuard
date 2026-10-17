@@ -34,7 +34,10 @@ _file_lines_cache = {}
 
 def _read_line(target, rel, lineno):
     """读 target/rel 的第 lineno 行（1 基）。失败返回 None。"""
-    lines = _file_lines_cache.get(rel)
+    # 同一 Web 进程会连续扫描多个项目；只用 rel 做键会把前一项目的
+    # src/main.py 错套到后一项目的同名文件上。
+    cache_key = (os.path.abspath(target), rel)
+    lines = _file_lines_cache.get(cache_key)
     if lines is None:
         try:
             with open(os.path.join(target, rel), encoding='utf-8-sig',
@@ -42,7 +45,7 @@ def _read_line(target, rel, lineno):
                 lines = fh.read().splitlines()
         except OSError:
             lines = []
-        _file_lines_cache[rel] = lines
+        _file_lines_cache[cache_key] = lines
     if not lines or lineno < 1 or lineno > len(lines):
         return None
     return lines[lineno - 1]

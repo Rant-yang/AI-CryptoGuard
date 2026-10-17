@@ -37,7 +37,6 @@ from scanner.adapters import (cbom_scan, credential_scan, cryptoscan,
                               local_literal)   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
-from scanner import crisis_time                       # noqa: E402
 from scanner.merge import merge                       # noqa: E402
 from scanner.merge import TAG_NO_ALGORITHM             # noqa: E402
 from scanner.merge import TAG_UPSTREAM_RISK_CORRECTED  # noqa: E402
@@ -108,20 +107,6 @@ def main(argv=None):
                         help='同时输出融合版 CycloneDX 1.6 CBOM（<输出文件>.cbom.json）')
     parser.add_argument('--no-coverage', action='store_true',
                         help='不生成覆盖差异报告（默认写 <输出文件>.coverage_diff.json）')
-    parser.add_argument('--crisis-time', action='store_true',
-                        help='给每条算法 Finding 加 crisis_time 双轨字段'
-                             '（静态时间线 + Mosca 窗口）。v0.1 schema 顶层'
-                             ' additionalProperties:false，待 C 改 schema 接纳'
-                             ' crisis_time 后把此开关默认改为开启。')
-    parser.add_argument('--data-lifetime-years', type=float, default=None,
-                        help='Mosca 窗口 X（数据/安全有效期，年）')
-    parser.add_argument('--migration-lead-years', type=float, default=None,
-                        help='Mosca 窗口 Y（迁移准备期，年）')
-    parser.add_argument('--threat-horizon-years', type=float, default=None,
-                        help='Mosca 窗口 Z（量子威胁时间窗，年）')
-    parser.add_argument('--hndl-exposure', choices=['yes', 'no', 'unknown'],
-                        default='unknown',
-                        help='是否暴露于 HNDL（先收集后解密）风险')
     args = parser.parse_args(argv)
 
     target = os.path.abspath(args.target)
@@ -195,21 +180,6 @@ def main(argv=None):
                    meta_tools[local_literal.TOOL_NAME]['seconds'], len(lit_groups)))
 
     findings_all = merge(all_groups)
-
-    # ---- 危机时间双轨标注（merge 之后、split_output 之前）----
-    # 静态轨道永远能算（不依赖 X/Y/Z）；Mosca 窗口轨道复用 core.quantum_timeline
-    # （公式仍来自 core，A 不重写）。加字段由 --crisis-time 控制：v0.1 schema
-    # 顶层 additionalProperties:false，待 C 改 schema 接纳 crisis_time 字段后
-    # 把开关默认改为开启。
-    if args.crisis_time:
-        try:
-            profile = crisis_time.profile_from_args(
-                args.data_lifetime_years, args.migration_lead_years,
-                args.threat_horizon_years, args.hndl_exposure)
-        except ValueError as exc:
-            _print_safe('[错误] 危机时间参数无效: %s' % exc)
-            return 2
-        crisis_time.annotate_all(findings_all, profile)
 
     findings, leads = split_output(findings_all)
 
