@@ -47,6 +47,12 @@ _ASSIGN_RE = re.compile(
     # 仍要求左侧变量名敏感或文件内存在密码学 sink，不能仅凭任意字符串报警。
     r'(?P<prefix>[^;"\'\r\n]{0,96})(?P<quote>["\'])'
     r'(?P<value>[^"\'\r\n]{1,4096})(?P=quote)')
+_MAP_ASSIGN_RE = re.compile(
+    # JSON/YAML/TOML-style mappings, including quoted JSON keys. Keep the
+    # quote as a backreference so an unmatched quote cannot make a fake key.
+    r'(?P<keyquote>["\']?)(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})'
+    r'(?P=keyquote)\s*:\s*(?P<quote>["\'])'
+    r'(?P<value>[^"\'\r\n]{1,4096})(?P=quote)')
 _ARRAY_ASSIGN_RE = re.compile(
     r'(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})'
     r'(?:\s*\[[^\]\r\n]{0,40}\])?\s*(?::=|=)\s*'
@@ -61,6 +67,9 @@ _DIRECT_KEY_LITERAL_RE = re.compile(
     r'\s*(?:\[\]byte\s*\(|bytes\s*\()?\s*(?:b|u|r|br|rb)?'
     r'(?P<quote>["\'])(?P<value>[^"\'\r\n]{1,4096})(?P=quote)')
 _URL_RE = re.compile(r'\b[a-zA-Z][a-zA-Z0-9+.-]*://([^\s/:@]+):([^\s/@]+)@')
+_BASIC_AUTH_RE = re.compile(
+    r'(?i)\bAuthorization\b.{0,100}?\bBasic\s+'
+    r'(?P<value>[A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])')
 _PEM_RE = re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----')
 _LOG_RE = re.compile(r'(?i)\b(?:print|println|printf|console\.log|log\.(?:trace|debug|info|warn|error)|logger\.(?:trace|debug|info|warn|error))\s*\((.*)')
 # 去掉字符串字面量后剩的部分才是「被输出/插值的变量」。
@@ -171,6 +180,12 @@ def _scan_line(rel, line_no, line, pepper, context=None):
         out.append(_finding(rel, line_no, m.start(), 'CRED-IN-URL', material,
                             pepper, kind='pattern'))
 
+    for m in _BASIC_AUTH_RE.finditer(line):
+        # An HTTP Basic header is a reversible encoding of user:password.
+        # Never decode or expose it; the existing HMAC/masked result suffices.
+        out.append(_finding(rel, line_no, m.start(), 'CRED-HARDCODED-TOKEN',
+                            m.group('value'), pepper, kind='pattern'))
+
     log = _LOG_RE.search(line)
     if log and _SENSITIVE.search(_STRING_LITERAL_RE.sub(' ', log.group(1))):
         # 指纹只基于位置和规则，不保存或散列整行源码。
@@ -184,9 +199,9 @@ def _scan_line(rel, line_no, line, pepper, context=None):
                             'CRED-HARDCODED-CRYPTO-KEY', m.group('value'),
                             pepper, kind='pattern'))
 
-    for m in _ASSIGN_RE.finditer(line):
+    for m in (*_ASSIGN_RE.finditer(line), *_MAP_ASSIGN_RE.finditer(line)):
         name, value = m.group('name'), m.group('value')
-        prefix = m.group('prefix')
+        prefix = m.groupdict().get('prefix') or ''
         if _RUNTIME_SOURCE_RE.search(prefix):
             continue
         if _PLACEHOLDER.match(value.strip()):

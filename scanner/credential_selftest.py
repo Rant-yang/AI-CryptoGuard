@@ -57,6 +57,18 @@ JAVA_CONSTRUCTOR_POSITIVE = '''
 SecretKeySpec spec = new SecretKeySpec("Synthetic16ByteKey", "AES");
 '''
 
+MAP_AND_HEADER_POSITIVE = '''
+{"api_token": "SyntheticJsonToken9876543210"}
+password: 'SyntheticYamlPassword!'
+headers = {"Authorization": "Basic dXNlcjpzeW50aGV0aWMtcGFzcw=="}
+'''
+
+MAP_AND_HEADER_NEGATIVE = '''
+{"api_token": "${TOKEN_FROM_ENV}"}
+password: "<SET_AT_RUNTIME>"
+headers = {"Authorization": "Bearer ${TOKEN_FROM_ENV}"}
+'''
+
 FORBIDDEN = (
     'OnlyForSyntheticTest!', 'admin123',
     'TokAbc1234567890SyntheticValue',
@@ -64,6 +76,8 @@ FORBIDDEN = (
     '00112233445566778899AABBCCDDEEFF',
     'syntheticpass', '0123456789abcdef', 'fedcba9876543210',
     'Synthetic16ByteKey',
+    'SyntheticJsonToken9876543210', 'SyntheticYamlPassword!',
+    'dXNlcjpzeW50aGV0aWMtcGFzcw==',
 )
 
 
@@ -82,6 +96,10 @@ def main():
             fh.write(JAVA_CONSTRUCTOR_NEGATIVE)
         with open(os.path.join(td, 'java_constructor_positive.java'), 'w', encoding='utf-8') as fh:
             fh.write(JAVA_CONSTRUCTOR_POSITIVE)
+        with open(os.path.join(td, 'map_and_header_positive.py'), 'w', encoding='utf-8') as fh:
+            fh.write(MAP_AND_HEADER_POSITIVE)
+        with open(os.path.join(td, 'map_and_header_negative.py'), 'w', encoding='utf-8') as fh:
+            fh.write(MAP_AND_HEADER_NEGATIVE)
         first = credential_scan.scan(td)
         second = credential_scan.scan(td)
 
@@ -133,6 +151,14 @@ def main():
     assert any(f['file'] == 'java_constructor_positive.java' and
                f['rule_id'] == 'CRED-HARDCODED-CRYPTO-KEY' for f in first), \
         'SecretKeySpec 第一参数的合成硬编码密钥必须继续检出'
+    mapped = [f for f in first if f['file'] == 'map_and_header_positive.py']
+    assert {f['rule_id'] for f in mapped} >= {
+        'CRED-HARDCODED-TOKEN', 'CRED-HARDCODED-PASSWORD'}, \
+        'JSON/YAML 凭据键与 HTTP Basic 头必须被检出'
+    assert any(f['line'] == 4 and f['rule_id'] == 'CRED-HARDCODED-TOKEN'
+               for f in mapped), 'HTTP Basic 头的可逆凭据必须被检出'
+    assert not any(f['file'] == 'map_and_header_negative.py' for f in first), \
+        '占位符和运行时 Bearer 头被误报'
 
     schema_path = os.path.join(ROOT, 'core', 'schema', 'finding.v0.1.json')
     with open(schema_path, encoding='utf-8') as fh:
