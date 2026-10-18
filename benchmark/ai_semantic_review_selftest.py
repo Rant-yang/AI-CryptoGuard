@@ -15,13 +15,24 @@ def main():
          'review_steps_actionable': True},
         {'finding_id': 'two', 'review_usage_supported': True,
          'review_refs_support_claims': False, 'review_explanation_correct': True,
-         'review_steps_actionable': True},
+         'review_steps_actionable': True,
+         'review_notes': 'Synthetic source line 3 does not support the claim'},
     ]}
     result = summarize(reviewed)
     assert result['fully_reviewed'] == 2
     assert result['all_four_supported'] == 1
     assert result['semantic_rate'] == 0.5
     assert result['by_criterion']['review_refs_support_claims']['fail'] == 1
+    missing_note = summarize({'cases': [reviewed['cases'][0], {
+        **reviewed['cases'][1], 'review_notes': '  '}]})
+    assert missing_note['fully_reviewed'] == 1
+    assert missing_note['semantic_rate'] is None
+    assert missing_note['failure_notes_missing_ids'] == ['two']
+    try:
+        summarize({'cases': [{**reviewed['cases'][1], 'review_notes': 1}]})
+        raise AssertionError('non-text review note accepted')
+    except ValueError:
+        pass
     partial = summarize({'cases': [reviewed['cases'][0], {'finding_id': 'two'}]})
     assert partial['fully_reviewed'] == 1
     assert partial['reviewed_subset_rate'] == 1.0

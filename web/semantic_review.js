@@ -36,6 +36,10 @@
           throw new Error(`${row.finding_id}: ${key} 必须为 true、false 或 null。`);
         }
       }
+      if (row.review_notes !== null && row.review_notes !== undefined &&
+          typeof row.review_notes !== 'string') {
+        throw new Error(`${row.finding_id}: review_notes 必须是文字或 null。`);
+      }
       if (!Array.isArray(row.evidence) || !Array.isArray(row.remediation_steps)) {
         throw new Error(`${row.finding_id}: 证据或整改步骤格式不正确。`);
       }
@@ -43,9 +47,15 @@
     return data;
   }
 
+  function caseDone(row) {
+    return KEYS.every(key => typeof row[key] === 'boolean') &&
+      (!KEYS.some(key => row[key] === false) ||
+       Boolean(String(row.review_notes || '').trim()));
+  }
+
   function progress(data) {
     const cases = data.cases;
-    const complete = cases.filter(row => KEYS.every(key => typeof row[key] === 'boolean')).length;
+    const complete = cases.filter(caseDone).length;
     const failed = cases.filter(row => KEYS.some(key => row[key] === false)).length;
     return {complete, failed, total: cases.length};
   }
@@ -88,17 +98,20 @@
   function refs(value) {
     return Array.isArray(value) && value.length ? value.join('、') : '无引用';
   }
-  function render() {
-    if (!state.packet) return;
-    const rows = state.packet.cases;
-    const row = rows[state.index];
+  function renderProgress() {
     const p = progress(state.packet);
     $('status').textContent = `已审完 ${p.complete}/${p.total} · 含未通过项 ${p.failed} · 当前 ${state.index + 1}/${p.total}`;
     $('meter').value = p.complete;
     $('meter').max = p.total;
+  }
+  function render() {
+    if (!state.packet) return;
+    const rows = state.packet.cases;
+    const row = rows[state.index];
+    renderProgress();
     $('case-select').replaceChildren();
     rows.forEach((item, i) => {
-      const done = KEYS.every(key => typeof item[key] === 'boolean');
+      const done = caseDone(item);
       const option = elt('option', '', `${String(i + 1).padStart(2, '0')}  ${done ? '✓' : '·'}  ${item.file} · ${item.algorithm}`);
       option.value = String(i);
       $('case-select').append(option);
@@ -188,14 +201,20 @@
   $('next').addEventListener('click', () => {if (state.index + 1 < state.packet.cases.length) {state.index++; render();}});
   $('next-pending').addEventListener('click', () => {
     const rows = state.packet.cases;
-    const pending = rows.findIndex((row, i) => i > state.index && KEYS.some(key => row[key] === null));
-    const wrapped = rows.findIndex(row => KEYS.some(key => row[key] === null));
+    const pending = rows.findIndex((row, i) => i > state.index && !caseDone(row));
+    const wrapped = rows.findIndex(row => !caseDone(row));
     if (pending >= 0 || wrapped >= 0) {state.index = pending >= 0 ? pending : wrapped; render();}
   });
   $('notes').addEventListener('input', event => {
     state.packet.cases[state.index].review_notes = event.target.value || null;
     markDirty();
     $('note-warning').hidden = !(KEYS.some(key => state.packet.cases[state.index][key] === false) && !event.target.value.trim());
+    renderProgress();
+    const option = $('case-select').options[state.index];
+    if (option) {
+      const row = state.packet.cases[state.index];
+      option.textContent = `${String(state.index + 1).padStart(2, '0')}  ${caseDone(row) ? '✓' : '·'}  ${row.file} · ${row.algorithm}`;
+    }
   });
   $('export').addEventListener('click', () => {
     if (!state.packet) return;

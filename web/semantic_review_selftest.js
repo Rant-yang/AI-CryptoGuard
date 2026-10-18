@@ -18,9 +18,13 @@ assert.deepEqual(progress(packet), {complete: 0, failed: 0, total: 1});
 packet.cases[0][KEYS[0]] = false;
 assert.deepEqual(progress(packet), {complete: 0, failed: 1, total: 1});
 KEYS.slice(1).forEach(key => {packet.cases[0][key] = true;});
+assert.deepEqual(progress(packet), {complete: 0, failed: 1, total: 1},
+  '失败项缺少审阅依据不能算完成');
+packet.cases[0].review_notes = 'Synthetic source line 3 does not support the claim';
 assert.deepEqual(progress(packet), {complete: 1, failed: 1, total: 1});
 assert.throws(() => validatePacket({...packet, cases: [blank(), blank()]}), /重复/);
 assert.throws(() => validatePacket({...packet, cases: [{...blank(), [KEYS[0]]: 'true'}]}), /true、false/);
+assert.throws(() => validatePacket({...packet, cases: [{...blank(), review_notes: 1}]}), /review_notes/);
 assert.throws(() => validatePacket({...packet, review_protocol: 'wrong'}), /盲审包/);
 assert.throws(() => validatePacket({...packet, expected_cases: 28}), /条数/);
 const identifiedPacket = {...packet, expected_cases: 1, assessed_sha256: 'a'.repeat(64)};

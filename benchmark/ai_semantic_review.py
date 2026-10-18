@@ -85,7 +85,8 @@ def summarize(data):
     if any(not item for item in ids) or len(set(ids)) != len(ids):
         raise ValueError('Finding IDs must be unique and nonempty')
     result = {'total': len(cases), 'by_criterion': {}, 'fully_reviewed': 0,
-              'all_four_supported': 0, 'unreviewed_ids': []}
+              'all_four_supported': 0, 'unreviewed_ids': [],
+              'failure_notes_missing_ids': []}
     for key in CRITERIA:
         values = [c.get(key) for c in cases]
         if any(type(v) not in (bool, type(None)) for v in values):
@@ -96,7 +97,14 @@ def summarize(data):
                                         for name in ('pass', 'fail', 'pending')}
     for c in cases:
         marks = [c.get(key) for key in CRITERIA]
-        if all(type(v) is bool for v in marks):
+        note = c.get('review_notes')
+        if note is not None and not isinstance(note, str):
+            raise ValueError('review_notes must be text or null')
+        missing_note = (any(v is False for v in marks) and
+                        not (note or '').strip())
+        if missing_note:
+            result['failure_notes_missing_ids'].append(c['finding_id'])
+        if all(type(v) is bool for v in marks) and not missing_note:
             result['fully_reviewed'] += 1
             if all(marks):
                 result['all_four_supported'] += 1
