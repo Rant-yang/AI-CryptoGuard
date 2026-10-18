@@ -1,7 +1,7 @@
 """AI-CryptoGuard 统一入口（C 线）。
 
-当前接通：快速扫描 -> 可选 CrySentry Java 深度证据 -> 前置量子评估。
-v0.2 AI 尚未接通时明确标 skipped。
+快速扫描 -> 可选 CrySentry Java 深度证据 -> 前置量子评估 -> 可选 AI 解释。
+AI 必须显式开启；未开启时状态保持 skipped。
 """
 import argparse
 import hashlib
@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from core.quantum_assessment import assess_all, rule_version  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
+from ai.enrich_v02 import enrich_file as enrich_ai_file  # noqa: E402
 from scanner.scan import main as scanner_main  # noqa: E402
 from scanner.adapters.crysentry import adapt as adapt_crysentry  # noqa: E402
 from scanner.adapters.crysentry import fuse as fuse_crysentry  # noqa: E402
@@ -65,10 +66,15 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
         timeline_profile=None, mode="fast", java_artifact=None,
         java_classpath=None, source_root=None, crysentry_home=None,
         crysentry_java=None, crysentry_jar=None, deep_timeout=900,
-        deep_memory_mb=4096, java_target_version=8):
+        deep_memory_mb=4096, java_target_version=8, ai=False,
+        ai_context="full", ai_resume=False, ai_checkpoint=10):
     out_dir = Path(output_dir).resolve()
     scan_path = out_dir / "findings.json"
     assessed_path = out_dir / "findings_assessed.json"
+    explained_path = out_dir / "findings_explained.json"
+    if not ai_resume and explained_path.exists():
+        explained_path.unlink()
+    explained_written = False
     task_path = out_dir / "task.json"
     timeline_profile = timeline_profile or make_profile(source="not-provided")
     task = {
@@ -80,7 +86,7 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
             _stage("scan"),
             _stage("deep_java", "skipped", "未请求 Java 深度扫描。"),
             _stage("quantum_assessment"),
-            _stage("ai", "skipped", "B 的 v0.2 AI 输出尚未合入统一入口。"),
+            _stage("ai", "skipped", "未请求云端 AI 解释；评估结果仍可查看。"),
         ],
         "quantum_timeline_profile": timeline_profile,
         "unresolved_deep_evidence": [],
@@ -180,16 +186,43 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
     task["stages"][2] = _stage("quantum_assessment", "completed",
                                 seconds=time.time() - started,
                                 tool_version="quantum-rules-" + rule_version())
+    if ai:
+        remote_rows = [f for f in result if f.get("finding_kind") != "credential"]
+        if remote_rows and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
+                            not os.environ.get("ANTHROPIC_MODEL")):
+            task["stages"][3] = _stage(
+                "ai", "failed", "缺少模型配置 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL；未调用云端。")
+        else:
+            started = time.time()
+            task["stages"][3] = _stage("ai", "running")
+            _write(task_path, task)
+            try:
+                explained, failed, reused = enrich_ai_file(
+                    assessed_path, explained_path, context=ai_context,
+                    resume=ai_resume, checkpoint=ai_checkpoint)
+                explained_written = explained_path.is_file()
+                task["stages"][3] = _stage(
+                    "ai", "failed" if failed else "completed",
+                    ("%d 条解释成功，%d 条失败，%d 条复用。" %
+                     (len(explained) - len(failed), len(failed), reused)),
+                    time.time() - started, "ai-v0.2")
+                result = explained
+            except Exception as exc:
+                task["stages"][3] = _stage(
+                    "ai", "failed", "AI 阶段异常: %s" % type(exc).__name__,
+                    time.time() - started, "ai-v0.2")
     problems = contract_errors(task)
     if problems:
         raise ValueError("task.json 不合规: %s" % "; ".join(problems))
     _write(task_path, task)
-    return result, task, assessed_path, task_path
+    result_path = (explained_path if ai and explained_written
+                   else assessed_path)
+    return result, task, result_path, task_path
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="快速扫描 -> 可选 Java 深度证据 -> 前置量子评估")
+        description="快速扫描 -> 可选 Java 深度证据 -> 量子评估 -> 可选 AI 解释")
     parser.add_argument("target", nargs="?", help="要扫描的项目目录")
     parser.add_argument("--findings", help="跳过扫描，使用已有 v0.1 findings.json")
     parser.add_argument("-o", "--output-dir", default="out/run")
@@ -221,6 +254,11 @@ def main(argv=None):
                         help="Z：组织采用的量子威胁时间窗（年）")
     parser.add_argument("--hndl-exposure", choices=["yes", "no", "unknown"],
                         default="unknown", help="是否存在先收集后解密暴露")
+    parser.add_argument("--ai", action="store_true", help="显式启用 v0.2 AI 解释")
+    parser.add_argument("--ai-context", choices=["shape", "full"], default="full",
+                        help="full 发送脱敏代码行；shape 仅发送调用形状")
+    parser.add_argument("--ai-resume", action="store_true", help="复用校验通过的 AI 结果")
+    parser.add_argument("--ai-checkpoint", type=int, default=10)
     args = parser.parse_args(argv)
     if bool(args.target) == bool(args.findings):
         parser.error("项目目录与 --findings 必须且只能提供一个")
@@ -236,21 +274,22 @@ def main(argv=None):
             timeline_profile, args.mode, args.java_artifact,
             args.java_classpath, args.source_root, args.crysentry_home,
             args.crysentry_java, args.crysentry_jar, args.deep_timeout,
-            args.deep_memory_mb, args.java_target_version)
+            args.deep_memory_mb, args.java_target_version, args.ai,
+            args.ai_context, args.ai_resume, args.ai_checkpoint)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print("[错误] 流水线失败: %s" % exc)
         return 2
     print("\n====== C 线统一入口完成 ======")
-    print("assessed findings : %d 条" % len(result))
+    print("findings          : %d 条" % len(result))
     by_name = {stage["name"]: stage for stage in task["stages"]}
     print("AI 阶段           : %s" % by_name["ai"]["status"])
     print("深度 Java         : %s%s" % (
         by_name["deep_java"]["status"],
         ("（%s）" % by_name["deep_java"]["reason"])
         if by_name["deep_java"]["reason"] else ""))
-    print("评估输出          : %s" % assessed)
+    print("结果输出          : %s" % assessed)
     print("任务状态          : %s" % task_path)
-    return 0
+    return 1 if args.ai and by_name["ai"]["status"] != "completed" else 0
 
 
 if __name__ == "__main__":

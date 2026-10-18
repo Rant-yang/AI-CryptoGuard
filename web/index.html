@@ -397,6 +397,16 @@
           <label class="timeline-field">先收集后解密暴露<select id="qtHndl"><option value="unknown">尚未确认</option><option value="yes">存在暴露</option><option value="no">无已知暴露</option></select></label>
         </div>
       </details>
+      <label class="privacy" style="cursor:pointer;display:flex;gap:10px;align-items:flex-start">
+        <input id="aiEnabled" type="checkbox" style="margin-top:3px">
+        <span>启用 AI 用途解释与整改步骤（可选）。勾选后向配置的云端模型发送脱敏后的代码上下文与量子评估摘要；凭据问题留在本地。未勾选时只运行本地扫描。</span>
+      </label>
+      <label class="timeline-field">AI 上下文范围
+        <select id="aiContext">
+          <option value="full">脱敏代码上下文（自有/公开项目，解释更充分）</option>
+          <option value="shape">仅 API 调用形状（第三方/敏感项目）</option>
+        </select>
+      </label>
     </div>
     <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
       <div class="lockmark"></div>
@@ -451,14 +461,8 @@
 
 /* ============================ 数据载入 ============================ */
 
-const CANDIDATES = [
-  '../out/run/findings_explained.json',
-  '../out/run/findings_assessed.json',
-  './findings_ai.json',
-  '../out/findings_ai.json',
-  '../out/findings.json',
-  'findings.json',
-];
+// 本地服务不公开 out/ 和 workspace/。演示旧报告请用右上角导入。
+const CANDIDATES = [];
 
 async function autoLoad(){
   for (const url of CANDIDATES){
@@ -796,8 +800,10 @@ function renderDetail(){
     const lines = (e.lines||[]);
     const shown = lines.slice(0, 40).map(n=>`<span class="shape">${esc(n)}</span>`).join('');
     const more = lines.length > 40 ? `<span class="ln">…共 ${esc(lines.length)} 行</span>` : '';
-    const shapes = (e.call_shape||[]).map(s=>`<span class="shape hit">${esc(s)}</span>`).join('');
-    const ctx = (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
+    const shapes = f.finding_kind==='credential' ? '' :
+      (e.call_shape||[]).map(s=>`<span class="shape hit">${esc(s)}</span>`).join('');
+    const ctx = f.finding_kind==='credential' ? '' :
+      (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
     const flow = e.flow || null;
     const flowLoc = p => p
       ? `${esc(p.file||'未知文件')}${p.line ? ':'+esc(p.line) : ''}${p.method ? ' · '+esc(p.method) : ''}`
@@ -818,13 +824,13 @@ function renderDetail(){
         <span class="tool">${esc(e.tool||'—')}</span>
         <span class="tag">${esc(e.kind||'pattern')}</span>
         <span class="ln">命中 ${esc(lines.length)} 处</span>
-        ${up.prim ? `<span class="tag">prim: ${esc(up.prim)}</span>` : ''}
+        ${f.finding_kind!=='credential' && up.prim ? `<span class="tag">prim: ${esc(up.prim)}</span>` : ''}
       </div>
       <div class="shapes">${shown}${more}</div>
       ${shapes ? `<div class="shapes">${shapes}</div>` : ''}
       ${ctx}
       ${flowHtml}
-      ${Object.keys(up).length ? `<pre class="raw">${esc(JSON.stringify(up, null, 2))}</pre>` : ''}
+      ${f.finding_kind==='credential' ? '<div class="why">敏感值已遮蔽，仅展示定位与证据类型。</div>' : ''}
     </div>`;
   }).join('') || '<div class="box"><span class="loc">（无证据）</span></div>';
 
@@ -860,12 +866,28 @@ function renderDetail(){
     <section class="blk">
       <h3>AI 解释</h3>
       <div class="box">
+        ${f.usage_assessment ? `<div class="why">用途判断：${esc(USAGE_CN[f.usage_assessment.usage]||f.usage_assessment.usage)} · ${esc(f.usage_assessment.reason)}</div>
+          ${(f.usage_assessment.unknowns||[]).map(x=>`<div class="why">待确认：${esc(x)}</div>`).join('')}
+          <div class="refs">用途依据：${(f.usage_assessment.evidence_refs||[]).map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>` : ''}
         ${ex_or(f.explanation)}
         ${(f.evidence_refs||[]).length
           ? `<div class="refs"><span class="loc">引用证据：</span>${f.evidence_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>`
           : ''}
       </div>
     </section>
+
+    ${f.remediation_steps ? `<section class="blk">
+      <h3>整改步骤（尚未执行）</h3>
+      ${f.remediation_steps.length ? f.remediation_steps.map((step,i)=>`<div class="box">
+        <div class="drow"><span class="tag">步骤 ${i+1}</span><span class="tag mute">${esc(step.execution_status)}</span></div>
+        <div class="txt">${esc(step.action)}</div>
+        <div class="why">位置：${step.target ? esc(step.target.file)+':'+esc(step.target.line) : '尚未可靠定位'}</div>
+        ${(step.prerequisites||[]).map(x=>`<div class="why">前提：${esc(x)}</div>`).join('')}
+        ${(step.verification||[]).map(x=>`<div class="why">验收：${esc(x)}</div>`).join('')}
+        <div class="refs">${(step.evidence_refs||[]).map(x=>`<span class="ref">${esc(x)}</span>`).join('')}
+          ${(step.rule_refs||[]).map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>
+      </div>`).join('') : '<div class="box">当前证据不足，暂无可验证的整改步骤。</div>'}
+    </section>` : ''}
 
     <section class="blk">
       <h3>证据（${(f.evidence||[]).length} 个来源）</h3>
@@ -1057,6 +1079,8 @@ async function uploadProject(rawItems){
   const rootName=(items[0].path.split('/')[0]||'project').slice(0,100);
   const task=await api('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:rootName,file_count:items.length,total_bytes:total,
+                         ai_enabled:$('#aiEnabled').checked,
+                         ai_context:$('#aiContext').value,
                          quantum_timeline_profile:timeline})});
   currentTask=task.task_id;
 
@@ -1091,7 +1115,7 @@ async function pollTask(taskId){
       setScanState('正在装载统一风险视图',`${task.findings_count||0} 条发现`,94);
       const rows=await api(`/api/tasks/${taskId}/result`);
       phase('report','done'); scanBusy=false; stopCipher();
-      setScanState('本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
+      setScanState(task.message||'本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
       boot(rows,`本地任务 ${taskId}`);
       setTimeout(()=>document.querySelector('#stats').scrollIntoView({behavior:'smooth'}),500);
       return;

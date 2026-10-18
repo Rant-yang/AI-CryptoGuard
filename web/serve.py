@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.quantum_timeline import make_profile  # noqa: E402
+from ai.redact import scrub  # noqa: E402
 
 TASK_BASE = ROOT / "workspace" / "web_tasks"
 PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
@@ -103,6 +104,9 @@ def _new_task(meta):
         "return_code": None,
         "findings_count": None,
         "quantum_timeline_profile": timeline_profile,
+        "ai_enabled": meta.get("ai_enabled") is True,
+        "ai_context": (meta.get("ai_context") if meta.get("ai_context") in
+                       ("full", "shape") else "full"),
     }
     with LOCK:
         TASKS[task_id] = task
@@ -141,6 +145,8 @@ def _run_task(task_id):
     _set_task(task_id, state="running", message="正在执行密码资产扫描")
     cmd = [sys.executable, str(ROOT / "core" / "pipeline.py"), str(input_dir),
            "--tools-dir", str(TOOLS_DIR), "-o", str(output_dir)]
+    if _snapshot(task_id).get("ai_enabled"):
+        cmd += ["--ai", "--ai-context", _snapshot(task_id)["ai_context"]]
     profile = _snapshot(task_id).get("quantum_timeline_profile") or {}
     if profile.get("data_lifetime_years") is not None:
         cmd += ["--data-lifetime-years", str(profile["data_lifetime_years"]),
@@ -158,22 +164,46 @@ def _run_task(task_id):
         _set_task(task_id, state="failed", message="无法启动本地扫描进程。")
         return
     result = output_dir / "findings_assessed.json"
-    if proc.returncode != 0 or not result.is_file():
+    if not result.is_file():
         _set_task(task_id, state="failed", return_code=proc.returncode,
                   message="扫描未完成，请查看本机任务日志。")
         return
     try:
-        rows = json.loads(result.read_text(encoding="utf-8"))
+        pipeline = json.loads((output_dir / "task.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _set_task(task_id, state="failed", return_code=proc.returncode,
+                  message="任务状态文件无法解析，请查看本机日志。")
+        return
+    scan_status = {s["name"]: s["status"] for s in pipeline["stages"]}
+    if scan_status.get("scan") == "failed" or scan_status.get("quantum_assessment") != "completed":
+        _set_task(task_id, state="failed", return_code=proc.returncode,
+                  message="扫描或规则评估失败；请查看本机任务日志。")
+        return
+    chosen = (output_dir / "findings_explained.json")
+    if not chosen.is_file():
+        chosen = result
+    try:
+        rows = json.loads(chosen.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         _set_task(task_id, state="failed", message="扫描结果无法解析。")
         return
-    _set_task(task_id, state="completed", return_code=0,
-              findings_count=len(rows), message="扫描完成，正在生成风险视图")
+    ai_failed = _snapshot(task_id).get("ai_enabled") and scan_status.get("ai") != "completed"
+    _set_task(task_id, state="completed", return_code=proc.returncode,
+              findings_count=len(rows),
+              message=("本地扫描完成；AI 解释未完成，请查看任务阶段状态。"
+                       if ai_failed else "扫描完成，正在生成风险视图"))
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    def translate_path(self, path):
+        """Static serving is limited to the UI; never expose workspace, out or .env."""
+        route = urllib.parse.urlparse(path).path
+        if route in ("/", "/web/index.html"):
+            return str(HERE / "index.html")
+        return str(HERE / "__not_found__")
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
@@ -263,10 +293,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
                 return self._send_json(200, _snapshot(parts[2]))
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "result":
-                result = _task_dir(parts[2]) / "out" / "findings_assessed.json"
+                out = _task_dir(parts[2]) / "out"
+                result = out / "findings_explained.json"
+                if not result.is_file():
+                    result = out / "findings_assessed.json"
                 if not result.is_file():
                     return self._send_json(409, {"error": "result not ready"})
-                body = result.read_bytes()
+                rows = json.loads(result.read_text(encoding="utf-8-sig"))
+                # Reports may contain original scanner records. The browser only
+                # needs normalized evidence, never raw source or credential values.
+                safe_rows = []
+                for finding in rows:
+                    clean = json.loads(json.dumps(finding))
+                    for evidence in clean.get("evidence", []):
+                        evidence.pop("raw", None)
+                        if clean.get("finding_kind") == "credential":
+                            evidence.pop("call_context", None)
+                            evidence.pop("call_shape", None)
+                        elif "call_context" in evidence:
+                            evidence["call_context"] = scrub(evidence["call_context"])
+                    safe_rows.append(clean)
+                body = _json_bytes(safe_rows)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))

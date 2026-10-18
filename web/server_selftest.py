@@ -35,6 +35,7 @@ def main():
         try:
             _, task = request(base, "/api/tasks", "POST",
                               json.dumps({"name": "demo", "file_count": 1,
+                                          "ai_enabled": True, "ai_context": "shape",
                                           "total_bytes": 12,
                                           "quantum_timeline_profile": {
                                               "data_lifetime_years": 10,
@@ -44,12 +45,31 @@ def main():
                                           }}).encode("utf-8"))
             task_id = task["task_id"]
             assert task["quantum_timeline_profile"]["data_lifetime_years"] == 10
+            assert task["ai_enabled"] and task["ai_context"] == "shape"
             path = urllib.parse.quote("demo/src/a.py", safe="")
             status, _ = request(base, "/api/tasks/%s/files?path=%s" % (task_id, path),
                                 "POST", b"print('ok')\n", "application/octet-stream")
             assert status == 201
             _, snapshot = request(base, "/api/tasks/" + task_id)
             assert snapshot["uploaded_files"] == 1
+            with urllib.request.urlopen(base + "/web/index.html", timeout=5) as page:
+                assert page.status == 200 and b"AI-CryptoGuard" in page.read()
+            for forbidden in ("/README.md", "/out/run/findings.json",
+                              "/workspace/web_tasks", "/.env"):
+                try:
+                    urllib.request.urlopen(base + forbidden, timeout=5)
+                    raise AssertionError("static file exposed: " + forbidden)
+                except urllib.error.HTTPError as exc:
+                    assert exc.code == 404
+            test_out = serve._task_dir(task_id) / "out"
+            test_out.mkdir()
+            (test_out / "findings_assessed.json").write_text(json.dumps([{
+                "finding_kind": "credential", "evidence": [{
+                    "tool": "credential-scan", "kind": "pattern", "lines": [1],
+                    "raw": {"secret": "LEAK-ME-SECRET"},
+                    "call_context": ["LEAK-ME-CONTEXT"]}]}]), encoding="utf-8")
+            _, safe = request(base, "/api/tasks/%s/result" % task_id)
+            assert "LEAK-ME" not in json.dumps(safe)
             uploaded = serve._task_dir(task_id) / "input" / "demo" / "src" / "a.py"
             assert uploaded.read_bytes() == b"print('ok')\n"
             try:

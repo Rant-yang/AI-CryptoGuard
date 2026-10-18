@@ -2,7 +2,16 @@
 
 # ai/ —— 讲人话
 
-> **本轮任务（待实现）：B：读取前置量子风险评估，增强用途解释和具体整改。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。现有用法继续有效，拟新增字段/参数以 C 的契约提交为准。
+> **v0.2 已由 C 兜底接入（2026-10-18）：** `enrich_v02.py` 读取 assessed，输出带用途依据、证据引用与整改步骤的 explained；离线自检通过，真模型语义抽样待 B/C。旧版 `enrich.py` 保留 v0.1 演示兼容。见 [集成验收](../docs/AI-v0.2集成验收_2026-10-18.md)。
+
+```cmd
+python ai\selftest_v02.py
+python ai\enrich_v02.py out\run\findings_assessed.json -o out\run\findings_explained.json --dry-run
+python ai\enrich_v02.py out\run\findings_assessed.json -o out\run\findings_explained.json --resume
+python core\schema\validate_v02.py out\run\findings_explained.json
+```
+
+默认 `full` 模式发送脱敏代码上下文以帮助判断用途；敏感或第三方项目应显式用 `--context shape`，只发送调用形状。两种模式都经过 allowlist 与脱敏，凭据发现始终本地处理。连接失败、引用越界或模型选定 PQC 算法时，单条保持 assessed，并在任务阶段标明失败；不能把结构校验通过当成真模型语义验收。
 
 > **负责人：B**
 > **一句话：把冷冰冰的扫描结果，变成一个人能看懂、能采取行动的结论。**

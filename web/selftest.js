@@ -213,6 +213,31 @@ setTimeout(() => {
   check('AI 解释显示引用编号', citedHtml.includes('引用证据') && citedHtml.includes('E1'));
   check('证据卡片显示同一编号', citedHtml.includes('class="ref">E1</span>'));
 
+  const explained = JSON.parse(JSON.stringify(cited));
+  explained.stage = 'explained';
+  explained.usage_assessment = {usage:'signing',reason:'调用签名接口',
+                                evidence_refs:['E1'],unknowns:['业务上下文待确认']};
+  explained.remediation_steps = [{action:'核对签名调用',
+    target:{file:'src/Sample.java',line:2,method:null}, evidence_refs:['E1'],
+    rule_refs:['QR-SHOR-PUBLIC-KEY'], prerequisites:['确认兼容性'],
+    verification:['运行集成测试'],execution_status:'not_run'}];
+  x.S.sel = explained; x.renderDetail();
+  const explainedHtml = htmlOf('#detail');
+  check('v0.2 用途依据和整改验收步骤已渲染',
+        explainedHtml.includes('调用签名接口') &&
+        explainedHtml.includes('src/Sample.java:2') &&
+        explainedHtml.includes('运行集成测试') &&
+        explainedHtml.includes('QR-SHOR-PUBLIC-KEY'));
+
+  const credential = JSON.parse(JSON.stringify(explained));
+  credential.finding_kind = 'credential';
+  credential.evidence[0].raw = {secret:'LEAK-ME-SECRET'};
+  credential.evidence[0].call_context = ['LEAK-ME-CONTEXT'];
+  x.S.sel = credential; x.renderDetail();
+  check('凭据原文与上下文不会显示在详情',
+        !htmlOf('#detail').includes('LEAK-ME-SECRET') &&
+        !htmlOf('#detail').includes('LEAK-ME-CONTEXT'));
+
   /* --- 9. CrySentry taint flow 必须可见，来源缺失不能伪装成完整链 --- */
   const deep = JSON.parse(JSON.stringify(cited));
   deep.finding_id = 'deep';

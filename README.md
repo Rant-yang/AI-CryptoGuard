@@ -303,11 +303,12 @@ C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.
 | 人员 | 本轮任务 | 交付 |
 |---|---|---|
 | A/C | Java CrySentry 深度调用、证据适配、同题对照 | **runner 与 v0.2 适配已由 C 兜底接通**；仍缺固定 Java 样本的 P/R、完成率与耗时报告 |
-| B | 结合前置量子评估解释实际用途、生成具体整改 | **本轮无新提交**：结构化步骤、有效引用、30 条语义抽样 |
-| C | 先发布契约，再做量子评估、统一调度、Web | 扫描 → 评估 → AI → 报告完整闭环 |
+| B/C | 结合前置量子评估解释实际用途、生成具体整改 | **C 已兜底接入 v0.2 AI 可选阶段**；真实模型 30 条语义抽样待 B/C 验收 |
+| C | 共享契约、量子评估、统一调度、Web | 扫描 → 评估 → 可选 AI → 报告；离线闭环通过，允许联网环境中 1 条真实调用通过契约 |
 
-共享 Schema、CrySentry runner 和前置量子评估已经接通；B 继续实现 v0.2 AI，
-C 验收后合并。凭据留出集、真实
+共享 Schema、CrySentry runner、前置量子评估和可选 v0.2 AI 阶段已经接通；
+具体边界与验收见 [AI v0.2 集成记录](docs/AI-v0.2集成验收_2026-10-18.md)。
+凭据留出集、真实
 Repair→Verify、部署及比赛材料继续保留在后续计划中。
 
 ### 五、怎么自己验一遍
@@ -321,5 +322,7 @@ python benchmark/eval.py out/verify/_all3.json --scanned cryptoapi-bench,cambenc
 python benchmark/eval.py --selftest             # 口径回归
 python scanner/credential_selftest.py            # 8 类凭据 + 零明文泄露
 python scanner/selftest_crysentry.py              # CrySentry 配置/适配/契约（离线）
+python ai/selftest_v02.py                           # AI v0.2 引用、脱敏、缓存与规则路线（离线）
+python core/pipeline_ai_selftest.py                 # 扫描结果→评估→AI 的离线全链路
 python repair/selftest.py                        # 3 类临时修复 + 重新验证
 ```
