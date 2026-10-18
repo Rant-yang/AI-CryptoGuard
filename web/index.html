@@ -324,6 +324,12 @@
     padding:9px 11px; font:11.5px/1.55 var(--mono); color:var(--ink2);
     overflow-x:auto; max-height:190px;
   }
+  .flow{margin-top:10px;padding:10px 11px;border-left:3px solid #5b7fa3;background:#f6f9fb;
+    font:11.5px/1.55 var(--mono);color:#43505d}
+  .flow-row{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap}
+  .flow-node{padding:3px 7px;border:1px solid #d4dde5;background:#fff;border-radius:3px}
+  .flow-arrow{color:#5b7fa3;font-weight:700;padding-top:3px}
+  .flow-state{margin-top:6px;color:#778491}.flow-state.missing{color:#a45c26}
   .empty{color:var(--ink3); padding:44px 22px; text-align:center; font-size:13px}
   .fid{
     font-family:var(--mono); font-size:11px; color:var(--ink3);
@@ -792,6 +798,20 @@ function renderDetail(){
     const more = lines.length > 40 ? `<span class="ln">…共 ${esc(lines.length)} 行</span>` : '';
     const shapes = (e.call_shape||[]).map(s=>`<span class="shape hit">${esc(s)}</span>`).join('');
     const ctx = (e.call_context||[]).map(c=>`<div class="ctx">${esc(c)}</div>`).join('');
+    const flow = e.flow || null;
+    const flowLoc = p => p
+      ? `${esc(p.file||'未知文件')}${p.line ? ':'+esc(p.line) : ''}${p.method ? ' · '+esc(p.method) : ''}`
+      : '来源缺失（工具未提供 sourceStmt）';
+    const flowHtml = flow ? `<div class="flow">
+      <div class="flow-row">
+        <span class="flow-node">源 · ${flowLoc(flow.source)}</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node">汇 · ${flowLoc(flow.sink)}</span>
+      </div>
+      <div class="flow-state ${flow.completeness==='source_missing'?'missing':''}">
+        数据流完整度：${esc(flow.completeness||'unknown')}${(flow.path||[]).length ? ` · 中间节点 ${(flow.path||[]).length} 个` : ''}
+      </div>
+    </div>` : '';
     return `<div class="box ev">
       <div class="top">
         <span class="ref">E${evidenceIndex + 1}</span>
@@ -803,6 +823,7 @@ function renderDetail(){
       <div class="shapes">${shown}${more}</div>
       ${shapes ? `<div class="shapes">${shapes}</div>` : ''}
       ${ctx}
+      ${flowHtml}
       ${Object.keys(up).length ? `<pre class="raw">${esc(JSON.stringify(up, null, 2))}</pre>` : ''}
     </div>`;
   }).join('') || '<div class="box"><span class="loc">（无证据）</span></div>';

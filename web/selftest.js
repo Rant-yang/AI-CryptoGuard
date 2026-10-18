@@ -213,6 +213,21 @@ setTimeout(() => {
   check('AI 解释显示引用编号', citedHtml.includes('引用证据') && citedHtml.includes('E1'));
   check('证据卡片显示同一编号', citedHtml.includes('class="ref">E1</span>'));
 
+  /* --- 9. CrySentry taint flow 必须可见，来源缺失不能伪装成完整链 --- */
+  const deep = JSON.parse(JSON.stringify(cited));
+  deep.finding_id = 'deep';
+  deep.evidence = [{
+    tool:'crysentry', kind:'taint', lines:[42], raw:{judgeType:'Predictable Source'},
+    flow:{source:null,
+          sink:{file:'src/Sample.java',line:42,method:'encrypt()'},
+          path:[],completeness:'source_missing'}
+  }];
+  x.S.sel = deep; x.renderDetail();
+  const deepHtml = htmlOf('#detail');
+  check('深度证据显示 source → sink',
+        deepHtml.includes('来源缺失') && deepHtml.includes('src/Sample.java') &&
+        deepHtml.includes('数据流完整度：source_missing'));
+
   /* ------------------------------ 结果 ------------------------------ */
   console.log(`查看器自检  [${TARGET}]`);
   console.log('='.repeat(60));
