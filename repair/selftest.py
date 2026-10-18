@@ -52,9 +52,37 @@ def main(argv=None):
         assert report['independent_scan']['rules']['PY-REPAIR-WEAK-RANDOM'] == 'ELIMINATED'
         assert report['new_high_findings'] == 0
         print('[PASS] 正式 scanner 独立对照：MD5 / 口令 / 弱随机均消失')
+        demo = os.path.join(ROOT, 'examples', 'repair_demo')
+        project = repair_and_verify(os.path.join(demo, 'app.py'),
+                                    tools_dir=args.tools_dir,
+                                    project_root=demo)
+        assert project['tests']['before'] == 'PASS'
+        assert project['tests']['after'] == 'PASS'
+        assert project['tests']['count_before'] == 3
+        assert project['tests']['count_after'] == 3
+        assert project['verification_scope'] == 'SYNTAX_SCANNER_PROJECT_TESTS'
+        assert project['new_high_findings'] == 0
+        assert all(row['scanner_rescan'] == 'ELIMINATED'
+                   for row in project['repairs'])
+        print('[PASS] 演示项目：3/3 测试前后通过，三类正式复扫均消失')
     else:
         assert report['independent_scan']['status'] == 'NOT_RUN'
         assert report['new_high_findings'] is None
+    with tempfile.TemporaryDirectory() as td:
+        os.mkdir(os.path.join(td, 'tests'))
+        src = os.path.join(td, 'app.py')
+        with open(src, 'w', encoding='utf-8') as fh:
+            fh.write('import hashlib\ndef digest():\n    return hashlib.md5(b"x").hexdigest()\n')
+        with open(os.path.join(td, 'tests', 'test_app.py'), 'w', encoding='utf-8') as fh:
+            fh.write('import unittest\nimport app\n'
+                     'class T(unittest.TestCase):\n'
+                     '    def test_old_protocol(self):\n'
+                     '        self.assertEqual(len(app.digest()), 32)\n')
+        incompatible = repair_and_verify(src, project_root=td)
+        assert incompatible['tests']['before'] == 'PASS'
+        assert incompatible['tests']['after'] == 'FAIL'
+        assert incompatible['verification_scope'] == 'TESTS_FAILED'
+    print('[PASS] 兼容性回归会明确失败，不把复扫消失当作可部署')
     print('[PASS] Repair -> Verify 自检通过（3 类；临时副本；原文件不变；报告零凭据）')
     return 0
 

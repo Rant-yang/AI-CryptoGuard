@@ -8,6 +8,7 @@
 
 ```cmd
 python repair\verify.py path\to\demo.py --tools-dir D:\code_competition\_smoke -o out\repair_report.json
+python repair\verify.py examples\repair_demo\app.py --project-root examples\repair_demo --tools-dir D:\code_competition\_smoke -o out\repair_project_report.json
 python repair\selftest.py
 python repair\selftest.py --tools-dir D:\code_competition\_smoke
 ```
@@ -23,6 +24,15 @@ nonce/IV/salt/key 等安全用途变量时报告。三类模板均可在合成�
 报告的 `new_high_findings` 只有扫描成功时才给数字，否则为 null。
 CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 `behavioral_compatibility: NOT_VERIFIED` / `manual_review_required: true`。
+
+`--project-root` 是**显式选择执行可信项目代码**：工具在两份临时项目副本上运行
+`python -m unittest discover -s tests`，只保存前后 PASS/FAIL、测试数量与超时状态，
+不保存测试 stdout/stderr。测试失败时 CLI 返回非零。副本拒绝符号链接、超过
+1000 文件或 20 MiB 的项目，跳过 `.git`、`.env*`、`workspace` 等目录；
+**临时副本不是操作系统沙箱**，不要对不可信项目开启此选项。
+演示项目 `examples/repair_demo` 的三项测试在补丁前后都通过，三类正式复扫均消失；
+反例测试故意断言旧 MD5 输出长度，补丁后测试会失败。两者都是自建演示/自检，
+不是独立第三方项目的兼容性证明。
 
 当前限制：这是可验证的 Python 首批模板，不声称自动修复任意语言或任意上下文；
 没有项目自带测试时，报告明确写 `tests: NOT_RUN`。例如 MD5 摘要长度从

@@ -12,7 +12,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
+from pathlib import Path
 
 
 RULES = ('PY-REPAIR-MD5', 'PY-REPAIR-WEAK-RANDOM',
@@ -27,7 +30,8 @@ _PASSWORD = re.compile(
     re.I | re.M)
 
 
-def repair_and_verify(source_file, output_report=None, tools_dir=None):
+def repair_and_verify(source_file, output_report=None, tools_dir=None,
+                      project_root=None, test_timeout=120):
     """在临时目录修复一个 Python 文件，返回不含敏感材料的报告。"""
     source_file = os.path.abspath(source_file)
     if not os.path.isfile(source_file):
@@ -55,6 +59,9 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None):
             except (OSError, ValueError, RuntimeError) as exc:
                 independent = {'status': 'FAILED',
                                'reason': '独立扫描异常: %s' % type(exc).__name__}
+        tests = (_run_project_tests(source_file, patched, project_root,
+                                    test_timeout, td)
+                 if project_root and syntax_ok else 'NOT_RUN')
         rows = []
         for rule in RULES:
             rows.append({
@@ -74,10 +81,19 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None):
         'original_unchanged': _read(source_file) == original,
         'syntax': 'PASS' if syntax_ok else 'FAIL',
         'syntax_error': syntax_error,
-        'tests': 'NOT_RUN',
+        'tests': tests,
         'new_high_findings': independent.get('new_high_findings'),
         'independent_scan': independent,
         'verification_scope': ('FAILED' if not syntax_ok else
+                               'SYNTAX_SCANNER_PROJECT_TESTS'
+                               if (isinstance(tests, dict) and
+                                   tests.get('before') == 'PASS' and
+                                   tests.get('after') == 'PASS' and
+                                   independent.get('status') == 'COMPLETED') else
+                               'TESTS_FAILED'
+                               if isinstance(tests, dict) and
+                               (tests.get('before') != 'PASS' or
+                                tests.get('after') != 'PASS') else
                                'SYNTAX_AND_SCANNER_ONLY'
                                if independent.get('status') == 'COMPLETED'
                                else 'SYNTAX_ONLY'),
@@ -90,6 +106,69 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None):
         with open(output_report, 'w', encoding='utf-8') as fh:
             json.dump(report, fh, ensure_ascii=False, indent=2)
     return report
+
+
+_PROJECT_SKIP = frozenset({'.git', '.venv', 'venv', '__pycache__',
+                           'node_modules', 'out', 'workspace', 'build', 'dist'})
+
+
+def _run_project_tests(source_file, patched, project_root, timeout, work):
+    """Opt-in unittest on two bounded temporary project copies.
+
+    This executes project code. The caller must only opt in for a trusted
+    project; a temporary copy is not an OS security sandbox. No test output,
+    traceback, or environment secret is persisted in the report.
+    """
+    root = Path(project_root).resolve()
+    source = Path(source_file).resolve()
+    if not root.is_dir() or root not in source.parents:
+        raise ValueError('源文件必须位于指定的项目目录内。')
+    relative = source.relative_to(root)
+    total_bytes, count = 0, 0
+    for base, dirs, files in os.walk(root):
+        if any((Path(base) / d).is_symlink() for d in dirs):
+            raise ValueError('项目测试副本不接受符号链接目录。')
+        dirs[:] = [d for d in dirs if d not in _PROJECT_SKIP and
+                   not d.startswith('.env')]
+        for name in files:
+            if name.startswith('.env'):
+                continue
+            path = Path(base) / name
+            if path.is_symlink():
+                raise ValueError('项目测试副本不接受符号链接。')
+            total_bytes += path.stat().st_size
+            count += 1
+            if count > 1000 or total_bytes > 20 * 1024 * 1024:
+                raise ValueError('项目测试副本超过 1000 文件或 20 MiB 上限。')
+    if not (root / 'tests').is_dir():
+        return {'before': 'NOT_RUN', 'after': 'NOT_RUN',
+                'reason': '项目没有 tests/ 目录。'}
+
+    result = {}
+    for phase in ('before', 'after'):
+        copy = Path(work) / ('project-' + phase)
+        shutil.copytree(root, copy, ignore=shutil.ignore_patterns(
+            *sorted(_PROJECT_SKIP), '.env', '.env.*'))
+        if phase == 'after':
+            (copy / relative).write_text(patched, encoding='utf-8')
+        env = {key: os.environ[key] for key in
+               ('PATH', 'SYSTEMROOT', 'TEMP', 'TMP') if key in os.environ}
+        env['PYTHONPATH'] = str(copy)
+        env['PYTHONNOUSERSITE'] = '1'
+        try:
+            proc = subprocess.run(
+                [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests'],
+                cwd=copy, env=env, capture_output=True, timeout=timeout,
+                check=False)
+            output = (proc.stderr or b'').decode('utf-8', errors='replace')
+            match = re.search(r'Ran (\d+) tests?', output)
+            count = int(match.group(1)) if match else 0
+            result[phase] = 'PASS' if proc.returncode == 0 and count > 0 else 'FAIL'
+            result['count_' + phase] = count
+        except subprocess.TimeoutExpired:
+            result[phase] = 'TIMEOUT'
+            result['count_' + phase] = 0
+    return result
 
 
 def _independent_rescan(original, patched, filename, work, tools_dir):
