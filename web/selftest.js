@@ -102,6 +102,15 @@ const htmlOf = sel => (store[sel] ? store[sel].innerHTML : '');
 setTimeout(() => {
   const S = api.S;
 
+  /* Java 深扫开关必须真能显示/隐藏编译产物选择器。 */
+  const scanMode = mkEl('#scanMode'), artifactConfig = mkEl('#javaArtifactConfig');
+  scanMode.value = 'deep-java'; artifactConfig.hidden = true;
+  scanMode.onchange();
+  check('Java 深扫选项显示 jar 选择器', artifactConfig.hidden === false &&
+        html.includes('id="javaArtifact"'));
+  scanMode.value = 'fast'; scanMode.onchange();
+  check('快速模式隐藏 jar 选择器', artifactConfig.hidden === true);
+
   /* --- 1. 载入 --- */
   check('数据载入成功', S.rows.length === data.length,
         `rows=${S.rows.length} data=${data.length}`);

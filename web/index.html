@@ -410,6 +410,17 @@
           <option value="shape">仅 API 调用形状（第三方/敏感项目）</option>
         </select>
       </label>
+      <label class="timeline-field">扫描深度
+        <select id="scanMode">
+          <option value="fast">快速扫描（Python / Java / 其他源码）</option>
+          <option value="deep-java">Java 深度证据（需要已编译 jar）</option>
+        </select>
+      </label>
+      <div id="javaArtifactConfig" class="timeline-config" hidden>
+        <p class="timeline-help">先选择包含 Java 源码的项目文件夹，再单独选择由同一份源码编译出的 jar。服务端需设置 CrySentry 与 JDK 17 路径；不会自动执行项目构建脚本。</p>
+        <input id="javaArtifact" type="file" accept=".jar" aria-label="选择已编译的 Java jar">
+        <p class="timeline-help" id="javaArtifactName">尚未选择 jar · 最多 128 MiB</p>
+      </div>
     </div>
     <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
       <div class="lockmark"></div>
@@ -427,6 +438,7 @@
         <div class="scan-phases">
           <div class="scan-phase" data-phase="upload"><i></i>本地封装</div>
           <div class="scan-phase" data-phase="scan"><i></i>多源密码扫描</div>
+          <div class="scan-phase" data-phase="deep"><i></i>Java 深度证据</div>
           <div class="scan-phase" data-phase="quantum"><i></i>量子风险评估</div>
           <div class="scan-phase" data-phase="ai"><i></i>AI 用途解释</div>
           <div class="scan-phase" data-phase="report"><i></i>生成风险视图</div>
@@ -978,6 +990,14 @@ const PROJECT_IGNORE_EXT = new Set([
 let currentTask = null;
 let scanBusy = false;
 let cipherTimer = null;
+$('#scanMode').onchange = () => {
+  const deep = $('#scanMode').value === 'deep-java';
+  $('#javaArtifactConfig').hidden = !deep;
+};
+$('#javaArtifact').onchange = () => {
+  const file = $('#javaArtifact').files[0];
+  $('#javaArtifactName').textContent = file ? `${file.name} · ${(file.size/1024/1024).toFixed(1)} MiB` : '尚未选择 jar · 最多 128 MiB';
+};
 
 function phase(name, status){
   const el = document.querySelector(`[data-phase="${name}"]`);
@@ -1082,6 +1102,7 @@ function syncPipelinePhases(task){
   const byName = Object.fromEntries(stages.map(s=>[s.name,s.status]));
   const cls = value => value==='completed'?'done':value==='failed'||value==='timeout'?'fail':value==='skipped'?'skip':'active';
   phase('scan', byName.scan ? cls(byName.scan) : 'active');
+  phase('deep', byName.deep_java ? cls(byName.deep_java) : '');
   phase('quantum', byName.quantum_assessment ? cls(byName.quantum_assessment) : '');
   phase('ai', byName.ai ? cls(byName.ai) : '');
 }
@@ -1089,6 +1110,15 @@ function syncPipelinePhases(task){
 async function uploadProject(rawItems){
   const items = usableProjectFiles(rawItems);
   const timeline=timelineProfile();
+  const scanMode=$('#scanMode').value;
+  const artifact=$('#javaArtifact').files[0];
+  if(scanMode==='deep-java'){
+    if(!items.some(x=>x.file.name.toLowerCase().endsWith('.java')))
+      throw new Error('Java 深扫需选择包含 .java 源文件的项目文件夹。');
+    if(!artifact || !artifact.name.toLowerCase().endsWith('.jar'))
+      throw new Error('Java 深扫需单独选择对应源码编译出的 jar。');
+    if(artifact.size>128*1024*1024) throw new Error('编译产物超过 128 MiB。');
+  }
   if(!items.length) throw new Error('文件夹里没有可扫描的源码或配置文件。');
   if(items.length>4000) throw new Error('项目超过 4000 个文件，请先排除生成目录。');
   const total = items.reduce((n,x)=>n+x.file.size,0);
@@ -1096,13 +1126,14 @@ async function uploadProject(rawItems){
 
   scanBusy=true;
   $('#projectDrop').hidden=true; $('#scanState').hidden=false;
-  ['upload','scan','quantum','ai','report'].forEach(x=>phase(x,''));
+  ['upload','scan','deep','quantum','ai','report'].forEach(x=>phase(x,''));
   phase('upload','active'); startCipher();
   setScanState('正在建立本地加密审计任务',`${items.length} 个文件 · ${(total/1024).toFixed(1)} KiB`,2);
   if(currentTask) await fetch(`/api/tasks/${currentTask}`,{method:'DELETE'}).catch(()=>{});
   const rootName=(items[0].path.split('/')[0]||'project').slice(0,100);
   const task=await api('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:rootName,file_count:items.length,total_bytes:total,
+                         scan_mode:scanMode,
                          ai_enabled:$('#aiEnabled').checked,
                          ai_context:$('#aiContext').value,
                          quantum_timeline_profile:timeline})});
@@ -1119,6 +1150,11 @@ async function uploadProject(rawItems){
     }
   }
   await Promise.all([worker(),worker(),worker()]);
+  if(scanMode==='deep-java'){
+    setScanState('正在本地封装 Java 编译产物',artifact.name,24);
+    await api(`/api/tasks/${currentTask}/artifact`,
+              {method:'POST',headers:{'Content-Type':'application/java-archive'},body:artifact});
+  }
   phase('upload','done'); phase('scan','active');
   setScanState('正在识别密码资产与危险用法',`${items.length} 个文件已进入本地扫描器`,28);
   await api(`/api/tasks/${currentTask}/start`,{method:'POST'});
@@ -1135,7 +1171,7 @@ async function pollTask(taskId){
       return;
     }
     if(task.state==='completed'){
-      phase('scan','done'); phase('quantum','done'); phase('report','active');
+      phase('report','active');
       setScanState('正在装载统一风险视图',`${task.findings_count||0} 条发现`,94);
       const rows=await api(`/api/tasks/${taskId}/result`);
       phase('report','done'); scanBusy=false; stopCipher();
@@ -1144,8 +1180,11 @@ async function pollTask(taskId){
       setTimeout(()=>document.querySelector('#stats').scrollIntoView({behavior:'smooth'}),500);
       return;
     }
-    const q=((task.pipeline||{}).stages||[]).find(s=>s.name==='quantum_assessment');
-    if(q && q.status==='running') setScanState('正在按规则库评估量子风险','确定性判断不交给大模型',76);
+    const stages=((task.pipeline||{}).stages||[]);
+    const deep=stages.find(s=>s.name==='deep_java');
+    const q=stages.find(s=>s.name==='quantum_assessment');
+    if(deep && deep.status==='running') setScanState('正在分析 Java 字节码与调用关系','CrySentry 深度证据，结果会与快速扫描融合',58);
+    else if(q && q.status==='running') setScanState('正在按规则库评估量子风险','确定性判断不交给大模型',76);
     else setScanState(task.message||'正在执行本地扫描','多源证据正在归并',45);
     await sleep(650);
   }

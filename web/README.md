@@ -13,7 +13,19 @@ Compose 只把宿主机端口发布到 `127.0.0.1`。
 单文件，零依赖，**可离线** —— 比赛现场不一定有网，所以这里不引任何 CDN、
 不用任何框架、不需要任何构建步骤。
 
-2026-10-15 起，页面也是扫描入口：可拖入项目文件夹或使用文件夹选择器。文件先发送给本机 `127.0.0.1`，落在被 Git 忽略的 `workspace/web_tasks/`；默认不保留第三方原始输出，任务超过 24 小时自动清理。页面显示本地封装、多源扫描、量子评估、AI 和风险视图五个阶段。AI 需显式勾选；勾选后默认发送脱敏代码上下文与评估摘要到配置的云端模型。敏感或第三方项目可切换为“仅 API 调用形状”，凭据发现始终不出网。
+2026-10-15 起，页面也是扫描入口：可拖入项目文件夹或使用文件夹选择器。文件先发送给本机 `127.0.0.1`，落在被 Git 忽略的 `workspace/web_tasks/`；默认不保留第三方原始输出，任务超过 24 小时自动清理。页面显示本地封装、多源扫描、可选 Java 深扫、量子评估、AI 和风险视图六个阶段。AI 需显式勾选；勾选后默认发送脱敏代码上下文与评估摘要到配置的云端模型。敏感或第三方项目可切换为“仅 API 调用形状”，凭据发现始终不出网。
+
+**Java 深度证据入口：**在“扫描深度”中选“Java 深度证据”，拖入包含 `.java` 源码的项目文件夹，再单独选择由**同一份源码**编译出的 jar（上限 128 MiB）。服务端启动前用 cmd 配置仓库外引擎及 JDK 17：
+
+```cmd
+cd /d D:\code_competition\AI-CryptoGuard
+set ACG_TOOLS_DIR=D:\code_competition\_smoke
+set ACG_CRYSENTRY_HOME=D:\code_competition\_smoke\CrySentry
+set ACG_CRYSENTRY_JAVA=D:\code_competition\_smoke\jdk17\jdk-17.0.20.1+1\bin\java.exe
+python web\serve.py
+```
+
+浏览器仅把 jar 上传到本机任务目录；不会执行项目的 Maven/Gradle 构建脚本，也不会把 CrySentry 本体装进仓库。编译产物如依赖额外 jar，当前网页入口尚不能指定 classpath；请改用[命令行深扫](../docs/CrySentry集成验收_2026-10-18.md)。深扫失败或跳过时，快速扫描结果仍保留；任务状态会显示原因，**不能把 skipped 当作“没有问题”**。Python 项目继续用快速扫描。
 
 本地静态服务只提供网页本体，不直接提供 `out/`、`workspace/`、`.env` 和仓库文件。结果 API 会去掉上游 `raw` 记录；凭据证据的原始上下文不发送给浏览器。旧报告通过“导入已有报告”手动选择 JSON。
 
@@ -30,7 +42,7 @@ Compose 只把宿主机端口发布到 `127.0.0.1`。
 D:\code_competition\_smoke\cryptoscan-src\crypto-samples
 ```
 
-服务器限制单文件 8 MiB、单任务 64 MiB、最多 4000 个文件，并拒绝绝对路径和 `..` 路径。浏览器侧排除 `.git`、依赖、构建产物和常见二进制文件。需要指定第三方工具目录时：
+服务器限制源码单文件 8 MiB、源码总计 64 MiB、最多 4000 个文件；深扫模式的 jar 另外限制 128 MiB。服务器拒绝绝对路径和 `..` 路径。浏览器侧排除 `.git`、依赖、构建产物和常见二进制文件。需要指定第三方工具目录时：
 
 ```cmd
 set ACG_TOOLS_DIR=D:\code_competition\_smoke

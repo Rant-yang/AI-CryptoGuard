@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+import zipfile
 from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
@@ -34,6 +35,7 @@ TOOLS_DIR = Path(os.environ.get("ACG_TOOLS_DIR", str(ROOT.parent / "_smoke")))
 MAX_FILES = 4000
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TASK_BYTES = 64 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
 TASK_TTL_SECONDS = 24 * 60 * 60
 TASKS = {}
 LOCK = threading.Lock()
@@ -98,6 +100,16 @@ def _cleanup_expired():
 
 
 def _new_task(meta):
+    scan_mode = meta.get("scan_mode", "fast")
+    if scan_mode not in ("fast", "deep-java"):
+        raise ValueError("未知扫描模式")
+    if scan_mode == "deep-java":
+        home = os.environ.get("ACG_CRYSENTRY_HOME")
+        java = os.environ.get("ACG_CRYSENTRY_JAVA")
+        if not home or not Path(home).is_dir():
+            raise ValueError("Java 深扫需先配置有效的 ACG_CRYSENTRY_HOME。")
+        if not java or not Path(java).is_file():
+            raise ValueError("Java 深扫需先配置 JDK 17 的 ACG_CRYSENTRY_JAVA。")
     salt = "%s|%s|%s" % (time.time_ns(), meta.get("name", "project"), os.getpid())
     task_id = "web-" + hashlib.sha256(salt.encode("utf-8")).hexdigest()[:16]
     task_dir = _task_dir(task_id)
@@ -123,6 +135,8 @@ def _new_task(meta):
         "findings_count": None,
         "quantum_timeline_profile": timeline_profile,
         "ai_enabled": meta.get("ai_enabled") is True,
+        "scan_mode": scan_mode,
+        "artifact_uploaded": False,
         "ai_context": (meta.get("ai_context") if meta.get("ai_context") in
                        ("full", "shape") else "full"),
     }
@@ -151,18 +165,18 @@ def _set_task(task_id, **values):
             TASKS[task_id].update(values)
 
 
-def _run_task(task_id):
+def _pipeline_command(task_id):
     task_dir = _task_dir(task_id)
     input_dir = task_dir / "input"
     output_dir = task_dir / "out"
-    log_path = task_dir / "pipeline.log"
-    if not TOOLS_DIR.is_dir():
-        _set_task(task_id, state="failed",
-                  message="找不到第三方工具目录，请设置 ACG_TOOLS_DIR。")
-        return
-    _set_task(task_id, state="running", message="正在执行密码资产扫描")
     cmd = [sys.executable, str(ROOT / "core" / "pipeline.py"), str(input_dir),
            "--tools-dir", str(TOOLS_DIR), "-o", str(output_dir)]
+    task = _snapshot(task_id)
+    if task["scan_mode"] == "deep-java":
+        cmd += ["--mode", "deep-java",
+                "--java-artifact", str(task_dir / "artifact" / "target.jar"),
+                "--crysentry-home", os.environ["ACG_CRYSENTRY_HOME"],
+                "--crysentry-java", os.environ["ACG_CRYSENTRY_JAVA"]]
     if _snapshot(task_id).get("ai_enabled"):
         cmd += ["--ai", "--ai-context", _snapshot(task_id)["ai_context"]]
     profile = _snapshot(task_id).get("quantum_timeline_profile") or {}
@@ -171,10 +185,25 @@ def _run_task(task_id):
                 "--migration-lead-years", str(profile["migration_lead_years"]),
                 "--threat-horizon-years", str(profile["threat_horizon_years"]),
                 "--hndl-exposure", profile["hndl_exposure"]]
+    return cmd
+
+
+def _run_task(task_id):
+    task_dir = _task_dir(task_id)
+    task = _snapshot(task_id)
+    output_dir = task_dir / "out"
+    log_path = task_dir / "pipeline.log"
+    if not TOOLS_DIR.is_dir():
+        _set_task(task_id, state="failed",
+                  message="找不到第三方工具目录，请设置 ACG_TOOLS_DIR。")
+        return
+    _set_task(task_id, state="running", message="正在执行密码资产扫描")
+    cmd = _pipeline_command(task_id)
     try:
         with log_path.open("wb") as log:
             proc = subprocess.run(cmd, cwd=str(ROOT), stdout=log,
-                                  stderr=subprocess.STDOUT, timeout=900)
+                                  stderr=subprocess.STDOUT,
+                                  timeout=1800 if _snapshot(task_id)["scan_mode"] == "deep-java" else 900)
     except subprocess.TimeoutExpired:
         _set_task(task_id, state="failed", message="扫描超过 15 分钟，任务已终止。")
         return
@@ -206,6 +235,14 @@ def _run_task(task_id):
         _set_task(task_id, state="failed", message="扫描结果无法解析。")
         return
     ai_failed = _snapshot(task_id).get("ai_enabled") and scan_status.get("ai") != "completed"
+    deep = next((s for s in pipeline["stages"] if s["name"] == "deep_java"), {})
+    deep_label = {"failed": "失败", "skipped": "跳过", "timeout": "超时"}.get(
+        deep.get("status"), "未完成")
+    deep_warning = (
+        "；Java 深扫%s：%s" %
+        (deep_label, deep.get("reason") or "请检查任务状态")
+        if task["scan_mode"] == "deep-java" and deep.get("status") != "completed"
+        else "")
     scan_reason = next((s.get("reason") for s in pipeline["stages"]
                         if s.get("name") == "scan"), None)
     partial_warning = ("；注意：" + scan_reason) if scan_reason else ""
@@ -213,7 +250,18 @@ def _run_task(task_id):
               findings_count=len(rows),
               message=(("本地扫描完成；AI 解释未完成，请查看任务阶段状态。"
                         if ai_failed else "扫描完成，正在生成风险视图") +
-                       partial_warning))
+                       partial_warning + deep_warning))
+
+
+def _run_task_safe(task_id):
+    """A worker error must terminate the visible task, never leave it running."""
+    try:
+        _run_task(task_id)
+    except Exception as exc:
+        # Do not copy exception text into the browser: it can contain paths or
+        # scanner-provided material. Keep only the exception class locally.
+        sys.stderr.write("本地扫描任务内部错误: %s\n" % type(exc).__name__)
+        _set_task(task_id, state="failed", message="本地扫描任务发生内部错误；请查看本机终端。")
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -299,15 +347,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     task["uploaded_files"] += 1
                     task["uploaded_bytes"] += len(body)
                 return self._send_json(201, {"ok": True})
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "artifact":
+                task_id = parts[2]
+                body = self._body(MAX_ARTIFACT_BYTES)
+                if not body.startswith(b"PK\x03\x04"):
+                    raise ValueError("编译产物必须是有效的 Java jar。")
+                with LOCK:
+                    task = TASKS.get(task_id)
+                    if not task or task["state"] != "uploading" or task["scan_mode"] != "deep-java":
+                        raise ValueError("当前任务不接受 Java 编译产物")
+                    if task["artifact_uploaded"]:
+                        raise ValueError("编译产物已上传")
+                    target = _task_dir(task_id) / "artifact" / "target.jar"
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with target.open("xb") as handle:
+                        handle.write(body)
+                    if not zipfile.is_zipfile(target):
+                        target.unlink()
+                        raise ValueError("编译产物不是有效的 jar/ZIP 结构")
+                    task["artifact_uploaded"] = True
+                return self._send_json(201, {"ok": True})
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "start":
                 task_id = parts[2]
                 with LOCK:
                     task = TASKS.get(task_id)
                     if not task or task["state"] != "uploading" or task["uploaded_files"] < 1:
                         raise ValueError("没有可扫描的文件")
+                    if task["scan_mode"] == "deep-java" and not task["artifact_uploaded"]:
+                        raise ValueError("Java 深扫尚未上传编译后的 jar")
                     task["state"] = "queued"
                     task["message"] = "项目已接收，准备扫描"
-                threading.Thread(target=_run_task, args=(task_id,), daemon=True).start()
+                threading.Thread(target=_run_task_safe, args=(task_id,), daemon=True).start()
                 return self._send_json(202, _snapshot(task_id))
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             return self._send_json(400, {"error": str(exc)})

@@ -141,6 +141,8 @@ python web/serve.py
 
 也可以只运行 `python web/serve.py`，在页面顶部把项目文件夹拖进本地审计入口；
 扫描进度和结果会在同一页面连续展示。拖入内容只进入本机临时工作区，不发送到云端。
+Java 项目还可在页面选择“Java 深度证据”，另外上传**同一份源码**编译出的 jar；
+须先在本机设置 CrySentry 和 JDK 17 路径，具体命令与限制见 [Web 入口说明](web/README.md)。
 扫描完成后可从页眉下载自包含中文 HTML 报告。导入已有 JSON 只负责查看；
 命令行入口可用上面的 `core/report.py` 单独导出。
 
