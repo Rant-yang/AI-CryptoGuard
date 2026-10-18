@@ -93,7 +93,8 @@
   .scan-examples{margin-top:16px;padding-top:13px;border-top:1px solid rgba(120,144,165,.22);
                  color:#7890a5;font-size:11.5px;line-height:1.75}
   .scan-examples b{color:#b8cbd9;font-weight:600}
-  .scan-examples code{display:block;color:#8ee3c2;font-family:var(--mono);font-size:11px;
+  .scan-example{display:flex;flex-wrap:wrap;column-gap:8px;align-items:baseline}
+  .scan-examples code{color:#8ee3c2;font-family:var(--mono);font-size:11px;
                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .timeline-config{margin-top:12px;border-top:1px solid rgba(120,144,165,.22);padding-top:10px}
   .timeline-config summary{cursor:pointer;color:#b8cbd9;font:600 11.5px var(--mono)}
@@ -386,9 +387,9 @@
       <p>拖入一个项目文件夹。系统会在本机完成密码资产发现、证据融合与前置量子风险评估，完成后自动进入报告视图。</p>
       <div class="privacy"><i></i><span>仅发送到本机 127.0.0.1；默认不保留第三方原始输出。临时任务 24 小时后自动清理。</span></div>
       <div class="scan-examples">
-        <b>第一次体验，建议拖入这个小样例：</b>
-        <code>D:\code_competition\_smoke\cryptoscan-src\crypto-samples</code>
-        也可扫描 <code>D:\code_competition\AI-CryptoGuard\core\samples</code>
+        <b>第一次体验：在本仓库中选择公开源码样例文件夹</b>
+        <div class="scan-example"><code>examples/repair_demo</code><span>凭据与弱算法</span></div>
+        <div class="scan-example"><code>examples/pqc_demo</code><span>抗量子用途分派</span></div>
       </div>
       <details class="timeline-config" open>
         <summary>量子危机时间窗口（可选，不填则不下结论）</summary>
