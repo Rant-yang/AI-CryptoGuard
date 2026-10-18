@@ -25,12 +25,12 @@ def main():
                   'analysis_provenance': {'prompt_version': 'older-prompt'}}]
         assessed.write_text(json.dumps(before), encoding='utf-8')
         explained.write_text(json.dumps(after), encoding='utf-8')
-        original_ids, original_errors = semantic_eval.CASE_IDS, semantic_eval.errors
+        original_errors = semantic_eval.errors
         try:
-            semantic_eval.CASE_IDS = ('synthetic-only',)
             semantic_eval.errors = lambda _: []
             try:
-                semantic_eval.score(assessed, explained, review)
+                semantic_eval.score(assessed, explained, review,
+                                    case_ids=('synthetic-only',))
             except ValueError as exc:
                 assert '提示词版本' in str(exc)
             else:
@@ -39,11 +39,13 @@ def main():
 
             after[0]['analysis_provenance']['prompt_version'] = PROMPT_VERSION
             explained.write_text(json.dumps(after), encoding='utf-8')
-            summary = semantic_eval.score(assessed, explained, review)
+            summary = semantic_eval.score(
+                assessed, explained, review, case_ids=('synthetic-only',),
+                cohort='synthetic-current-v1')
             assert summary['total'] == summary['explained'] == 1
+            assert summary['cohort'] == 'synthetic-current-v1'
             assert review.exists(), 'Current prompt did not create review file'
         finally:
-            semantic_eval.CASE_IDS = original_ids
             semantic_eval.errors = original_errors
     print('PASS: semantic review rejects stale prompt output')
 

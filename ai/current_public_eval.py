@@ -1,0 +1,91 @@
+"""Score and blind-review every algorithm from the frozen current pipeline run.
+
+This is an integration/semantic-review cohort, not an independent P/R set.
+Raw scan outputs and model explanations remain in private local paths; the
+blind packet contains only redacted evidence summaries, not credential cases.
+"""
+import argparse
+import hashlib
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from ai import semantic_eval
+from benchmark.ai_semantic_review import make_packet
+from core.schema.validate_v02 import errors
+
+
+FROZEN_INPUT_SHA256 = '4675eca5c270422d8be26fc58cc0a4e39e0c20b17bb5913a9661746e527a4584'
+COHORT = 'public-crypto-samples-current-pipeline-20261018-v1'
+
+
+def evaluate(assessed_path, explained_path, score_path, packet_path):
+    assessed_path, explained_path = Path(assessed_path), Path(explained_path)
+    score_path, packet_path = Path(score_path), Path(packet_path)
+    if score_path == packet_path or score_path.exists() or packet_path.exists():
+        raise FileExistsError('结果路径必须不同且为全新文件；不得覆盖首次记录')
+    content = assessed_path.read_bytes()
+    if hashlib.sha256(content).hexdigest() != FROZEN_INPUT_SHA256:
+        raise ValueError('当前 assessed 输入与预登记 SHA-256 不同')
+    assessed = json.loads(content.decode('utf-8-sig'))
+    explained = json.loads(explained_path.read_text(encoding='utf-8-sig'))
+    if not isinstance(assessed, list) or not isinstance(explained, list):
+        raise ValueError('输入和输出均须为 Finding 数组')
+    if len(assessed) != len(explained) or len(assessed) != 35:
+        raise ValueError('预登记的 35 条 Finding 数量不符')
+    if [f.get('finding_id') for f in assessed] != [f.get('finding_id') for f in explained]:
+        raise ValueError('模型结果与冻结输入的 ID/顺序不同')
+    algorithms = [f for f in assessed if f.get('finding_kind') == 'algorithm']
+    credentials = [f for f in explained if f.get('finding_kind') == 'credential']
+    if len(algorithms) != 28 or len(credentials) != 7:
+        raise ValueError('预登记的 28 算法 + 7 凭据组成不符')
+    invalid = sum(bool(errors(f)) for f in explained)
+    if invalid or any(f.get('stage') != 'explained' for f in explained):
+        raise ValueError('存在未解释或不合 v0.2 契约的结果；不得生成盲审包')
+    if any((f.get('analysis_provenance') or {}).get('model_id') != 'local-rule-base'
+           for f in credentials):
+        raise ValueError('凭据必须由本地规则处理，不能进入云 AI')
+
+    algo_out = [f for f in explained if f.get('finding_kind') == 'algorithm']
+    with tempfile.TemporaryDirectory(prefix='acg-current-ai-') as temporary:
+        tmp = Path(temporary)
+        old_path, new_path, result_path = (tmp / n for n in
+                                           ('assessed.json', 'explained.json', 'score.json'))
+        old_path.write_text(json.dumps(algorithms, ensure_ascii=False), encoding='utf-8')
+        new_path.write_text(json.dumps(algo_out, ensure_ascii=False), encoding='utf-8')
+        summary = semantic_eval.score(
+            old_path, new_path, result_path,
+            case_ids=[f['finding_id'] for f in algorithms], cohort=COHORT)
+        if summary['total'] != 28 or summary['explained'] != 28 or summary['schema_invalid']:
+            raise ValueError('算法结果未完成结构验收')
+        score = json.loads(result_path.read_text(encoding='utf-8'))
+        packet = make_packet(score, algorithms)
+    if len(packet['cases']) != 28:
+        raise ValueError('盲审包数量错误')
+    score_path.parent.mkdir(parents=True, exist_ok=True)
+    packet_path.parent.mkdir(parents=True, exist_ok=True)
+    score_path.write_text(json.dumps(score, ensure_ascii=False, indent=2), encoding='utf-8')
+    packet_path.write_text(json.dumps(packet, ensure_ascii=False, indent=2), encoding='utf-8')
+    return {'total': 35, 'algorithm_cloud': 28, 'credential_local': 7,
+            'explained': 35, 'schema_invalid': 0,
+            'algorithm_usage_after': summary['usage_after'],
+            'blind_review_pending': len(packet['cases'])}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('assessed')
+    parser.add_argument('explained')
+    parser.add_argument('--score', required=True)
+    parser.add_argument('--packet', required=True)
+    args = parser.parse_args()
+    print(json.dumps(evaluate(args.assessed, args.explained,
+                              args.score, args.packet), ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    main()

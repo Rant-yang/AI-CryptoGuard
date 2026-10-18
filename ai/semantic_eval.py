@@ -59,11 +59,13 @@ def prepare(assessed_path, output_path):
     return selected
 
 
-def score(assessed_path, explained_path, report_path):
+def score(assessed_path, explained_path, report_path,
+          case_ids=None, cohort=None):
     before, after = _load(assessed_path), _load(explained_path)
-    if [r['finding_id'] for r in before] != list(CASE_IDS) or \
-            [r['finding_id'] for r in after] != list(CASE_IDS):
-        raise ValueError('结果与预先固定的 30 条 ID/顺序不一致')
+    expected_ids = list(CASE_IDS if case_ids is None else case_ids)
+    if [r['finding_id'] for r in before] != expected_ids or \
+            [r['finding_id'] for r in after] != expected_ids:
+        raise ValueError('结果与预先固定的样本 ID/顺序不一致')
     # IDs alone are insufficient: an older prompt can explain the same 30
     # findings, pass the schema, and silently produce a stale blind-review
     # packet. Refuse it before creating any review artifact.
@@ -100,7 +102,7 @@ def score(assessed_path, explained_path, report_path):
             'review_notes': None,
         })
     summary = {
-        'cohort': 'public-crypto-samples-semantic-30-v1',
+        'cohort': cohort or 'public-crypto-samples-semantic-30-v1',
         'total': len(rows),
         'explained': sum(r['stage'] == 'explained' for r in rows),
         'schema_invalid': sum(bool(r['schema_errors']) for r in rows),
