@@ -64,7 +64,16 @@
   if (typeof document === 'undefined') return;
 
   const $ = id => document.getElementById(id);
-  const state = {packet: null, index: 0};
+  const state = {packet: null, index: 0, dirty: false};
+  function markDirty() {
+    state.dirty = true;
+    $('export').textContent = '导出当前审阅 JSON（有未保存修改）';
+  }
+  window.addEventListener('beforeunload', event => {
+    if (!state.dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
   function elt(tag, className, value) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -141,6 +150,7 @@
       select.value = row[key] === null ? '' : String(row[key]);
       select.addEventListener('change', () => {
         row[key] = select.value === '' ? null : select.value === 'true';
+        markDirty();
         render();
       });
       wrap.append(select);
@@ -153,10 +163,16 @@
   $('packet-file').addEventListener('change', async event => {
     const file = event.target.files && event.target.files[0];
     if (!file) return;
+    if (state.dirty && !window.confirm('当前审阅有未导出的修改。重新导入会覆盖它们，确定继续吗？')) {
+      event.target.value = '';
+      return;
+    }
     try {
       const parsed = validatePacket(JSON.parse((await file.text()).replace(/^\uFEFF/, '')));
       state.packet = parsed;
       state.index = 0;
+      state.dirty = false;
+      $('export').textContent = '导出当前审阅 JSON';
       $('workspace').hidden = false;
       $('empty').hidden = true;
       $('error').textContent = '';
@@ -178,6 +194,7 @@
   });
   $('notes').addEventListener('input', event => {
     state.packet.cases[state.index].review_notes = event.target.value || null;
+    markDirty();
     $('note-warning').hidden = !(KEYS.some(key => state.packet.cases[state.index][key] === false) && !event.target.value.trim());
   });
   $('export').addEventListener('click', () => {
@@ -190,6 +207,10 @@
     document.body.append(link);
     link.click();
     link.remove();
+    // Browsers do not tell this page whether the download actually finished.
+    // Keep the leave/re-import warning until the reviewer confirms the file
+    // exists; otherwise a blocked download could silently lose all judgments.
+    if (state.dirty) $('export').textContent = '已请求下载；请确认文件存在';
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 })();
