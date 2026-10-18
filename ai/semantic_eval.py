@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.schema.validate_v02 import errors
+from ai.enrich_v02 import PROMPT_VERSION
 
 
 CASE_IDS = (
@@ -63,6 +64,16 @@ def score(assessed_path, explained_path, report_path):
     if [r['finding_id'] for r in before] != list(CASE_IDS) or \
             [r['finding_id'] for r in after] != list(CASE_IDS):
         raise ValueError('结果与预先固定的 30 条 ID/顺序不一致')
+    # IDs alone are insufficient: an older prompt can explain the same 30
+    # findings, pass the schema, and silently produce a stale blind-review
+    # packet. Refuse it before creating any review artifact.
+    stale = [r['finding_id'] for r in after
+             if (r.get('analysis_provenance') or {}).get('prompt_version')
+             != PROMPT_VERSION]
+    if stale:
+        raise ValueError('模型结果的提示词版本不是当前 %s：%d 条不匹配；'
+                         '请使用本轮 v0.2 输出，不能复用旧盲审包。'
+                         % (PROMPT_VERSION, len(stale)))
     rows = []
     for old, new in zip(before, after):
         invalid = errors(new)
