@@ -116,6 +116,42 @@ def main():
     check("明确的加密调用仍可判为 encryption",
           _has_direct_usage_evidence(primitive, "encryption", ["E1"]))
 
+    rsa_constructor = copy.deepcopy(bare)
+    rsa_constructor["algorithm"] = rsa_constructor["algorithm_normalized"] = "RSA"
+    rsa_constructor["evidence"] = [{
+        "tool": "cryptoscan", "kind": "pattern", "lines": [4],
+        "raw": {"records": [{"context": "Signature.getInstance("}]},
+    }]
+    rsa_constructor = assess_one(rsa_constructor)
+    check("Signature.getInstance 只创建签名器，不证明签名用途",
+          not _has_direct_usage_evidence(rsa_constructor, "signing", ["E1"]))
+    declined_signing = enrich_one(
+        rsa_constructor, lambda *_: model("signing"), model_id="offline-test")
+    check("模型猜签名时本地校验保留 unknown，不选 ML-DSA",
+          declined_signing["usage"] == "unknown" and
+          declined_signing["remediation"]["reason"] == "usage-undetermined")
+    rsa_constructor["evidence"][0]["raw"]["records"][0]["context"] = \
+        "Signature.initSign(privateKey)"
+    check("initSign 仅配置签名器，也不能证明 sign 已调用",
+          not _has_direct_usage_evidence(rsa_constructor, "signing", ["E1"]))
+    rsa_constructor["evidence"][0]["raw"]["records"][0]["context"] = \
+        "signature.sign()"
+    check("实际 sign 调用可证明签名用途",
+          _has_direct_usage_evidence(rsa_constructor, "signing", ["E1"]))
+    rsa_constructor["evidence"][0]["raw"]["records"][0]["context"] = \
+        "Cipher.getInstance("
+    check("Cipher.getInstance 只创建加密器，不证明加密用途",
+          not _has_direct_usage_evidence(rsa_constructor, "encryption", ["E1"]))
+    declined_encryption = enrich_one(
+        rsa_constructor, lambda *_: model("encryption"), model_id="offline-test")
+    check("模型猜公钥加密时本地校验保留 unknown，不选 ML-KEM",
+          declined_encryption["usage"] == "unknown" and
+          declined_encryption["remediation"]["reason"] == "usage-undetermined")
+    rsa_constructor["evidence"][0]["raw"]["records"][0]["context"] = \
+        "crypto.publicEncrypt(publicKey, data)"
+    check("实际 publicEncrypt 调用可证明加密用途",
+          _has_direct_usage_evidence(rsa_constructor, "encryption", ["E1"]))
+
     ecdh = copy.deepcopy(bare)
     ecdh["algorithm"] = ecdh["algorithm_normalized"] = "ECC"
     ecdh["evidence"] = [{

@@ -24,7 +24,7 @@ from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
 
-PROMPT_VERSION = "ai-v02-2026-10-19.7"
+PROMPT_VERSION = "ai-v02-2026-10-19.8"
 REDACTION_VERSION = "redact-v02-allowlist-1"
 USAGES = frozenset(legacy.VALID_USAGES)
 RETRYABLE_OUTPUT_ERRORS = frozenset({
@@ -131,14 +131,22 @@ def _has_direct_usage_evidence(finding, usage, refs=None):
             for s in calls)
     if alg.startswith(('RSA', 'ECC', 'ECDSA', 'ECDH', 'ED25519', 'X25519', 'EDDSA')):
         signatures = {
-            'signing': r'(?:^|\.)(?:sign|verify|initSign|initVerify|Signature)(?:\.|$)|Signature\.getInstance',
+            # Provider lookup and initSign/initVerify only configure a
+            # Signature object; require the sign/verify operation itself.
+            'signing': r'(?:^|\.)(?:sign|verify)(?:\.|$)',
             # createECDH / KeyAgreement.getInstance only construct objects;
             # they do not prove a shared secret was computed or consumed.
             'key_exchange': (r'(?:^|\.)computeSecret(?:\.|$)|'
                              r'(?:^|\.)exchange(?:\.|$)|'
                              r'(?:^|\.)doPhase(?:\.|$)|'
                              r'(?:^|\.)generateSecret(?:\.|$)'),
-            'encryption': r'Cipher\.|createCipher|\.encrypt(?:\.|$)|\.decrypt(?:\.|$)',
+            # Cipher.getInstance/createCipher only construct a primitive.
+            # A mode-bearing init is a configuration-role signal; direct
+            # encrypt/decrypt calls are stronger execution signals.
+            'encryption': (r'Cipher\.init\(ENCRYPT_MODE\)|'
+                           r'(?:^|\.)(?:encrypt|decrypt|publicEncrypt|'
+                           r'privateDecrypt|privateEncrypt|publicDecrypt)'
+                           r'(?:\.|$)'),
         }
         pattern = signatures.get(usage)
         return bool(pattern and any(re.search(pattern, s, re.I) for s in shapes))
