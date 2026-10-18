@@ -32,11 +32,14 @@ python core\schema\validate_v02.py out\run\task.json
 | 受限环境中的两条真实调用 | APIConnectionError；任务中 AI=failed，2 条 assessed 保留。此结果受网络沙箱影响 |
 | 允许联网环境中的单条真实调用 | **explained、v0.2 契约错误 0、用途 unknown、整改步骤 3 条**；还不能证明 30 条语义质量 |
 | 合成 RSA Finding 的真实统一入口全链路 | `--findings … --ai` 退出码 0，AI=completed；explained Finding 与 task.json 各 0 个契约错误。模型保守输出 `usage=unknown`，未擅选 PQC 路线 |
+| 公开 Java 样例的真实 CrySentry → AI 全链路（2026-10-18 追加） | `examples/java_deep_demo/Demo.java` 用 JDK 17 编译成仓库外 jar；fast/deep_java/quantum_assessment/ai 四阶段全部 `completed`；输出 2 条 Finding，两个文件各 0 个 v0.2 契约错误；弱随机密钥的 taint 为 `partial`，其引用 `E1` 有效，AES/ECB 的 pattern 引用 `E1` 有效。两条用途均保持 `unknown`，未臆断业务用途 |
 
 Web 静态服务只允许 `/web/index.html`，不会直接公开 `out/`、`workspace/`、`.env` 或仓库源码。导入已有报告需使用页面右上角的“导入已有报告”。
 
+上述 Java 全链路使用本项目公开故意不安全样例，输出只保存在本机仓库外。CrySentry 的污点证据只定位来源与汇点，**没有中间传播路径**；`completed` 证明运行完成，不证明完整数据流、独立检测率或 AI 语义准确率。AES/ECB 样例仅有 `Cipher.getInstance` 和 `init(ENCRYPT_MODE)`，没有 `doFinal`；AI 保留了用途未知并要求核查实际使用，这一保守判断与现有证据相符。模型这次仅引用其中一条 pattern 证据，并非声称已逐条分析所有上游记录。
+
 ## 尚需完成
 
-1. 用至少 30 条跨风险/语言/证据类型样本做真模型语义抽样；逐条核查用途、证据支持关系、整改可执行性和不确定性，不只看 Schema 通过率。
-2. 固定有标签 Java 子集，对 fast 与 deep-java 同题跑 P/R/F1、耗时、完成率；CrySentry 的 smoke 只证明接口和证据链可运行。
+1. 收紧后固定 30 条公开样本已完成真实调用且 30/30 通过结构校验；**独立人工语义盲审仍为 0/30**。逐条核查用途、证据支持关系、整改可执行性和不确定性，不把 Schema 通过率当成语义准确率，见[语义验收](AI语义验收_2026-10-18.md)。
+2. 固定 25 例 Java 的 fast/deep-java 同题对照已完成，P/R 相同；若要验证深扫指标增益，仍需新的、快扫确实遗漏且 CrySentry 有对应规则的固定样本。公开样例只证明链路可运行。
 3. 凭据留出集、真实项目 Repair→Verify、部署/演示与第三方许可证材料按总计划完成。
