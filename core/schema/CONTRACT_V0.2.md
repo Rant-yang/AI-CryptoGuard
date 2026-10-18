@@ -47,6 +47,12 @@ HNDL（先收集后解密）另用 `hndl_exposure` 和 `hndl_status` 表示。�
 
 ## 5. B：解释与整改
 
+`remediation.reason=conditional-default` 表示扫描到的算法只是
+`Properties.getProperty(key, fallback)` 的源码备用值，而唯一定位的资源配置给出了
+不同的值。该 Finding 仍保留，额外证据指向配置覆盖处；前置评估必须标明证据不足，
+不能据此断言备用值正在运行或给出确定的量子迁移方案。B 的解释应先要求核实实际
+部署配置；已验证的本地解释路径不会把此类 Finding 发往云模型。
+
 usage_assessment 给出 usage/reason/evidence_refs/unknowns，并与最终 usage 一致。explanation 用中文讲清楚发现、用途、影响和不确定性。每个整改步骤都包含 action、target、evidence_refs、rule_refs、prerequisites、verification、execution_status。没有可靠位置时 target=null；尚未执行的步骤必须标 not_run。没有可支持的整改时 steps 可以为空，必须在解释和 unknowns 中说明原因。
 
 每个步骤的规则引用只能来自 C 提供的 quantum_assessment.rule_refs；纯定位核查可用空规则引用。规则相关建议还必须由程序核验迁移路线，单纯引用合法不代表建议正确。先使用 assessed 夹具开发，不必等待 CrySentry 接通。

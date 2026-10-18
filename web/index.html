@@ -493,7 +493,7 @@ const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'�
 // 四种「给不出结论」分开表述 —— 这是契约要求的核心区分，
 // 不能糊成一句「需人工确认」。
 const REASONS = ['decided','usage-undetermined','not-an-algorithm',
-                 'rule-missing','not-enriched'];
+                 'rule-missing','not-enriched','conditional-default'];
 const REASON_META = {
   'decided':           {cn:'已给结论',   cls:'tag ok',   tone:'v-ok',
                         why:'规则库已给出确定的迁移或加固建议。'},
@@ -505,6 +505,8 @@ const REASON_META = {
                         why:'规则库中没有该算法。这是待补的缺口 —— 扩充 core/rules/ 即可，不需要重跑大模型。'},
   'not-enriched':      {cn:'尚未增强',   cls:'tag mute', tone:'v-warn',
                         why:'这一条还没有经 ai/ 层处理（来源是 scanner 的占位符）。'},
+  'conditional-default':{cn:'条件性默认值',cls:'tag warn',tone:'v-warn',
+                        why:'项目内配置覆盖了备用算法；仅在部署配置缺失或未生效时才可能使用它。'},
 };
 
 const USAGE_CN = {
@@ -598,10 +600,12 @@ function renderFigs(){
   const rows = S.rows;
   const decided = rows.filter(f => (f.remediation||{}).decided).length;
   const multi = rows.filter(f => (f.evidence||[]).length > 1).length;
+  const conditional = rows.filter(f => (f.tags||[]).includes('conditional-default')).length;
   const pct = rows.length ? Math.round(decided/rows.length*100) : 0;
 
   $('#figs').innerHTML = `
     <span class="fig"><b>${multi}</b>条多源交叉</span>
+    ${conditional ? `<span class="fig"><b>${conditional}</b>条条件性默认值</span>` : ''}
     <span class="fig good"><b>${decided}</b>条已给结论（${pct}%）</span>`;
 }
 
@@ -707,7 +711,8 @@ function renderList(){
     const rk = riskCls(f.risk);
     return `<tr data-i="${i}" class="${sel?'sel':''}">
       <td><span class="rk ${rk}"><i></i>${esc(RISK_CN[f.risk]||f.risk||'—')}</span></td>
-      <td class="alg">${esc(subjectOf(f))}</td>
+      <td class="alg">${esc(subjectOf(f))}${(f.tags||[]).includes('conditional-default')
+        ? ' <span class="tag warn">仅备用值</span>' : ''}</td>
       <td class="loc" title="${esc(f.file)}">${esc((f.file||'').split(/[\\/]/).pop())}:${esc(f.line)}</td>
       <td><span class="tag">${esc(USAGE_CN[f.usage]||f.usage||'—')}</span></td>
       <td><span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span></td>
@@ -750,6 +755,17 @@ function renderDetail(){
   const meta = REASON_META[rs] || {cn: rs||'—', cls:'tag mute', tone:'v-warn', why:''};
   const rk = riskCls(f.risk);
   const qa = f.quantum_assessment || null;
+  const isConditional = (f.tags||[]).includes('conditional-default');
+  const overrideEvidence = (f.evidence||[]).filter(e =>
+    (e.raw||{}).kind === 'java-properties-override');
+  const conditionalHtml = isConditional ? `<section class="blk">
+    <h3>条件性默认值 · 尚未证明当前生效</h3>
+    <div class="box">
+      <div class="txt">此算法写在 Java 配置读取的备用参数中。项目内的配置项覆盖了它；
+      只有部署时配置资源或该键未生效，备用值才可能成为运行时算法。请核对实际 classpath 和发布配置。</div>
+      ${overrideEvidence.map(e => `<div class="why">覆盖证据：${esc(e.raw.resource_file||'配置文件')}:${esc(e.raw.resource_line||'?')} · 对应 Java 行 ${esc((e.lines||[]).join('、'))}</div>`).join('')}
+    </div>
+  </section>` : '';
   const qt = qa && qa.quantum_timeline || null;
   const qEffect = {
     shor:'Shor：传统公钥算法面临直接破解风险',
@@ -843,10 +859,11 @@ function renderDetail(){
         <span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span>
         <span class="tag">用途 · ${esc(USAGE_CN[f.usage]||f.usage||'—')}</span>
         ${f.confidence!=null ? `<span class="tag">置信 ${esc(f.confidence)}</span>` : ''}
-        ${(f.tags||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('')}
+        ${(f.tags||[]).map(t=>`<span class="tag ${t==='conditional-default'?'warn':''}">${esc(t==='conditional-default'?'仅备用值':t)}</span>`).join('')}
       </div>
     </div>
 
+    ${conditionalHtml}
     ${qHtml}
 
     <section class="blk">

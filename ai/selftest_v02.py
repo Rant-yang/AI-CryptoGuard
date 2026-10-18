@@ -84,6 +84,16 @@ def main():
           local["analysis_provenance"]["model_id"] == "local-rule-base" and
           not local["quantum_assessment"]["migration_candidates"])
 
+    fallback = copy.deepcopy(bare)
+    fallback["tags"] = ["conditional-default"]
+    fallback = assess_one(fallback)
+    fallback_local = enrich_one(fallback, lambda *_: (_ for _ in ()).throw(
+        AssertionError("conditional fallback sent to model")))
+    check("条件性默认值本地解释，不把备用算法说成当前已生效", not errors(fallback_local) and
+          fallback_local["analysis_provenance"]["model_id"] == "local-config-rule" and
+          fallback_local["remediation"]["reason"] == "conditional-default" and
+          "不能断言" in fallback_local["usage_assessment"]["reason"])
+
     sensitive = copy.deepcopy(rsa)
     sensitive["file"] = "src/Actual.java"
     sensitive["evidence"][0]["raw"] = {"context":

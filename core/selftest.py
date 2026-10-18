@@ -37,6 +37,15 @@ def main():
     assert md5["quantum_assessment"]["classical_issues"]
     assert not errors(md5)
 
+    conditional = copy.deepcopy(SAMPLES[1])
+    conditional["tags"] = ["conditional-default"]
+    conditional = assess_one(conditional)
+    assert conditional["quantum_assessment"]["status"] == "insufficient_evidence"
+    assert conditional["quantum_assessment"]["quantum_effect"] == "unknown"
+    assert not conditional["quantum_assessment"]["migration_candidates"]
+    assert conditional["remediation"]["reason"] == "conditional-default"
+    assert not errors(conditional)
+
     credential = json.loads((ROOT / "core/samples/v0.2/credential.json").read_text(
         encoding="utf-8"))[0]
     credential = assess_one(credential)

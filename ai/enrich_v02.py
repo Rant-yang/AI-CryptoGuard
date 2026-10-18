@@ -229,6 +229,32 @@ def _local_credential(finding):
     return out
 
 
+def _local_conditional_default(finding):
+    """Explain an overridden fallback locally; do not ask a model to infer it."""
+    out = copy.deepcopy(finding)
+    refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
+    out["usage_assessment"] = {
+        "usage": out["usage"],
+        "reason": ("当前证据仅定位到配置读取的备用算法；项目内配置文件覆盖了"
+                   "该键，不能断言备用算法在部署环境中生效。"),
+        "evidence_refs": refs,
+        "unknowns": ["实际发布包中的资源文件、classpath 与覆盖配置需人工核查。"],
+    }
+    out["explanation"] = (
+        "条件性风险：源码中存在不安全的配置备用算法，但项目内配置覆盖了它。"
+        "只有发布时资源或该键未生效，备用算法才可能运行。"
+        "当前证据不足以认定它已被使用，也不能据此启动量子迁移。")
+    out["evidence_refs"] = refs
+    out["remediation_steps"] = [_step(
+        "核对发布配置与 classpath；若备用值可能生效，移除不安全默认算法。",
+        out, refs,
+        prerequisites=["确认发布环境实际加载的资源及配置覆盖顺序"],
+        verification=["在配置存在与配置缺失两种场景下测试实际选用的算法"])]
+    out["stage"] = "explained"
+    out["analysis_provenance"] = _provenance(out, "local-config-rule", "local-no-cloud")
+    return out
+
+
 def enrich_one(finding, model_call=call_model, context="full",
                max_tokens=legacy.MAX_TOKENS, model_id=None):
     if finding.get("stage") != "assessed":
@@ -238,6 +264,8 @@ def enrich_one(finding, model_call=call_model, context="full",
         raise ValueError("输入未通过 v0.2 契约：%s" % "; ".join(bad))
     if finding.get("finding_kind") == "credential":
         out = _local_credential(finding)
+    elif "conditional-default" in finding.get("tags", []):
+        out = _local_conditional_default(finding)
     else:
         raw = model_call(finding, context, max_tokens)
         if not isinstance(raw, dict):
@@ -337,6 +365,8 @@ def _reuse(prev, current, model_id, context, max_tokens):
         return False
     if current.get("finding_kind") == "credential":
         expected_model, expected_redaction = "local-rule-base", "local-no-cloud"
+    elif "conditional-default" in current.get("tags", []):
+        expected_model, expected_redaction = "local-config-rule", "local-no-cloud"
     else:
         expected_model = "%s|tokens=%d|context=%s" % (model_id, max_tokens, context)
         expected_redaction = REDACTION_VERSION + "-" + context
@@ -410,7 +440,9 @@ def enrich_file(input_path, output_path, context="full", max_tokens=legacy.MAX_T
                 reused += 1
             else:
                 last_error = None
-                for attempt in range(2 if finding.get('finding_kind') != 'credential' else 1):
+                local_only = (finding.get('finding_kind') == 'credential' or
+                              'conditional-default' in finding.get('tags', []))
+                for attempt in range(1 if local_only else 2):
                     try:
                         budget = (max_tokens * 2 if attempt and last_error and
                                   _failure_label(last_error) == 'max_tokens'
@@ -461,14 +493,20 @@ def main(argv=None):
         parser.error("max-tokens 必须为正；limit/checkpoint/sleep 不能为负")
     if args.dry_run:
         rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
-        cloud = [r for r in rows if r.get("finding_kind") != "credential"]
-        print("本地凭据 %d 条，拟发送云端 %d 条，脱敏载荷总字符数 %d" %
-              (len(rows) - len(cloud), len(cloud), sum(
+        cloud = [r for r in rows
+                 if r.get("finding_kind") != "credential" and
+                 "conditional-default" not in r.get("tags", [])]
+        credentials = sum(r.get("finding_kind") == "credential" for r in rows)
+        conditional = sum("conditional-default" in r.get("tags", []) for r in rows)
+        print("本地凭据 %d 条，条件性备用值 %d 条，拟发送云端 %d 条，脱敏载荷总字符数 %d" %
+              (credentials, conditional, len(cloud), sum(
                   len(json.dumps(_model_payload(r, args.context), ensure_ascii=False))
                   for r in cloud)))
         return 0
     rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
-    needs_cloud = any(r.get("finding_kind") != "credential" for r in rows[:args.limit or None])
+    needs_cloud = any(r.get("finding_kind") != "credential" and
+                      "conditional-default" not in r.get("tags", [])
+                      for r in rows[:args.limit or None])
     if needs_cloud and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                         not os.environ.get("ANTHROPIC_MODEL")):
         print("[错误] 请设置 ANTHROPIC_AUTH_TOKEN 和 ANTHROPIC_MODEL（不打印密钥）")

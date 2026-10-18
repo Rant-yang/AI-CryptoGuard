@@ -53,11 +53,20 @@ def prepare_scanned(finding):
     out["stage"] = "scanned"
     out.setdefault("finding_kind", "algorithm")
     out.setdefault("usage", "unknown")
-    out["remediation"] = {
-        "decided": False,
-        "reason": "not-enriched",
-        "source": "none",
-    }
+    if "conditional-default" in out.get("tags", []):
+        out["remediation"] = {
+            "decided": False,
+            "reason": "conditional-default",
+            "source": "rule-base",
+            "action": ("该算法仅是配置读取的备用值。先核对实际部署配置；"
+                       "若备用值仍可能生效，应消除该不安全默认值。"),
+        }
+    else:
+        out["remediation"] = {
+            "decided": False,
+            "reason": "not-enriched",
+            "source": "none",
+        }
     return out
 
 
@@ -96,7 +105,21 @@ def assess_one(finding, timeline_profile=None):
     kind = out["finding_kind"]
     risk = out.get("risk", "review")
 
-    if kind == "credential" or risk == "not_applicable":
+    if "conditional-default" in out.get("tags", []):
+        assessment = {
+            "status": "insufficient_evidence",
+            "quantum_effect": "unknown",
+            "classical_issues": [],
+            "rule_version": version,
+            "rule_refs": [],
+            "evidence_refs": refs,
+            "unknowns": [
+                "该算法仅见于 getProperty 的备用值；项目内配置覆盖了它。"
+                "只有部署时资源或键缺失，备用值才可能生效。需核对实际 classpath。"
+            ],
+            "migration_candidates": [],
+        }
+    elif kind == "credential" or risk == "not_applicable":
         assessment = {
             "status": "not_applicable",
             "quantum_effect": "not_applicable",

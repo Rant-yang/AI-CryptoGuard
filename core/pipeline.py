@@ -187,7 +187,9 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
                                 seconds=time.time() - started,
                                 tool_version="quantum-rules-" + rule_version())
     if ai:
-        remote_rows = [f for f in result if f.get("finding_kind") != "credential"]
+        remote_rows = [f for f in result
+                       if f.get("finding_kind") != "credential" and
+                       "conditional-default" not in f.get("tags", [])]
         if remote_rows and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                             not os.environ.get("ANTHROPIC_MODEL")):
             task["stages"][3] = _stage(

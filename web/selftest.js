@@ -238,6 +238,22 @@ setTimeout(() => {
         !htmlOf('#detail').includes('LEAK-ME-SECRET') &&
         !htmlOf('#detail').includes('LEAK-ME-CONTEXT'));
 
+  /* 条件性备用算法必须一眼可见，不能装作已证明在运行时生效。 */
+  const fallback = JSON.parse(JSON.stringify(cited));
+  fallback.tags = ['conditional-default'];
+  fallback.algorithm = 'AES-ECB';
+  fallback.evidence.push({tool:'local-literal',kind:'pattern',lines:[9,10],
+    raw:{kind:'java-properties-override',resource_file:'benchmark.properties',
+         resource_line:3,property_key:'cipher'}});
+  x.S.sel = fallback; x.S.view = [fallback]; x.renderDetail(); x.renderList();
+  check('条件性默认值在详情与列表均明确提示',
+        htmlOf('#detail').includes('尚未证明当前生效') &&
+        htmlOf('#detail').includes('benchmark.properties:3') &&
+        htmlOf('#list').includes('仅备用值'));
+  check('条件性结论有独立中文状态',
+        !!api.REASON_META['conditional-default'] &&
+        api.REASON_META['conditional-default'].cn === '条件性默认值');
+
   /* --- 9. CrySentry taint flow 必须可见，来源缺失不能伪装成完整链 --- */
   const deep = JSON.parse(JSON.stringify(cited));
   deep.finding_id = 'deep';

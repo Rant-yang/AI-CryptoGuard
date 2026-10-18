@@ -87,6 +87,53 @@ def split_output(findings_all):
     return findings, leads
 
 
+def annotate_conditional_defaults(findings_all, conditions):
+    """Mark config-overridden fallbacks, retaining them as visible risks.
+
+    Only a finding whose *every* source hit lies on the identified fallback
+    expression/call site may be marked conditional. An independent hit of the
+    same algorithm elsewhere in the file must remain an ordinary finding.
+    """
+    by_key = {}
+    for item in conditions:
+        by_key.setdefault((item['file'], item['alg_norm']), []).append(item)
+    marked = 0
+    for finding in findings_all:
+        candidates = by_key.get((finding['file'],
+                                 finding['algorithm_normalized']), [])
+        if not candidates:
+            continue
+        evidence_lines = {line for ev in finding['evidence']
+                          for line in ev['lines']}
+        fallback_lines = {line for item in candidates for line in item['lines']}
+        if not evidence_lines or not evidence_lines <= fallback_lines:
+            continue
+        tags = set(finding.get('tags') or [])
+        tags.add('conditional-default')
+        finding['tags'] = sorted(tags)
+        finding['remediation'] = {
+            'decided': False, 'reason': 'conditional-default',
+            'source': 'rule-base',
+            'action': ('该算法仅是配置读取的备用值。先核对实际部署配置；'
+                       '若备用值仍可能生效，应消除该不安全默认值。'),
+        }
+        for item in candidates:
+            if not set(item['lines']) & evidence_lines:
+                continue
+            finding['evidence'].append({
+                'tool': 'local-literal', 'kind': 'pattern',
+                'lines': sorted(set(item['lines'])),
+                'raw': {
+                    'kind': 'java-properties-override',
+                    'resource_file': item['resource_file'],
+                    'resource_line': item['resource_line'],
+                    'property_key': item['property_key'],
+                },
+            })
+        marked += 1
+    return marked
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='scanner/scan.py',
@@ -167,7 +214,7 @@ def main(argv=None):
     # 与工具重叠的分组在 merge 侧让位 —— 见 local_literal.py docstring
     t0 = time.time()
     lit_groups = local_literal.scan(target)
-    property_groups = java_properties.scan(target)
+    property_groups, conditional_defaults = java_properties.analyze(target)
     lit_groups.extend(property_groups)
     all_groups.extend(lit_groups)
     meta_tools[local_literal.TOOL_NAME] = {
@@ -182,6 +229,8 @@ def main(argv=None):
                    meta_tools[local_literal.TOOL_NAME]['seconds'], len(lit_groups)))
 
     findings_all = merge(all_groups)
+    conditional_count = annotate_conditional_defaults(
+        findings_all, conditional_defaults)
 
     findings, leads = split_output(findings_all)
 
@@ -226,6 +275,7 @@ def main(argv=None):
             'risk_corrected': sum(
                 1 for f in findings
                 if TAG_UPSTREAM_RISK_CORRECTED in f.get('tags', [])),
+            'conditional_defaults': conditional_count,
             'credentials': len(credential_findings),
             'by_credential_rule': _count_by(credential_findings, 'rule_id'),
         },

@@ -780,6 +780,30 @@ def test_credential_identity(check):
           'synthetic-alpha' not in repr(a), True)
 
 
+def test_conditional_default(check):
+    from scanner.scan import annotate_conditional_defaults
+    cond = [{'file': 'A.java', 'alg_norm': 'AESECB', 'lines': [10, 11],
+             'resource_file': 'choice.properties', 'resource_line': 2,
+             'property_key': 'cipher'}]
+    only_fallback = merge([_group('cryptoscan', 'A.java', 'AESECB',
+                                  'encryption', [10], risk='review',
+                                  algorithm='AES-ECB')])
+    check('只有覆盖默认值的证据时标作条件性风险',
+          annotate_conditional_defaults(only_fallback, cond), 1)
+    check('条件性风险仍保留在问题清单和独立证据中',
+          ('conditional-default' in only_fallback[0]['tags'],
+           len(only_fallback[0]['evidence'])), (True, 2))
+    check('备用值不给确定整改结论',
+          (only_fallback[0]['remediation']['decided'],
+           only_fallback[0]['remediation']['reason']),
+          (False, 'conditional-default'))
+    independent = merge([_group('cryptoscan', 'A.java', 'AESECB',
+                                'encryption', [10, 50], risk='review',
+                                algorithm='AES-ECB')])
+    check('同文件还有独立命中时不能把整条降为条件性',
+          annotate_conditional_defaults(independent, cond), 0)
+
+
 def main():
     fails = []
     _checks = [0]
@@ -795,7 +819,8 @@ def main():
                test_malformed_inputs,
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,
-               test_cbom_report, test_java_properties, test_credential_identity):
+               test_cbom_report, test_java_properties, test_credential_identity,
+               test_conditional_default):
         fn(check)
 
     if fails:

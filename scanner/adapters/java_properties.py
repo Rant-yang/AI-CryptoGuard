@@ -105,7 +105,8 @@ def _algorithm(value):
     return None
 
 
-def scan(target):
+def analyze(target):
+    """Return (effective-algorithm groups, overridden-default evidence)."""
     target = os.path.abspath(target)
     resources = {}
     java_files = []
@@ -119,6 +120,7 @@ def scan(target):
                 java_files.append(path)
 
     groups = {}
+    conditional_defaults = []
     for path in java_files:
         try:
             if os.path.getsize(path) > _MAX_FILE_BYTES:
@@ -156,6 +158,7 @@ def scan(target):
             props = _property_map(resource)
             key = match.group('key')
             source_value = props.get(key)
+            configured = source_value is not None
             if source_value is None:
                 fallback = match.group('fallback')
                 source_value = (fallback, None) if fallback is not None else None
@@ -163,9 +166,7 @@ def scan(target):
                 continue
             value, resource_line = source_value
             resolved = _algorithm(value)
-            if resolved is None:
-                continue
-            display, risk = resolved
+            fallback_alg = _algorithm(match.group('fallback') or '')
             var = match.group('var')
             for sink in sinks:
                 if sink.group('var') != var or sink.start() <= match.end():
@@ -177,24 +178,45 @@ def scan(target):
                         re.search(_ASSIGN_RE.pattern.format(var=re.escape(var)),
                                   interval)):
                     continue
-                alg_norm = canon_algorithm(display)
-                group_key = (rel, alg_norm)
                 line = source.count('\n', 0, sink.start()) + 1
-                group = groups.setdefault(group_key, {
-                    'tool': 'local-literal', 'file': rel,
-                    'alg_norm': alg_norm, 'algorithm': display,
-                    'usage': 'unknown', 'lines': set(),
-                    'severity': None, 'confidence': None, 'risk': risk,
-                    'risk_types': [], 'quantum_as_seen': [],
-                    'raw': {
-                        'kind': 'java-properties-flow',
-                        'resource_file': to_relative_path(resource, target),
-                        'property_key': key,
+                property_line = source.count('\n', 0, match.start()) + 1
+                resource_file = to_relative_path(resource, target)
+                if resolved is not None:
+                    display, risk = resolved
+                    alg_norm = canon_algorithm(display)
+                    group_key = (rel, alg_norm)
+                    group = groups.setdefault(group_key, {
+                        'tool': 'local-literal', 'file': rel,
+                        'alg_norm': alg_norm, 'algorithm': display,
+                        'usage': 'unknown', 'lines': set(),
+                        'severity': None, 'confidence': None, 'risk': risk,
+                        'risk_types': [], 'quantum_as_seen': [],
+                        'raw': {
+                            'kind': 'java-properties-flow',
+                            'resource_file': resource_file,
+                            'property_key': key,
+                            'resource_line': resource_line,
+                            'resolved_algorithm': display,
+                        },
+                    })
+                    group['lines'].add(line)
+                if (configured and fallback_alg is not None and
+                        (resolved is None or
+                         canon_algorithm(resolved[0]) !=
+                         canon_algorithm(fallback_alg[0]))):
+                    conditional_defaults.append({
+                        'file': rel,
+                        'alg_norm': canon_algorithm(fallback_alg[0]),
+                        'lines': [property_line, line],
+                        'resource_file': resource_file,
                         'resource_line': resource_line,
-                        'resolved_algorithm': display,
-                    },
-                })
-                group['lines'].add(line)
+                        'property_key': key,
+                    })
     for group in groups.values():
         group['lines'] = sorted(group['lines'])
-    return list(groups.values())
+    return list(groups.values()), conditional_defaults
+
+
+def scan(target):
+    """Existing ToolGroup-only interface, for callers needing no override data."""
+    return analyze(target)[0]
