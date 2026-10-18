@@ -77,6 +77,9 @@ python setup\preflight.py --tools-dir D:\code_competition\_smoke --target D:\pat
 ```
 
 若要演示 Java 深度证据，先自行构建目标项目，确保 **jar/classes 来自同一份源码**：
+仓库自带可复现的[故意不安全 Java 样例](../examples/java_deep_demo/README.md)。
+Windows 上工具、源码、编译产物和输出可以分盘；跨盘 classpath 会临时复制到
+隔离任务目录，可能增加磁盘与时间开销。
 
 ```cmd
 python setup\preflight.py --tools-dir D:\code_competition\_smoke --target D:\path\to\project --mode deep-java --java-artifact D:\path\to\project\build\app.jar --crysentry-home D:\path\to\CrySentry --crysentry-java D:\path\to\jdk-17\bin\java.exe

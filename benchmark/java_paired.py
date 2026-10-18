@@ -136,10 +136,6 @@ def _score(labels, rows):
 
 def compare(work, tools_dir, crysentry_home, java, timeout=180):
     work = Path(work).resolve()
-    if work.anchor.lower() != Path(crysentry_home).resolve().anchor.lower():
-        raise ValueError("Windows 上 CrySentry/Tai-e 要求工作目录与工具同盘；"
-                         "请在 %s 盘准备匿名 cohort。" %
-                         Path(crysentry_home).resolve().anchor)
     src, artifact = work / "src", work / "cohort.jar"
     labels = json.loads((work / "labels.json").read_text(encoding="utf-8"))
     if not src.is_dir() or not artifact.is_file() or not labels:

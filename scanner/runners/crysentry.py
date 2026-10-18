@@ -106,6 +106,33 @@ def stage_artifact(artifact, work):
     return staged
 
 
+def stage_classpath(classpath, work):
+    """Copy cross-drive dependencies beside the task for Tai-e on Windows.
+
+    Tai-e serializes every classpath entry relative to its process CWD.
+    ``Path.relativize`` cannot cross Windows drive roots. Same-drive entries
+    remain in place; cross-drive entries are copied into the isolated task.
+    """
+    work = Path(work).resolve()
+    staged = []
+    for number, entry in enumerate(classpath or []):
+        source = Path(entry).resolve()
+        if not source.exists():
+            raise CrySentryError("classpath 项不存在: %s" % source)
+        if source.anchor.lower() == work.anchor.lower():
+            staged.append(source)
+            continue
+        target = work / "classpath" / ("dep%04d" % number +
+                                       (source.suffix if source.is_file() else ""))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+        staged.append(target)
+    return staged
+
+
 def build_options(artifact, classpath, result_path, analysis_dir,
                   crypto_config, java_version=8):
     """生成 CrySentry options.yml；只写确定字段，不修改工具全局配置。"""
@@ -173,8 +200,9 @@ def run(artifact, output_dir, crysentry_home, classpath=None, java=None,
         jar = find_tool_jar(home, tool_jar)
         config = home / "src" / "main" / "resources" / "crypto-config.yml"
         staged_artifact = stage_artifact(artifact, work)
+        staged_classpath = stage_classpath(classpath or [], work)
         options.write_text(build_options(
-            staged_artifact, classpath or [], result, analysis_dir, config, java_version),
+            staged_artifact, staged_classpath, result, analysis_dir, config, java_version),
             encoding="utf-8")
         cmd = [java_path, "-Xmx%dm" % int(memory_mb), "-jar", str(jar),
                "--options-file", str(options)]
@@ -182,7 +210,12 @@ def run(artifact, output_dir, crysentry_home, classpath=None, java=None,
         stderr_path = work / "stderr.log"
         with stdout_path.open("w", encoding="utf-8") as stdout_log, \
                 stderr_path.open("w", encoding="utf-8") as stderr_log:
-            proc = subprocess.Popen(cmd, cwd=str(home), stdout=stdout_log,
+            # Tai-e serializes input/output paths relative to its process CWD.
+            # On Windows, Path.relativize() rejects paths on different drives.
+            # Run from the isolated task directory (same drive as its staged
+            # app artifact and output), not from the external CrySentry checkout.
+            # The tool jar and rule config are already passed as absolute paths.
+            proc = subprocess.Popen(cmd, cwd=str(work), stdout=stdout_log,
                                     stderr=stderr_log, text=True,
                                     encoding="utf-8", errors="replace")
             try:

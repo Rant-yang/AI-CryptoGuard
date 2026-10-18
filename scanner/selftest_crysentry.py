@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scanner.adapters.crysentry import adapt, fuse
-from scanner.runners.crysentry import build_options, stage_artifact
+from scanner.runners.crysentry import build_options, stage_artifact, stage_classpath
 from core.quantum_assessment import assess_all
 from core.schema.validate_v02 import errors
 
@@ -37,6 +37,9 @@ def main():
         check("配置指向隔离结果文件", (root / "result.json").resolve().as_posix() in options)
         check("配置包含用户编译产物", artifact.resolve().as_posix() in options)
         check("空 classpath 是合法 YAML 形式", "classPath: []" in options)
+        same_drive_cp = stage_classpath([artifact], root / "same-drive-task")
+        check("同盘 classpath 保留原路径，不无故复制",
+              same_drive_cp == [artifact.resolve()])
         stage_dir = root / "staged"
         stage_dir.mkdir()
         staged = stage_artifact(artifact, stage_dir)
@@ -79,6 +82,16 @@ def main():
         taints = [r for r in located if r["evidence"]["kind"] == "taint"]
         check("有 sourceStmt 但无行号时明确记 partial",
               taints[0]["evidence"]["flow"]["completeness"] == "partial")
+        with_line = dict(data[0], sourceStmt=(
+            "<org.demo.Sample: void encrypt()>[3@L18] "
+            "invokevirtual $-v1.nextBytes($-v2)"))
+        located_line, _ = adapt([with_line], root)
+        flow_line = located_line[0]["evidence"]["flow"]
+        check("sourceStmt 自带真实行号时只提取位置，不保存源语句",
+              flow_line["source"]["file"] == src.relative_to(root).as_posix() and
+              flow_line["source"]["line"] == 18 and
+              flow_line["completeness"] == "partial" and
+              "sourceStmt" not in located_line[0]["evidence"]["raw"])
         check("Predictable Source 的字符串不冒充算法",
               taints[0]["algorithm"] == "")
         check("raw 不保存 sourceStmt 原文",

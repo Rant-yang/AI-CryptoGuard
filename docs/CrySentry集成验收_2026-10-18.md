@@ -59,7 +59,8 @@ python core\pipeline.py D:\demo\project --mode deep-java ^
 - JDK 不是 17、工具 jar 缺失、进程失败：`failed`，快速结果保留。
 - 超时：`timeout`，快速结果保留。
 - 调用点无法映射源码：进入 `unresolved_deep_evidence`，不伪造第 1 行。
-- `sourceStmt` 缺失：flow 标为 `source_missing`；有语句但没有源行号则为 `partial`。
+- `sourceStmt` 缺失：flow 标为 `source_missing`；有语句但没有完整传播路径则为
+  `partial`。若 CrySentry 的语句自带 `@L` 行号，只提取位置，不保存源语句原文。
 - 默认不保留 CrySentry 原始 JSON；`--keep-raw` 仅供本地调试。
 
 ## 5. 安全与正确性处理

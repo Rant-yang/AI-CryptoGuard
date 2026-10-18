@@ -118,7 +118,12 @@ def _raw(record):
 
 def _flow(record, sink, index):
     source_stmt = record.get("sourceStmt") or ""
-    source = _method(record.get("sourceMethod"), index) if source_stmt else None
+    # CrySentry sometimes serializes the actual source statement as
+    # `<class: method>[index@Lline] ...`. Recover that line without retaining
+    # the statement itself, which may contain credential material. When the
+    # tool reports only an IR statement, retain the method with an unknown line.
+    source = (_site(source_stmt, index) or
+              _method(record.get("sourceMethod"), index)) if source_stmt else None
     complete = "partial" if source is not None else "source_missing"
     return {"source": source, "sink": sink, "path": [], "completeness": complete}
 
