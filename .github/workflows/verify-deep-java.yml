@@ -1,0 +1,94 @@
+name: Verify Java deep scan on clean Linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deep-java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned application dependencies
+        run: |
+          python -m pip install --requirement setup/requirements-deploy.txt
+          python -m pip check
+      - name: Prepare pinned fast scanners outside the checkout
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/acg-tools"
+          mkdir -p "$tools/cryptoscan"
+          curl --fail --location --retry 3 \
+            'https://github.com/csnp/cryptoscan/releases/download/v1.4.0/cryptoscan_1.4.0_linux_amd64.tar.gz' \
+            --output "$RUNNER_TEMP/cryptoscan.tar.gz"
+          printf '%s  %s\n' \
+            '49aa043bd3f46927efa8ee89a2344d30f2ec351ae9e0cf2791ac8206b45be19d' \
+            "$RUNNER_TEMP/cryptoscan.tar.gz" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/cryptoscan.tar.gz" -C "$tools/cryptoscan" cryptoscan
+          chmod +x "$tools/cryptoscan/cryptoscan"
+          git clone --depth 1 https://github.com/thefinalmilkman/cbom-scan.git "$tools/cbom-scan"
+          test "$(git -C "$tools/cbom-scan" rev-parse HEAD)" = \
+            'bcf71292816aa64d5890207466b5dff1f5ef9cf7'
+          printf 'ACG_TOOLS_DIR=%s\n' "$tools" >> "$GITHUB_ENV"
+      - name: Build pinned external CrySentry without vendoring it
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/pascal-lab/CrySentry.git "$RUNNER_TEMP/CrySentry"
+          test "$(git -C "$RUNNER_TEMP/CrySentry" rev-parse HEAD)" = \
+            'dfe0b74f3b1583d0fced44dd7e166d38e1b59be7'
+          chmod +x "$RUNNER_TEMP/CrySentry/gradlew"
+          cd "$RUNNER_TEMP/CrySentry"
+          ./gradlew fatJar --no-daemon
+          test -f build/tai-e-all-0.5.1-SNAPSHOT.jar
+        timeout-minutes: 22
+      - name: Compile matching public Java sample
+        run: |
+          mkdir -p "$RUNNER_TEMP/acg-java-classes"
+          javac -g -d "$RUNNER_TEMP/acg-java-classes" examples/java_deep_demo/Demo.java
+          jar --create --file "$RUNNER_TEMP/acg-demo.jar" \
+            -C "$RUNNER_TEMP/acg-java-classes" .
+      - name: Run fast plus CrySentry deep evidence and validate output
+        run: |
+          python setup/preflight.py --tools-dir "$ACG_TOOLS_DIR" \
+            --target examples/java_deep_demo --mode deep-java \
+            --java-artifact "$RUNNER_TEMP/acg-demo.jar" \
+            --crysentry-home "$RUNNER_TEMP/CrySentry" \
+            --crysentry-java "$JAVA_HOME/bin/java"
+          python core/pipeline.py examples/java_deep_demo --mode deep-java \
+            --tools-dir "$ACG_TOOLS_DIR" \
+            --java-artifact "$RUNNER_TEMP/acg-demo.jar" \
+            --crysentry-home "$RUNNER_TEMP/CrySentry" \
+            --crysentry-java "$JAVA_HOME/bin/java" \
+            -o "$RUNNER_TEMP/acg-deep-run"
+          python core/schema/validate_v02.py \
+            "$RUNNER_TEMP/acg-deep-run/findings_assessed.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          out = Path(os.environ['RUNNER_TEMP']) / 'acg-deep-run'
+          task = json.loads((out / 'task.json').read_text(encoding='utf-8'))
+          rows = json.loads((out / 'findings_assessed.json').read_text(encoding='utf-8'))
+          stages = {stage['name']: stage['status'] for stage in task['stages']}
+          assert stages['scan'] == stages['deep_java'] == stages['quantum_assessment'] == 'completed', stages
+          assert len(rows) == 2, len(rows)
+          assert sum(ev.get('tool') == 'crysentry' for row in rows
+                     for ev in row['evidence']) >= 2
+          assert any(ev.get('kind') == 'taint' for row in rows
+                     for ev in row['evidence'])
+          print('Clean Linux Java deep scan: 2 findings, CrySentry evidence and taint present.')
+          PY
