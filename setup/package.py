@@ -41,6 +41,7 @@ ANONYMOUS_README = 'setup/submission_readme.md'
 ANONYMOUS_EXCLUDE = frozenset({
     'setup/package.py', 'setup/package_selftest.py',
     'setup/submission_audit.py', 'setup/submission_audit_selftest.py',
+    'setup/support_bundle.py',
 })
 # Strong, reviewable tripwires for this repository's known team and local
 # account identifiers. These are not a substitute for a human anonymity check.

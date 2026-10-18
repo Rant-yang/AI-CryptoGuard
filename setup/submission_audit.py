@@ -125,7 +125,36 @@ def _source(path):
     return problems
 
 
-def audit(report, slides, source, number=None, draft=False):
+def _support(path, slides, source, number):
+    """Verify the single upload attachment contains the reviewed exact inputs."""
+    problems = []
+    expected_name = number + '-2026密码竞赛复赛相关支撑材料.zip'
+    if path.name != expected_name:
+        problems.append('wrong-support-filename')
+    if path.stat().st_size > 4 * 1024 ** 3:
+        problems.append('support-over-4gb')
+    with zipfile.ZipFile(path) as archive:
+        if archive.testzip() is not None:
+            problems.append('damaged-support-zip')
+        expected = {'答辩演示.pptx', '匿名源码.zip', 'MANIFEST.json'}
+        if set(archive.namelist()) != expected or len(archive.namelist()) != 3:
+            return problems + ['unexpected-support-members']
+        manifest = json.loads(archive.read('MANIFEST.json'))
+        if (manifest.get('format') != 'AI-CryptoGuard-anonymous-support-v1' or
+                manifest.get('number') != number or
+                set(manifest.get('files', {})) != expected - {'MANIFEST.json'}):
+            problems.append('support-manifest-invalid')
+        for name, original in (('答辩演示.pptx', slides), ('匿名源码.zip', source)):
+            data = archive.read(name)
+            item = manifest.get('files', {}).get(name, {})
+            if (item.get('sha256') != hashlib.sha256(data).hexdigest() or
+                    item.get('bytes') != len(data) or
+                    data != Path(original).read_bytes()):
+                problems.append('support-member-mismatch:' + name)
+    return problems
+
+
+def audit(report, slides, source, number=None, draft=False, support=None):
     if not draft and not number:
         raise ValueError('Final audit requires --number from the contest platform')
     if number and not re.fullmatch(r'[A-Za-z0-9-]{1,40}', number):
@@ -141,6 +170,17 @@ def audit(report, slides, source, number=None, draft=False):
                              _office(path, kind, number=number, draft=draft))
         except (OSError, ValueError, KeyError, ET.ParseError, zipfile.BadZipFile):
             results[kind] = ['unreadable-or-invalid-container']
+    if support is not None:
+        path = Path(support)
+        if not path.is_file():
+            results['support'] = ['missing-file']
+        elif not number:
+            results['support'] = ['number-required-for-support']
+        else:
+            try:
+                results['support'] = _support(path, slides, source, number)
+            except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
+                results['support'] = ['unreadable-or-invalid-support']
     return results
 
 
@@ -149,12 +189,13 @@ def main(argv=None):
     parser.add_argument('--report', required=True)
     parser.add_argument('--slides', required=True)
     parser.add_argument('--source', required=True)
+    parser.add_argument('--support', help='Single attachment built by setup/support_bundle.py')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--draft', action='store_true')
     mode.add_argument('--number')
     args = parser.parse_args(argv)
     results = audit(args.report, args.slides, args.source,
-                    number=args.number, draft=args.draft)
+                    number=args.number, draft=args.draft, support=args.support)
     print(json.dumps({'mode': 'draft' if args.draft else 'final',
                       'checks': {k: ('PASS' if not v else v)
                                  for k, v in results.items()},

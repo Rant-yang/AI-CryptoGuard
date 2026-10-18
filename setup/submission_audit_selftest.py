@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from setup.submission_audit import PREFIX, audit
+from setup.support_bundle import build as build_support
 
 
 def _zip(path, members):
@@ -43,6 +44,10 @@ def main():
         _source(source)
         clean = audit(report, slides, source, draft=True)
         assert all(not problems for problems in clean.values()), clean
+        support = root / 'TEST-123-2026密码竞赛复赛相关支撑材料.zip'
+        build_support(slides, source, support, 'TEST-123')
+        assert audit(report, slides, source, number='TEST-123',
+                     support=support)['support'] == []
         assert 'final-number-missing-or-placeholder' in audit(
             report, slides, source, number='TEST-123')['report']
         _zip(report, {'word/document.xml':
@@ -60,13 +65,16 @@ def main():
         assert 'slide-notes-content' in audit(report, slides, source,
                                               number='TEST-123')['slides']
         _source(source, bad_hash=True)
+        assert 'support-member-mismatch:匿名源码.zip' in audit(
+            report, slides, source, number='TEST-123', support=support)['support']
         assert 'source-hash-mismatch:core/pipeline.py' in audit(
             report, slides, source, number='TEST-123')['source']
         _source(source, forbidden=True)
         assert 'forbidden-source-member' in audit(
             report, slides, source, number='TEST-123')['source']
-    print('PASS: submission audit accepts draft and rejects wrong number, '
-          'identity, hidden notes, source tampering and forbidden outputs')
+    print('PASS: submission audit accepts draft and support bundle, rejects '
+          'wrong number, identity, hidden notes, stale bundle, source '
+          'tampering and forbidden outputs')
 
 
 if __name__ == '__main__':
