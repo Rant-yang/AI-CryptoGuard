@@ -1,6 +1,6 @@
 # Web 入口：公开 Java 样例深扫与真实 AI 全链复验（2026-10-19）
 
-本次从开发 checkout `dd8cfdb` 发起，通过与浏览器相同的本机 HTTP 任务接口上传
+首次从开发 checkout `dd8cfdb` 发起，通过与浏览器相同的本机 HTTP 任务接口上传
 `examples/java_deep_demo/Demo.java` 以及该源码对应的编译 JAR，并启用
 `deep-java` 与 `ai_enabled=true`。CrySentry 引擎、JDK 17、编译 JAR 和扫描工具均在仓库外；
 模型凭据仅从本机环境变量读取，未写入仓库、命令参数或本记录。
@@ -33,3 +33,14 @@ AI 断点续跑或正式复评。接口现在以 `X-ACG-Projection: browser-reda
 闭环；不是浏览器像素／交互验收，也不是异机、真实用户项目或独立准确率测试。
 当前 v7 的 29 条模型解释仍是 **0/29 人工语义审阅**；真实作品编号、审批签字盖章、
 两次团队彩排和最终上传回执仍待人工完成。
+
+## 匿名源码包再次复验
+
+补上展示副本响应头后，以 `be4d6ef` 提交生成匿名源码 ZIP：112 个文件，
+SHA-256 `7981a4fceabd590712ee24012c39d77c0dcca190fa0ed689dc7003da6033432f`。
+机器草稿核查对报告、PPTX 与源码三项均为 `PASS`。把 ZIP 独立解压到
+`C:\Users\lenovo\acg_be4d6ef_web_rehearsal\AI-CryptoGuard`，再次运行上方
+`web/server_selftest.py --deep-integration --ai-integration`，实测退出码 0，
+同样得到 `PASS: local web task API + real CrySentry integration + real AI integration`。
+这次的代码实际来自匿名源码包，而非开发 checkout；外部引擎、JDK 和本机模型
+配置依旧没有打进包。复验仍只覆盖同机公开样例，不构成人工语义或异机验收。
