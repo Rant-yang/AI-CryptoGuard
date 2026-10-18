@@ -25,6 +25,13 @@ FONT = "Microsoft YaHei"
 
 prs = Presentation()
 prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+# 网络评审材料须匿名。python-pptx 默认会留下模板作者元数据，生成时清空。
+prs.core_properties.author = ""
+prs.core_properties.last_modified_by = ""
+prs.core_properties.title = "AI-CryptoGuard"
+prs.core_properties.subject = ""
+prs.core_properties.keywords = ""
+prs.core_properties.comments = ""
 
 
 def box(slide, x, y, w, h, fill=PANEL, radius=True):
