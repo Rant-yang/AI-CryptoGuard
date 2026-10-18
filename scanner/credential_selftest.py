@@ -78,6 +78,24 @@ def main():
     assert [f['evidence'][0]['raw']['fingerprint'] for f in first] != [
         f['evidence'][0]['raw']['fingerprint'] for f in second]
 
+    # Two distinct values may be recognized at the same coordinate by
+    # overlapping patterns. Keep both without deriving a stable ID from a
+    # low-entropy secret (which would allow an offline dictionary attack).
+    def same_site(pepper):
+        return credential_scan._dedup([
+            credential_scan._finding('sample.py', 7, 2,
+                'CRED-HARDCODED-PASSWORD', value, pepper, kind='pattern')
+            for value in ('first-synthetic', 'second-synthetic')
+        ])
+
+    pair_a = same_site(b'first-ephemeral-hmac-key')
+    pair_b = same_site(b'second-ephemeral-hmac-key')
+    assert len(pair_a) == len(pair_b) == 2
+    assert len({f['finding_id'] for f in pair_a}) == 2
+    assert [f['finding_id'] for f in pair_a] == [f['finding_id'] for f in pair_b]
+    assert [f['evidence'][0]['raw']['fingerprint'] for f in pair_a] != [
+        f['evidence'][0]['raw']['fingerprint'] for f in pair_b]
+
     rendered = json.dumps(first, ensure_ascii=False)
     for secret in FORBIDDEN:
         assert secret not in rendered, '输出泄露了合成凭据: %s' % secret

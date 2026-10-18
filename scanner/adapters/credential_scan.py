@@ -278,10 +278,12 @@ def _finding(file, line, column, rule_id, material, pepper, kind,
     fingerprint = hmac.new(pepper, material.encode('utf-8', 'replace'),
                            hashlib.sha256).hexdigest()
     length = len(material) if value_length is None else value_length
-    # Two distinct literals can be detected at the same source coordinate by
-    # separate patterns. _dedup intentionally keeps different fingerprints;
-    # the ID must distinguish them too, without exposing the secret itself.
-    basis = '%s|%s|%s|%s|%s' % (file, rule_id, line, column, fingerprint)
+    # The HMAC key changes on every scan, so the fingerprint MUST NOT enter
+    # finding_id: otherwise the same source finding receives a new ID each
+    # time and report diffs / AI resume cannot line up. _dedup assigns an
+    # ordinal if distinct hits share this source coordinate; no unhashed
+    # credential material enters the stable ID.
+    basis = '%s|%s|%s|%s' % (file, rule_id, line, column)
     finding_id = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:12]
     raw = {
         'rule_id': rule_id,
@@ -321,10 +323,16 @@ def _finding(file, line, column, rule_id, material, pepper, kind,
 
 
 def _dedup(findings):
-    seen, out = set(), []
+    seen, out, ordinals = set(), [], {}
     for f in findings:
         key = (f['rule_id'], f['line'], f['evidence'][0]['raw']['fingerprint'])
         if key not in seen:
             seen.add(key)
+            base_id = f['finding_id']
+            ordinal = ordinals.get(base_id, 0)
+            if ordinal:
+                f['finding_id'] = hashlib.sha1(
+                    ('%s|%s' % (base_id, ordinal)).encode('ascii')).hexdigest()[:12]
+            ordinals[base_id] = ordinal + 1
             out.append(f)
     return out

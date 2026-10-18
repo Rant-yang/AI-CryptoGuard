@@ -67,6 +67,11 @@ digest，`setup/requirements-deploy.txt` 固定了本机验收镜像的完整 Py
 依赖版本，`pip check` 无冲突；系统 apt 包仍随 Debian 仓库更新，因此不是全系统
 按字节复现。不能把本机通过当作异机通过。
 
+仓库的 `.github/workflows/verify.yml` 在新的 GitHub Linux runner 上运行离线契约、
+凭据隐私和界面自检，并从干净 checkout 构建 Docker 镜像及检查 Web 服务。
+该工作流**不下载或挂载第三方扫描工具**，因此即使绿灯也只证明新机器上的
+安装、离线检查和页面启动，**不证明完整扫描/AI/CrySentry 的异机部署**。
+
 ## 新环境先做只读预检
 
 以下命令不会扫描代码、调用模型或输出 API key。`--tools-dir` 指向外部工具目录；示例路径是本机 smoke 环境，队友机器应替换为自己的路径。

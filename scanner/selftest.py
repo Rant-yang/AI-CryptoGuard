@@ -774,8 +774,14 @@ def test_credential_identity(check):
     args = ('example.py', 7, 2, 'CRED-HARDCODED-PASSWORD')
     a = credential_scan._finding(*args, 'synthetic-alpha', b'test-pepper', 'pattern')
     b = credential_scan._finding(*args, 'synthetic-beta', b'test-pepper', 'pattern')
-    check('不同指纹的凭据 Finding 不复用同一个 ID',
-          a['finding_id'] != b['finding_id'], True)
+    # _finding builds a location-only provisional ID. The public scan path
+    # passes its candidates through _dedup, which assigns stable ordinals for
+    # distinct values at the same coordinate without hashing weak passwords
+    # into an offline-guessable persistent ID.
+    final = credential_scan._dedup([a, b])
+    check('同位置不同凭据在最终输出中不复用 ID',
+          len(final) == 2 and final[0]['finding_id'] != final[1]['finding_id'],
+          True)
     check('凭据证据只存 HMAC 指纹，不含测试字面量',
           'synthetic-alpha' not in repr(a), True)
 

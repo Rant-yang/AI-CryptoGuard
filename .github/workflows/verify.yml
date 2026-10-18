@@ -1,0 +1,63 @@
+name: Verify clean Linux checkout
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  offline-and-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install pinned application dependencies
+        run: |
+          python -m pip install --requirement setup/requirements-deploy.txt
+          python -m pip check
+      - name: Run offline contract and safety checks
+        run: |
+          python core/schema/selftest_v02.py
+          python core/rules/algorithm_risk.py
+          python core/rules/pqc_routing.py
+          python scanner/selftest.py
+          python scanner/credential_selftest.py
+          python scanner/selftest_crysentry.py
+          python -m ai.selftest_v02
+          python ai/selftest.py
+          python core/selftest.py
+          python repair/selftest.py
+          python -m core.pipeline_ai_selftest
+          python web/server_selftest.py
+      - name: Render committed public fixture in the Web viewer
+        run: |
+          mkdir -p out
+          cp core/samples/example_finding.json out/ci-fixture.json
+          node web/selftest.js ci-fixture.json
+      - name: Build deployment image from clean checkout
+        run: docker build --file setup/Dockerfile --tag acg:ci .
+      - name: Serve the Web UI in the built image
+        run: |
+          docker run --detach --name acg-ci -p 127.0.0.1:8765:8000 acg:ci
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8765/web/index.html > /dev/null; then
+              echo 'Web UI responds on the clean Linux runner.'
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs acg-ci
+          exit 1
+      - name: Stop test container
+        if: always()
+        run: docker rm --force acg-ci || true
