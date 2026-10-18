@@ -48,15 +48,58 @@ jobs:
           mkdir -p out
           cp core/samples/example_finding.json out/ci-fixture.json
           node web/selftest.js ci-fixture.json
+      - name: Prepare pinned external Linux scanners outside the checkout
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/acg-tools"
+          mkdir -p "$tools/cryptoscan"
+          curl --fail --location --retry 3 \
+            'https://github.com/csnp/cryptoscan/releases/download/v1.4.0/cryptoscan_1.4.0_linux_amd64.tar.gz' \
+            --output "$RUNNER_TEMP/cryptoscan.tar.gz"
+          printf '%s  %s\n' \
+            '49aa043bd3f46927efa8ee89a2344d30f2ec351ae9e0cf2791ac8206b45be19d' \
+            "$RUNNER_TEMP/cryptoscan.tar.gz" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/cryptoscan.tar.gz" -C "$tools/cryptoscan" cryptoscan
+          chmod +x "$tools/cryptoscan/cryptoscan"
+          git clone --depth 1 https://github.com/thefinalmilkman/cbom-scan.git "$tools/cbom-scan"
+          test "$(git -C "$tools/cbom-scan" rev-parse HEAD)" = \
+            'bcf71292816aa64d5890207466b5dff1f5ef9cf7'
+          printf 'ACG_TOOLS_DIR=%s\n' "$tools" >> "$GITHUB_ENV"
+      - name: Scan public example with real external tools on clean Linux
+        run: |
+          python setup/preflight.py --tools-dir "$ACG_TOOLS_DIR" \
+            --target examples/repair_demo --mode fast
+          python core/pipeline.py examples/repair_demo \
+            --tools-dir "$ACG_TOOLS_DIR" -o "$RUNNER_TEMP/acg-ci-fast"
+          python core/schema/validate_v02.py \
+            "$RUNNER_TEMP/acg-ci-fast/findings_assessed.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          out = Path(os.environ['RUNNER_TEMP']) / 'acg-ci-fast'
+          task = json.loads((out / 'task.json').read_text(encoding='utf-8'))
+          rows = json.loads((out / 'findings_assessed.json').read_text(encoding='utf-8'))
+          stages = {stage['name']: stage['status'] for stage in task['stages']}
+          assert stages['scan'] == stages['quantum_assessment'] == 'completed', stages
+          assert stages['ai'] == 'skipped', stages
+          assert len(rows) == 4, len(rows)
+          assert sum(row.get('finding_kind') == 'credential' for row in rows) == 1
+          print('Clean Linux public scan: 4 findings, one credential, quantum completed.')
+          PY
       - name: Build deployment image from clean checkout
         run: docker build --file setup/Dockerfile --tag acg:ci .
-      - name: Serve the Web UI in the built image
+      - name: Serve and scan through the Web UI in the built image
         run: |
-          docker run --detach --name acg-ci -p 127.0.0.1:8765:8000 acg:ci
+          docker run --detach --name acg-ci -p 127.0.0.1:8765:8000 \
+            --mount "type=bind,source=$ACG_TOOLS_DIR,target=/opt/acg-tools,readonly" \
+            --mount 'type=volume,source=acg-ci-tasks,target=/app/workspace' \
+            --read-only --tmpfs /tmp:size=256m acg:ci
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8765/web/index.html > /dev/null; then
-              echo 'Web UI responds on the clean Linux runner.'
-              exit 0
+              python setup/compose_smoke.py --base http://127.0.0.1:8765
+              exit $?
             fi
             sleep 2
           done
@@ -64,4 +107,6 @@ jobs:
           exit 1
       - name: Stop test container
         if: always()
-        run: docker rm --force acg-ci || true
+        run: |
+          docker rm --force acg-ci || true
+          docker volume rm acg-ci-tasks || true
