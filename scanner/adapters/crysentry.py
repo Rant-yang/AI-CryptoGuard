@@ -210,7 +210,11 @@ def _attach_predictable_key(rows, rec):
         "remediation": {"decided": True, "reason": "decided",
                         "action": PREDICTABLE_KEY_ACTION,
                         "source": "rule-base"},
-        "tags": ["deep-java-new", "java-weak-prng-key", "partial-flow"],
+        # A source/sink pair is not proof that its branch is reachable.  The
+        # CCA-Droid ABPS negative reaches this rule through an infeasible
+        # branch; keep the lead, but make this limit machine-readable.
+        "tags": ["deep-java-new", "java-weak-prng-key", "partial-flow",
+                 "control-flow-unverified"],
     })
 
 

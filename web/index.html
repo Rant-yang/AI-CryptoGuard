@@ -848,6 +848,9 @@ function renderDetail(){
       <div class="flow-state ${flow.completeness==='source_missing'?'missing':''}">
         数据流完整度：${esc(flow.completeness||'unknown')}${(flow.path||[]).length ? ` · 中间节点 ${(flow.path||[]).length} 个` : ''}
       </div>
+      ${e.kind==='taint' && flow.completeness!=='complete'
+        ? '<div class="flow-state missing">静态证据未证明该分支在运行中可达；请结合实际调用条件复核。</div>'
+        : ''}
     </div>` : '';
     return `<div class="box ev">
       <div class="top">
@@ -874,7 +877,7 @@ function renderDetail(){
         <span class="sv ${esc(f.severity||'info')}">${esc(SEV_CN[f.severity]||f.severity||'—')}</span>
         <span class="tag">用途 · ${esc(USAGE_CN[f.usage]||f.usage||'—')}</span>
         ${f.confidence!=null ? `<span class="tag">置信 ${esc(f.confidence)}</span>` : ''}
-        ${(f.tags||[]).map(t=>`<span class="tag ${t==='conditional-default'?'warn':''}">${esc(t==='conditional-default'?'仅备用值':t)}</span>`).join('')}
+        ${(f.tags||[]).map(t=>`<span class="tag ${['conditional-default','control-flow-unverified'].includes(t)?'warn':''}">${esc(t==='conditional-default'?'仅备用值':t==='control-flow-unverified'?'分支可达性未验证':t)}</span>`).join('')}
       </div>
     </div>
 

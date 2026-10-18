@@ -275,6 +275,7 @@ setTimeout(() => {
   /* --- 9. CrySentry taint flow 必须可见，来源缺失不能伪装成完整链 --- */
   const deep = JSON.parse(JSON.stringify(cited));
   deep.finding_id = 'deep';
+  deep.tags = ['control-flow-unverified'];
   deep.evidence = [{
     tool:'crysentry', kind:'taint', lines:[42], raw:{judgeType:'Predictable Source'},
     flow:{source:null,
@@ -286,6 +287,9 @@ setTimeout(() => {
   check('深度证据显示 source → sink',
         deepHtml.includes('来源缺失') && deepHtml.includes('src/Sample.java') &&
         deepHtml.includes('数据流完整度：source_missing'));
+  check('深度证据不把静态来源汇点说成已验证可达',
+        deepHtml.includes('分支可达性未验证') &&
+        deepHtml.includes('静态证据未证明该分支在运行中可达'));
 
   /* ------------------------------ 结果 ------------------------------ */
   console.log(`查看器自检  [${TARGET}]`);

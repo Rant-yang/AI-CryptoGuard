@@ -118,7 +118,8 @@ def main():
               len(key_rows) == 1 and not key_unresolved and
               key_rows[0]["finding_kind"] == "configuration" and
               key_rows[0]["risk"] == "not_applicable" and
-              key_rows[0]["usage"] == "unknown")
+              key_rows[0]["usage"] == "unknown" and
+              "control-flow-unverified" in key_rows[0]["tags"])
         key_assessed = assess_all(key_rows)[0]
         check("前置量子评估保留本地确定性修复建议且符合契约",
               key_assessed["remediation"]["decided"] and not errors(key_assessed))
