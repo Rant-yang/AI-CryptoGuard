@@ -157,7 +157,7 @@ for i, (name, counts, scores, caveat) in enumerate(rows):
     words(s, 7.18, y+.16, 2.36, .53, scores, 17, CYAN, True)
     words(s, 9.63, y+.16, 2.66, .53, caveat, 14, GOLD)
 words(s, .82, 6.31, 11.75, .37,
-      "列顺序：TP / FP / FN，P / R。Java 25 例算法专项快/深两侧仍为 77.8% / 87.5%。", 14, MUTED)
+      "列顺序：TP / FP / FN，P / R。历史 25 例为 77.8%/87.5%；当前同集重跑快/深均为 73.7%/87.5%。", 13, MUTED)
 
 # 8 — privacy
 s = new_slide("隐私、失败与修复边界")

@@ -12,8 +12,12 @@ from core.rules.deep_java import (PREDICTABLE_KEY_ACTION,
 from scanner.normalize import canon_algorithm
 
 TOOL_NAME = "crysentry"
-_SITE_RE = re.compile(r"^<(?P<class>[^:>]+):\s*(?P<method>[^>]+)>\[[^]]*@L(?P<line>\d+)\]")
-_METHOD_RE = re.compile(r"^<(?P<class>[^:>]+):\s*(?P<method>[^>]+)>")
+# The method name may itself contain angle brackets: <clinit>() / <init>().
+# Consume through the closing '>' immediately before the location bracket (or
+# end of a method signature), not merely through the first '>'.  Otherwise a
+# genuine @L line becomes "unknown" and traceable static initializers vanish.
+_SITE_RE = re.compile(r"^<(?P<class>[^:>]+):\s*(?P<method>.+)>\[[^]]*@L(?P<line>\d+)\]")
+_METHOD_RE = re.compile(r"^<(?P<class>[^:>]+):\s*(?P<method>.+)>\s*$")
 _QUOTED_RE = re.compile(r'["\']([^"\']+)["\']')
 
 

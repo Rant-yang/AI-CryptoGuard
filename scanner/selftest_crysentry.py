@@ -95,6 +95,24 @@ def main():
               "sourceStmt" not in located_line[0]["evidence"]["raw"])
         check("可定位的弱随机源到 SecretKeySpec 得到独立规则",
               located_line[0]["deep_rule"] == "JAVA-WEAK-PRNG-KEY")
+        clinit = dict(with_line, sourceStmt=(
+            "<org.demo.Sample: void <clinit>()>[4@L21] "
+            "invokevirtual random.nextBytes(keyBytes)"),
+            sourceMethod="<org.demo.Sample: void <clinit>()>")
+        clinit_located, _ = adapt([clinit], root)
+        clinit_flow = clinit_located[0]["evidence"]["flow"]
+        clinit_rows, clinit_unresolved = fuse([], clinit_located)
+        check("<clinit> 嵌套尖括号不吞掉真实来源行号",
+              clinit_flow["source"]["line"] == 21 and
+              clinit_flow["source"]["method"] == "void <clinit>()" and
+              clinit_located[0]["deep_rule"] == "JAVA-WEAK-PRNG-KEY" and
+              len(clinit_rows) == 1 and not clinit_unresolved)
+        clinit_without_line = dict(clinit, sourceStmt=(
+            "<org.demo.Sample: void <clinit>()> invokevirtual random.nextBytes(keyBytes)"))
+        no_line_located, _ = adapt([clinit_without_line], root)
+        check("<clinit> 无 @L 时仍不猜来源行号",
+              no_line_located[0]["evidence"]["flow"]["source"]["line"] is None and
+              no_line_located[0]["deep_rule"] is None)
         key_rows, key_unresolved = fuse([], located_line)
         check("弱密钥证据生成配置 Finding，而非无算法线索",
               len(key_rows) == 1 and not key_unresolved and
