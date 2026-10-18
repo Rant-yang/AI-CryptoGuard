@@ -170,6 +170,10 @@ def audit(report, slides, source, number=None, draft=False, support=None):
                              _office(path, kind, number=number, draft=draft))
         except (OSError, ValueError, KeyError, ET.ParseError, zipfile.BadZipFile):
             results[kind] = ['unreadable-or-invalid-container']
+    if not draft:
+        expected_report = number + '-2026密码竞赛复赛作品设计报告.docx'
+        if paths['report'].name != expected_report:
+            results['report'].append('wrong-report-filename')
     if support is not None:
         path = Path(support)
         if not path.is_file():

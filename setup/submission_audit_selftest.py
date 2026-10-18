@@ -50,6 +50,14 @@ def main():
                      support=support)['support'] == []
         assert 'final-number-missing-or-placeholder' in audit(
             report, slides, source, number='TEST-123')['report']
+        assert 'wrong-report-filename' in audit(
+            report, slides, source, number='TEST-123')['report']
+        named_report = root / 'TEST-123-2026密码竞赛复赛作品设计报告.docx'
+        _zip(named_report, {'word/document.xml':
+             '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+             '<w:t>TEST-123</w:t></w:document>'})
+        assert audit(named_report, slides, source, number='TEST-123',
+                     support=support)['report'] == []
         _zip(report, {'word/document.xml':
              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
              '<w:t>TEST-123</w:t></w:document>',
@@ -73,7 +81,7 @@ def main():
         assert 'forbidden-source-member' in audit(
             report, slides, source, number='TEST-123')['source']
     print('PASS: submission audit accepts draft and support bundle, rejects '
-          'wrong number, identity, hidden notes, stale bundle, source '
+          'wrong number/filename, identity, hidden notes, stale bundle, source '
           'tampering and forbidden outputs')
 
 
