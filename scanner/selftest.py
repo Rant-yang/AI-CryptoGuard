@@ -213,6 +213,16 @@ def test_merge_risk_overrides_and_tags(check):
           f3['severity'], 'high')
     check('无 confidence 来源时不编造（字段缺省）', 'confidence' in f2, False)
 
+    ecb = _group('cryptoscan', 'Demo.java', 'AESECB', 'encryption', [11],
+                 risk_types=['AES-ECB Mode'], algorithm='AES-ECB')
+    check('type 表外的 AES-ECB 使用共享算法规则判为经典不安全',
+          merge([ecb])[0]['risk'], 'broken')
+    unknown = _group('cryptoscan', 'Unknown.java', 'MYSTERYCIPHER',
+                     'unknown', [3], risk_types=['New Crypto Type'],
+                     algorithm='MysteryCipher')
+    check('真正未知算法仍为 review，不猜测',
+          merge([unknown])[0]['risk'], 'review')
+
 
 def test_ed25519_match_refinement(check):
     """捆绑 asset 的行级细分：x25519 的行不再是 signing。"""

@@ -29,7 +29,9 @@
 risk 裁决顺序（不透传上游结论）:
     1. cbom-scan 的 risk（模式证据主源，三个工具里唯一分类正确的）
     2. CryptoScan 的 type 查 RISK_BY_TYPE（zh_map 初版口径）
-    3. 都没有 -> review（不猜）
+    3. 有明确算法名但上述两路没有结论 -> core/rules/algorithm_risk.py
+       的确定性算法规则（与 CrySentry 适配器共用）
+    4. 仍无法识别 -> review（不猜）
 CryptoScan 的 quantumRisk 只做字面对照，与最终裁决不一致时打
 upstream-risk-corrected 标记 —— 「上游工具不可信、必须经融合层复核」
 的显式证据（MD5 被它标成 Shor 可破就是这一档）。
@@ -40,6 +42,7 @@ raw 是「该工具在该 (file, alg) 的判定材料」，用途归组是行号
 """
 import hashlib
 
+from core.rules.algorithm_risk import risk_for
 from scanner.normalize import (
     RISK_BY_TYPE,
     SEVERITY_FROM_RISK,
@@ -104,6 +107,11 @@ def merge(all_groups):
         if not risks:
             types = [t for g in groups for t in g.get('risk_types', [])]
             risks = [RISK_BY_TYPE[t] for t in types if t in RISK_BY_TYPE]
+        if not risks and not alg.startswith('TYPE:'):
+            # CryptoScan 的 type 词表不完整；公开 Java 样例中的 AES-ECB
+            # 因此曾落到 review。这里使用与深度适配器相同的本地规则，
+            # 但未知算法仍保持 review，绝不采信上游 quantumRisk。
+            risks = [risk_for(alg)]
         risk = most_severe_risk(risks)
 
         # ---- severity / confidence
