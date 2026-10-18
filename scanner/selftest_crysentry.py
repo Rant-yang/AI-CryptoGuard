@@ -2,6 +2,7 @@
 import json
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -9,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scanner.adapters.crysentry import adapt, fuse
-from scanner.runners.crysentry import build_options
+from scanner.runners.crysentry import build_options, stage_artifact
 from core.quantum_assessment import assess_all
 from core.schema.validate_v02 import errors
 
@@ -29,12 +30,33 @@ def main():
         cfg = root / "crypto-config.yml"
         cfg.write_text("rules: []\n", encoding="utf-8")
         artifact = root / "app.jar"
-        artifact.write_bytes(b"fixture")
+        with zipfile.ZipFile(artifact, "w") as zf:
+            zf.writestr("org/demo/Sample.class", b"fixture")
         options = build_options(artifact, [], root / "result.json",
                                 root / "analysis", cfg)
         check("配置指向隔离结果文件", (root / "result.json").resolve().as_posix() in options)
         check("配置包含用户编译产物", artifact.resolve().as_posix() in options)
         check("空 classpath 是合法 YAML 形式", "classPath: []" in options)
+        stage_dir = root / "staged"
+        stage_dir.mkdir()
+        staged = stage_artifact(artifact, stage_dir)
+        check("任意 jar 会被隔离改名为 CrySentry 可识别的 test.jar",
+              staged.name == "test.jar" and staged.read_bytes() == artifact.read_bytes())
+        traversal = root / "traversal.jar"
+        with zipfile.ZipFile(traversal, "w") as zf:
+            zf.writestr("../outside.class", b"fixture")
+        try:
+            stage_artifact(traversal, stage_dir)
+        except Exception as exc:
+            check("拒绝可越界解压的 jar 条目", "越界路径" in str(exc))
+        else:
+            raise AssertionError("未拒绝越界 jar 条目")
+        classes = root / "classes" / "org" / "demo"
+        classes.mkdir(parents=True)
+        (classes / "Sample.class").write_bytes(b"class-fixture")
+        with zipfile.ZipFile(stage_artifact(root / "classes", stage_dir)) as zf:
+            check("classes 目录能封装为可识别的应用 jar",
+                  "org/demo/Sample.class" in zf.namelist())
 
         call = ("<org.demo.Sample: void encrypt()>[6@L42] "
                 "cipher = invokestatic javax.crypto.Cipher.getInstance($-c1)")
@@ -61,6 +83,18 @@ def main():
               taints[0]["algorithm"] == "")
         check("raw 不保存 sourceStmt 原文",
               all("sourceStmt" not in r["evidence"]["raw"] for r in located))
+
+        transform = dict(data[1], constantValue="AES/ECB/PKCS5Padding")
+        normalized, _ = adapt([transform], root)
+        check("JCE 变换串归一到 AES/ECB，原字面量留在证据",
+              normalized[0]["algorithm"] == "AES/ECB" and
+              normalized[0]["evidence"]["raw"]["algorithm_constant"] ==
+              "AES/ECB/PKCS5Padding")
+        keygen = dict(data[1], constantValue="DES", calleeMethod=
+                      "<javax.crypto.KeyGenerator: javax.crypto.KeyGenerator getInstance(java.lang.String)>")
+        keygen_record, _ = adapt([keygen], root)
+        check("KeyGenerator 算法证据归属 encryption 用途，避免重复 Finding",
+              keygen_record[0]["usage"] == "encryption")
 
         fused, ambiguous = fuse([], located)
         check("测试数据没有融合歧义", not ambiguous)

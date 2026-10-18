@@ -10,7 +10,9 @@ import re
 import shutil
 import subprocess
 import time
+import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 class CrySentryError(RuntimeError):
@@ -55,6 +57,53 @@ def java_major(java):
     text = (proc.stderr or "") + "\n" + (proc.stdout or "")
     match = re.search(r'version\s+"(?:1\.)?(\d+)', text)
     return int(match.group(1)) if match else None
+
+
+def stage_artifact(artifact, work):
+    """Stage bytecode under CrySentry's recognized app-archive name.
+
+    CrySentry Main.scanAppClassPath registers application classes as reachable
+    roots only for archives named ``test.jar`` or ``original-classes.jar``.
+    A normal project.jar otherwise exits successfully with zero reachable
+    methods and an empty report. Never modify the user's original artifact.
+    """
+    source = Path(artifact).resolve()
+    if not source.exists():
+        raise CrySentryError("Java 编译产物不存在: %s" % source)
+    staged = Path(work) / "test.jar"
+    if source.is_file():
+        if source.suffix.lower() != ".jar":
+            raise CrySentryError("CrySentry 当前仅支持 jar 或 classes 目录: %s" % source)
+        # CrySentry's own ZipUtils concatenates entry names to the extraction
+        # directory without normalizing them. Refuse traversal before handing
+        # any user-supplied archive to that third-party extractor.
+        try:
+            with zipfile.ZipFile(source) as archive:
+                names = archive.namelist()
+                for name in names:
+                    normalized = name.replace("\\", "/")
+                    parts = PurePosixPath(normalized).parts
+                    if (not parts or normalized.startswith("/") or
+                            ":" in parts[0] or ".." in parts):
+                        raise CrySentryError("jar 含越界路径，已拒绝分析: %s" % name)
+                if not any(name.endswith(".class") for name in names):
+                    raise CrySentryError("jar 中没有 .class 文件: %s" % source)
+        except zipfile.BadZipFile as exc:
+            raise CrySentryError("Java jar 不是有效 ZIP: %s" % source) from exc
+        if source != staged.resolve():
+            shutil.copy2(source, staged)
+    elif source.is_dir():
+        classes = sorted(source.rglob("*.class"))
+        if not classes:
+            raise CrySentryError("classes 目录没有 .class 文件: %s" % source)
+        with zipfile.ZipFile(staged, "w", compression=zipfile.ZIP_DEFLATED) as jar:
+            for cls in classes:
+                if cls.is_symlink():
+                    continue
+                jar.write(cls, cls.relative_to(source).as_posix())
+    else:
+        raise CrySentryError("Java 编译产物必须是 jar 或 classes 目录: %s" % source)
+    return staged
 
 
 def build_options(artifact, classpath, result_path, analysis_dir,
@@ -123,8 +172,9 @@ def run(artifact, output_dir, crysentry_home, classpath=None, java=None,
             raise CrySentryError("CrySentry runner 要求 JDK 17，当前检测到: %s" % major)
         jar = find_tool_jar(home, tool_jar)
         config = home / "src" / "main" / "resources" / "crypto-config.yml"
+        staged_artifact = stage_artifact(artifact, work)
         options.write_text(build_options(
-            artifact, classpath or [], result, analysis_dir, config, java_version),
+            staged_artifact, classpath or [], result, analysis_dir, config, java_version),
             encoding="utf-8")
         cmd = [java_path, "-Xmx%dm" % int(memory_mb), "-jar", str(jar),
                "--options-file", str(options)]
@@ -165,6 +215,13 @@ def run(artifact, output_dir, crysentry_home, classpath=None, java=None,
             return {"status": "failed", "reason": "CrySentry JSON 顶层不是数组。",
                     "seconds": round(time.time() - started, 3),
                     "tool_version": jar.name, "raw_output": None}
+        log = stdout_path.read_text(encoding="utf-8", errors="replace")
+        reachable = re.search(r"#reachable methods:\s*(\d+)", log)
+        if reachable and int(reachable.group(1)) == 0:
+            return {"status": "failed",
+                    "reason": "CrySentry 未分析任何可达方法；请检查目标字节码与入口配置。",
+                    "seconds": round(time.time() - started, 3),
+                    "tool_version": jar.name, "raw_output": str(result)}
         return {"status": "completed", "reason": None,
                 "seconds": round(time.time() - started, 3),
                 "tool_version": jar.name, "raw_output": str(result), "data": data}

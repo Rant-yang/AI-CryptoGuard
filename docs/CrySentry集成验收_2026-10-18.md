@@ -74,7 +74,10 @@ python core\pipeline.py D:\demo\project --mode deep-java ^
 
 ## 6. 尚未完成
 
-本次 smoke 证明的是“runner 和证据链真实可运行”，没有证明指标提升。仍需 A/C：
+本次 smoke 证明的是“runner 和证据链真实可运行”，没有证明指标提升。
+后续 [25 例同题对照](Java深度同题对照_2026-10-18.md) 已完成：
+CrySentry 实际产出 23 条原始记录、16 条可挂载 pattern 证据，但快速/深度
+P/R 完全相同。普通 jar 零可达方法的问题也已修复。仍需 A/C：
 
 1. 选择固定、可编译且有标签的 Java 子集。
 2. 同一清单分别跑 fast 与 deep-java。
@@ -82,8 +85,8 @@ python core\pipeline.py D:\demo\project --mode deep-java ^
 4. 区分新增真阳性、重复证据、新增误报。
 5. 用至少一个真实 Maven/Gradle 项目的**用户已编译产物**验证 classpath。
 
-B 的 v0.2 AI 仍未接入；所以当前深度证据会进入量子评估和 Web 数据，但
-`task.json` 的 `ai` 仍为 `skipped`，不能表述为完整 AI 报告已完成。
+可选 v0.2 AI 已接入统一入口，默认不开启；启用后也不能把 1 条真实模型调用
+当作 30 条语义验收或完整 AI 报告质量证明。
 
 ## 7. 自检
 

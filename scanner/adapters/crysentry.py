@@ -55,7 +55,7 @@ def _method(value, index):
             "line": None, "method": match.group("method")}
 
 
-def _algorithm(record):
+def _algorithm_constant(record):
     # 只有 Pattern Match 的常量才具有“算法名”语义。Predictable Source 的
     # sourceStmt 可能是口令/密钥值，绝不能抽出来当算法或写入 raw。
     if record.get("judgeType") == "Pattern Match":
@@ -66,6 +66,22 @@ def _algorithm(record):
         quoted = _QUOTED_RE.search(stmt)
         if quoted:
             return quoted.group(1).strip()
+    return ""
+
+
+def _algorithm(record):
+    constant = _algorithm_constant(record)
+    if constant:
+        # JCE transformation strings are algorithm/mode/padding descriptors.
+        # A separate Finding named "AES/ECB/PKCS5Padding" duplicates the
+        # scanner's AES/ECB finding and is not a distinct algorithm. Preserve
+        # the full literal in evidence.raw.algorithm_constant below.
+        parts = constant.split("/")
+        if len(parts) >= 2 and parts[0].upper() == "AES" and parts[1].upper() == "ECB":
+            return "AES/ECB"
+        if len(parts) >= 2:
+            return parts[0]
+        return constant
     callee = record.get("calleeMethod") or ""
     if "PBEKeySpec" in callee:
         return "PBKDF2"
@@ -82,7 +98,8 @@ def _usage(record):
         return "hashing"
     if "Mac:" in callee or "PBEKeySpec" in callee:
         return "authentication"
-    if "Cipher" in callee or "SecretKeySpec" in callee:
+    if ("Cipher" in callee or "SecretKeySpec" in callee or
+            "KeyGenerator" in callee):
         return "encryption"
     return "unknown"
 
@@ -93,7 +110,7 @@ def _raw(record):
             "calleeMethod", "subSignature")
     out = {k: record[k] for k in keys if k in record}
     out["sourceStmt_present"] = bool(record.get("sourceStmt"))
-    alg = _algorithm(record)
+    alg = _algorithm_constant(record)
     if alg:
         out["algorithm_constant"] = alg
     return out

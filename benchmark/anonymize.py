@@ -129,6 +129,11 @@ def _sanitize_source(text, amap):
     所以替换后代码虽然编译不过，但结构还读得懂，便于人工复核。
     """
     def rename(tok):
+        # Compile-compatible paired cohorts may pre-register public class
+        # names. Honor those explicit aliases before the generic leak-word
+        # rule so class references and declarations receive the same name.
+        if tok in amap.tokens:
+            return amap.tokens[tok]
         if not _is_leaky(tok):
             return tok
         if tok not in amap.tokens:
