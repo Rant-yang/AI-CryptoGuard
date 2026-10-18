@@ -19,7 +19,9 @@
     R1 同文件词表字面量 + JCE 汇点 —— 原始字面量规则（不依赖传播，
        传播解析失败时它仍在）
     R2 字面量绑定的变量被作为方法调用实参传出（caller 侧线索）
-    R3 JCE getInstance 参数经传播解析到词表内算法（callee 侧/间接链）
+    R3 JCE getInstance 参数经传播解析到词表内算法（callee 侧/间接链）。
+       若实参是源码中明确的 static final String 字面量，记 R3-final，
+       可在外部工具已报同一算法时补充真实 API 调用行。
     R4 PBEParameterSpec 的 iteration 实参解析值 < 1000（低迭代误用，
        算法按 benchmark 元数据口径记 PBKDF2；实参常量若来自 caller
        的跨文件绑定, caller 文件反向同报一条 —— 规则留痕 R4x）
@@ -39,8 +41,9 @@
 跨文件一跳），不做递归跨文件。
 
 usage 一律 unknown（不猜用途，交融合层复核）。与外部工具同 (file, alg)
-已有分组时本源让位（merge 侧剔除）——只补盲区。只扫 .java（三个
-benchmark 语料都是 Java；Python/Go 的汇点形态不同，后续按需扩）。
+已有分组时，R1/普通 R3 让位；唯一上游用途下的 R3-final 调用行
+作为独立来源补入原 Finding，不新造重复 Finding。Java 走受控传播；
+Python/C/Go 等仍只做各自的轻量调用形态匹配。
 """
 import os
 import re
@@ -209,6 +212,45 @@ def _strip_strings(s):
                   lambda m: '"' + '_' * (len(m.group(0)) - 2) + '"', s)
 
 
+def _without_java_comments(source):
+    """Mask Java comments without hiding string literals or changing offsets."""
+    out = list(source)
+    state, i = 'code', 0
+    while i < len(source):
+        ch = source[i]
+        nxt = source[i + 1] if i + 1 < len(source) else ''
+        if state == 'code':
+            if ch == '/' and nxt in ('/', '*'):
+                state = 'line' if nxt == '/' else 'block'
+                out[i] = out[i + 1] = ' '
+                i += 2
+                continue
+            if ch == '"':
+                state = 'string'
+            elif ch == "'":
+                state = 'char'
+        elif state == 'line':
+            if ch == '\n':
+                state = 'code'
+            else:
+                out[i] = ' '
+        elif state == 'block':
+            if ch == '*' and nxt == '/':
+                out[i] = out[i + 1] = ' '
+                state = 'code'
+                i += 2
+                continue
+            if ch != '\n':
+                out[i] = ' '
+        elif ch == '\\' and nxt:
+            i += 2
+            continue
+        elif (state == 'string' and ch == '"') or (state == 'char' and ch == "'"):
+            state = 'code'
+        i += 1
+    return ''.join(out)
+
+
 def _split_args(raw):
     """实参/形参列表 -> 各段 trim 后的列表（空串守卫）。"""
     if not raw or not raw.strip():
@@ -253,6 +295,14 @@ class _FileInfo(object):
         self.rel = rel
         self.src = src
         self.classes = set(_CLASS_RE.findall(src))
+        # Only immutable field literals can supply a definite call-site
+        # supplement when another tool already owns the same Finding. A method
+        # parameter can have several callers; the file-wide env may hold just
+        # one of their values and must not be presented as a certain argument.
+        self.final_string_fields = {m.group(1): m.group(2) for m in re.finditer(
+            r'\b(?:static\s+final|final\s+static)\s+String\s+'
+            r'([A-Za-z_]\w*)\s*=\s*"([^"\\\n]+)"\s*;',
+            _without_java_comments(src))}
         # 方法签名: 名 -> 形参名列表（构造器天然在内：方法名 == 类名）
         self.methods = {}
         for m in _METHOD_RE.finditer(src):
@@ -773,11 +823,12 @@ def scan(target):
                 'risk_types': [],        # PBKDF2 低迭代是实现误用 -> review
                 'quantum_as_seen': [],
                 'raw': {'kind': 'local-literal', 'algorithm': alg_display,
-                        'rules': set()},
+                        'rules': set(), 'rule_lines': {}},
             }
             groups[key] = g
         g['lines'].update(lines)
         g['raw']['rules'].add(why)
+        g['raw']['rule_lines'].setdefault(why, set()).update(lines)
 
     def cross_file_env(info):
         """跨文件一跳: 把 caller 文件里 `recv.meth(args)` / `new Cls(args)`
@@ -863,7 +914,12 @@ def scan(target):
                 continue
             hits = _vocab_hits(val[1])
             for disp in hits:
-                emit(info.rel, disp, [_line_of(src, m.start())], 'R3')
+                # R3 may use a method parameter bound from one of several
+                # callers. Only a final field literal is strong enough to
+                # supplement an existing tool's evidence at this call site.
+                rule = ('R3-final' if info.final_string_fields.get(arg) == val[1]
+                        else 'R3')
+                emit(info.rel, disp, [_line_of(src, m.start())], rule)
             if hits:
                 continue      # 词表已按纯名报（词表+ECB 不再叠 /ECB 条目）
             # R5: 解析值是转换串且模式段为 ECB —— ECB 模式与密钥强度
@@ -947,5 +1003,8 @@ def scan(target):
     for g in groups.values():
         g['lines'] = sorted(g['lines'])
         g['raw']['rules'] = sorted(g['raw']['rules'])
+        g['raw']['rule_lines'] = {
+            rule: sorted(lines) for rule, lines in
+            sorted(g['raw']['rule_lines'].items())}
         out.append(g)
     return out

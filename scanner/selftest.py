@@ -633,6 +633,15 @@ def test_local_literal(check):
                             '    String a = "IDEA";\n'
                             '    bc.go(a); }\n'                    # 行 5
                             '}\n')
+        put('fixed.java', 'class Fixed {\n'
+                          '  private final static String DES = "DES";\n'
+                          '  void go() throws Exception { Cipher.getInstance(DES); }\n'
+                          '}\n')
+        put('commented.java', 'class Commented {\n'
+                              '  /* static final String D = "DES"; */\n'
+                              '  void go() throws Exception {\n'
+                              '    String D = "DES"; Cipher.getInstance(D);\n'
+                              '  } }\n')
 
         groups = {(g['file'], g['alg_norm']): g
                   for g in local_literal.scan(root)}
@@ -641,6 +650,15 @@ def test_local_literal(check):
         check('行号 = 字面量行 + 汇点行', g['lines'], [2, 4])
         check('risk 统一 broken（词表内全是已淘汰经典算法）', g['risk'], 'broken')
         check('usage 如实 unknown（不猜用途）', g['usage'], 'unknown')
+        check('不可变字段的调用点有独立 R3-final 行号',
+              groups[('fixed.java', 'DES')]['raw']['rule_lines'].get('R3-final'),
+              [3])
+        check('跨文件形参推断不能冒充不可变字段调用点',
+              groups[('callee1.java', 'RC2')]['raw']['rule_lines'].get('R3-final', []),
+              [])
+        check('注释中的 final 声明不能使可变局部变量成为确定字段',
+              groups[('commented.java', 'DES')]['raw']['rule_lines'].get('R3-final', []),
+              [])
         check('无汇点不触发（b.java 不产出）',
               [k for k in groups if k[0] == 'b.java'], [])
         check('转换串首段命中 -> DES 组', ('c.java', 'DES') in groups, True)
@@ -734,6 +752,33 @@ def test_local_literal(check):
         check('工具已覆盖的 (file,alg) 本源让位（不拆成两条）',
               [(x['usage'], x['evidence'][0]['tool']) for x in f],
               [('encryption', 'cbom-scan')])
+        # R1 的同文件所有汇点并无参数归属，绝不能用于补上游证据；
+        # R3-final 的不可变字段实参才能把调用行补进同一个 Finding。
+        g_lit_call = _group('local-literal', 'a.java', 'BLOWFISH',
+                            'unknown', [1, 10, 20], risk='broken',
+                            algorithm='Blowfish')
+        g_lit_call['raw'] = {
+            'kind': 'local-literal', 'algorithm': 'Blowfish',
+            'rules': ['R1', 'R3-final'],
+            'rule_lines': {'R1': [1, 10, 20], 'R3-final': [20]},
+        }
+        f_call = merge([g_lit_call, g_cbom])
+        check('同文件已有算法时只补不可变字段的调用行，不添重复 Finding',
+              [(x['usage'], [(e['tool'], e['lines']) for e in x['evidence']])
+               for x in f_call],
+              [('encryption', [('cbom-scan', [2]),
+                               ('local-literal', [20])])])
+        check('补充证据不冒认 R1 和上游工具来源',
+              f_call[0]['evidence'][1]['raw']['rules'], ['R3-final'])
+        other_usage = _group('cryptoscan', 'a.java', 'BLOWFISH',
+                             'signing', [30], risk='broken',
+                             algorithm='Blowfish')
+        f_ambiguous = merge([g_lit_call, g_cbom, other_usage])
+        check('同算法有多用途时 R3 不猜归属、不另造 unknown Finding',
+              [(x['usage'], [e['tool'] for e in x['evidence']])
+               for x in f_ambiguous],
+              [('encryption', ['cbom-scan']),
+               ('signing', ['cryptoscan'])])
         f2 = merge([g_lit])
         check('盲区里本源独立成条（unknown + needs-usage-review）',
               (len(f2), f2[0]['usage'], f2[0]['risk'],

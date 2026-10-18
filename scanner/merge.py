@@ -69,14 +69,40 @@ def merge(all_groups):
     行号吸收会重排组内行号，因此这里先浅拷贝每个组 ——
     **不污染调用方手里的原始数据**（coverage 差异审计需要吸收前的原始命中）。
     """
-    # 本地字面量源只补盲区：同一 (file, alg) 外部工具已有分组的，让位 ——
-    # 工具侧的判定粒度更好（用途/行号/风险都有），重叠的 unknown 组只会
-    # 把同一发现拆成两条（工具条 + 字面量条）添噪声
-    covered = {(g['file'], g['alg_norm']) for g in all_groups
-               if g.get('tool') != 'local-literal'}
-    all_groups = [g for g in all_groups
-                  if g.get('tool') != 'local-literal'
-                  or (g['file'], g['alg_norm']) not in covered]
+    # 同文件同算法已有上游分组时，本地源的 R1「文件中有这个字面量」
+    # 不能冒充所有 API 调用点；普通 R3 的方法形参还可能有多个调用者。
+    # 只把 R3-final（不可变字段字面量）的确定调用行补入上游证据。
+    # 只在上游用途唯一时把这类
+    # 调用行作为补充证据挂到原 Finding，不新造 unknown Finding。
+    # 多个上游用途时不猜归属；旧格式本地组没有 rule_lines 也保持让位。
+    covered = {}
+    for group in all_groups:
+        if group.get('tool') != 'local-literal':
+            key = (group['file'], group['alg_norm'])
+            covered.setdefault(key, []).append(group)
+    selected = []
+    for group in all_groups:
+        if group.get('tool') != 'local-literal':
+            selected.append(group)
+            continue
+        peers = covered.get((group['file'], group['alg_norm']))
+        if not peers:
+            selected.append(group)
+            continue
+        usages = {peer['usage'] for peer in peers}
+        r3_lines = (group.get('raw') or {}).get('rule_lines', {}).get('R3-final', [])
+        if len(usages) != 1 or not r3_lines:
+            continue
+        supplement = dict(group)
+        supplement['usage'] = next(iter(usages))
+        supplement['lines'] = sorted(set(r3_lines))
+        supplement['risk'] = None  # 证据补充不得改变原工具的风险裁决
+        supplement['raw'] = {'kind': 'local-literal',
+                             'algorithm': group.get('algorithm'),
+                             'rules': ['R3-final'],
+                             'rule_lines': {'R3-final': supplement['lines']}}
+        selected.append(supplement)
+    all_groups = selected
 
     by_key = {}
     for g in all_groups:

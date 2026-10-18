@@ -327,8 +327,10 @@ scanner/
   R4 必须精确解析**传给 PBE 汇点的那个实参**（corrected 负样本文件里有
   byte[32]/put("x",2) 这类无关小数字，粗规则会误伤）；解析不到常量就
   不报（不猜）。
-- usage 一律 unknown；与外部工具同 (file, alg) 重叠时让位（merge 侧
-  剔除）——只补盲区。
+- usage 一律 unknown；与外部工具同 (file, alg) 重叠时，文件级 R1
+  与形参推断的普通 R3 让位。若源码中有明确的 `static final String`
+  算法常量，R3-final 可把实际 `getInstance` 调用行作为本地证据
+  补到唯一上游用途的原 Finding；多用途时不猜归属、不新造重复 Finding。
 - **schema 已对接**：`core/schema/finding.v0.1.json` 的
   `evidence[].tool` 已加入 `'local-literal'`。本地字面量源会如实标为
   自研来源，真实样例的 findings / leads 已分别通过严格校验。

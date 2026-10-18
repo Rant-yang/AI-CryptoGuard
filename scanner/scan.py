@@ -210,8 +210,8 @@ def main(argv=None):
         return 3
 
     # ---- 本地字面量源（第三层模式证据，无外部依赖，总跑）
-    # 只补外部工具的盲区（算法名经变量间接传入/算法表缺词），
-    # 与工具重叠的分组在 merge 侧让位 —— 见 local_literal.py docstring
+    # 补外部工具的盲区；同算法重叠时，仅确定的 R3-final 调用行
+    # 可作为补充证据进入原 Finding，见 local_literal.py docstring。
     t0 = time.time()
     lit_groups = local_literal.scan(target)
     property_groups, conditional_defaults = java_properties.analyze(target)
