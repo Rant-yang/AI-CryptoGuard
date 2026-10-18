@@ -21,9 +21,13 @@ assert.throws(() => validatePacket({...packet, cases: [{...blank(), [KEYS[0]]: '
 assert.throws(() => validatePacket({...packet, review_protocol: 'wrong'}), /盲审包/);
 
 if (process.argv[2]) {
+  const expected = process.argv[3] === undefined ? 30 : Number(process.argv[3]);
+  assert.ok(Number.isSafeInteger(expected) && expected > 0,
+    '期望样本数必须是正整数');
   const real = validatePacket(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')));
-  assert.equal(real.cases.length, 30, '固定公开样本应为 30 条');
-  assert.deepEqual(progress(real), {complete: 0, failed: 0, total: 30}, '原包不得预填人工结论');
+  assert.equal(real.cases.length, expected, '盲审包条数与预登记批次不符');
+  assert.deepEqual(progress(real), {complete: 0, failed: 0, total: expected},
+    '原包不得预填人工结论');
   assert.equal(real.cases.every(c => c.evidence.every(e => !Object.hasOwn(e, 'raw'))), true,
     '盲审包不得携带 raw 源码');
 }
