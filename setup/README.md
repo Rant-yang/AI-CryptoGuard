@@ -90,7 +90,7 @@ python setup\compose_smoke.py --base http://127.0.0.1:8000
 ```
 
 该自检要求 Compose 服务已运行，只上传仓库自带公开样例，不调用云端 AI，结束后
-删除任务。**另一台机器的完整深扫/AI 部署仍未验证**。`setup/Dockerfile` 固定了基础镜像
+删除任务。**队友机器上的深扫/AI 同环境全链路仍未验证**。`setup/Dockerfile` 固定了基础镜像
 digest，`setup/requirements-deploy.txt` 固定了本机验收镜像的完整 Python 应用
 依赖版本，`pip check` 无冲突；系统 apt 包仍随 Debian 仓库更新，因此不是全系统
 按字节复现。不能把本机通过当作异机通过。
@@ -100,8 +100,11 @@ digest，`setup/requirements-deploy.txt` 固定了本机验收镜像的完整 Py
 cbom-scan，用公开样例实际运行快速扫描和量子评估，再从干净 checkout 构建
 Docker 镜像，以只读工具挂载完成 Web 上传→扫描→结果→删除。
 [首次成功运行与口径](../docs/干净Linux快扫与Web闭环_2026-10-19.md)记录在案。
-它证明的是**干净 Linux 环境的快速模式**；AI/CrySentry 深度模式、队友机器及
-真实项目的完整异机部署仍须另外验证。
+它证明的是**干净 Linux 环境的快速模式**。另有手动触发的
+`.github/workflows/verify-deep-java.yml` 从仓库外固定提交构建 CrySentry，并在
+新的 Linux runner 上完成[公开 Java 样例深扫](../docs/干净LinuxJava深扫验收_2026-10-19.md)。
+这个工作流在宿主 runner 上运行 Java 深扫，**容器仍只支持快扫**；云端 AI、
+队友机器与真实项目的完整异机部署仍须另外验证。
 
 ## 新环境先做只读预检
 

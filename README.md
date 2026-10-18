@@ -10,7 +10,7 @@ Java 深扫后同变量 `Cipher.init(ENCRYPT_MODE)` 的无源码正文用途证�
 
 比赛展示的三段公开样例、Windows cmd 命令与尚待完成的两次彩排记录见[演示脚本](docs/演示脚本与彩排记录_2026-10-18.md)。
 
-快速扫描 Web 的 [Docker Compose 方案](setup/README.md#docker-compose快速扫描-web本机容器已验收) 已完成本机镜像、公开样例真实扫描；新的 [GitHub Ubuntu runner](docs/干净Linux快扫与Web闭环_2026-10-19.md)也已从干净 checkout 完成外部快速工具预检、实际快扫与容器 Web 上传→扫描→结果→删除。AI、CrySentry 深度模式和队友机器上的完整部署仍待验证。第三方扫描器须在仓库外准备并只读挂载。
+快速扫描 Web 的 [Docker Compose 方案](setup/README.md#docker-compose快速扫描-web本机容器已验收) 已完成本机镜像、公开样例真实扫描；新的 [GitHub Ubuntu runner](docs/干净Linux快扫与Web闭环_2026-10-19.md)也已从干净 checkout 完成外部快速工具预检、实际快扫与容器 Web 上传→扫描→结果→删除。另一条手动 CI 在干净 Linux 宿主机完成[外部 CrySentry 构建及公开 Java 深扫](docs/干净LinuxJava深扫验收_2026-10-19.md)。容器仍只支持快扫；真实项目、云端 AI 和队友机器上的完整部署仍待验证。第三方扫描器须在仓库外准备并只读挂载。
 
 # AI-CryptoGuard
 
