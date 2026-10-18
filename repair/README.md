@@ -3,7 +3,7 @@
 当前 v1 在**临时副本**中支持 3 类 Python 修复：
 
 1. `hashlib.md5(...)` → `hashlib.sha256(...)`
-2. `random.Random(...)` → `random.SystemRandom(...)`
+2. 安全用途变量直接接收 `random.Random(...).randbytes(...)` 时，将该构造器改为 `random.SystemRandom(...)`
 3. 硬编码口令 → `os.environ["变量名"]`
 
 候选编辑按 Python AST 定位，只改真实调用/赋值表达式，不替换注释或字符串中的同名文本。
@@ -28,6 +28,9 @@ python repair\selftest.py --tools-dir D:\code_competition\_smoke
 `random.Random().randbytes(...)` 现在有保守的 Python AST 扫描规则：仅当结果直接赋给
 nonce/IV/salt/key 等安全用途变量时报告。三类模板均可在合成夹具上由正式 scanner
 独立复扫为 `ELIMINATED`；这仍不等于真实项目测试或行为兼容性已验证。
+修复模板现在也只触及这一受限形态：同文件中供模拟/测试使用的 `random.Random(7)`、
+赋给普通变量的 `randbytes` 均保持不变；若 `random` 名称在文件内被重绑定，也不自动
+改写。不要把此模板理解成全文件替换 `Random`。
 报告的 `new_high_findings` 只有扫描成功时才给数字，否则为 null。
 CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 `behavioral_compatibility: NOT_VERIFIED` / `manual_review_required: true`。

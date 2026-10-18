@@ -22,6 +22,8 @@ RULES = ('PY-REPAIR-MD5', 'PY-REPAIR-WEAK-RANDOM',
          'PY-REPAIR-HARDCODED-PASSWORD')
 
 _PASSWORD_NAME = re.compile(r'password|passwd|passphrase|pwd', re.I)
+_SECURITY_BYTES_NAME = re.compile(
+    r'(?i)(?:^|_)(?:nonce|iv|salt|key|secret|token)(?:_|$)')
 
 
 def repair_and_verify(source_file, output_report=None, tools_dir=None,
@@ -274,6 +276,51 @@ def _edits(text):
         return []
     lines = text.splitlines(keepends=True)
 
+    # Match the bounded scanner rule, not every use of Random in the file.
+    # Replacing an unrelated seeded simulation or test generator changes
+    # behaviour even when a separate crypto nonce in that file needs repair.
+    imported_random = any(
+        isinstance(stmt, ast.Import) and
+        any(alias.name == 'random' and alias.asname is None
+            for alias in stmt.names) for stmt in tree.body)
+    rebound_random = any(
+        (isinstance(node, ast.Name) and node.id == 'random' and
+         isinstance(node.ctx, ast.Store)) or
+        (isinstance(node, ast.arg) and node.arg == 'random')
+        for node in ast.walk(tree))
+
+    def security_target(target):
+        if isinstance(target, ast.Name):
+            return bool(_SECURITY_BYTES_NAME.search(target.id))
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any(security_target(item) for item in target.elts)
+        return False
+
+    weak_random_calls = set()
+    if imported_random and not rebound_random:
+        for stmt in ast.walk(tree):
+            if isinstance(stmt, ast.Assign):
+                target_ok = any(security_target(t) for t in stmt.targets)
+                value = stmt.value
+            elif isinstance(stmt, ast.AnnAssign):
+                target_ok = security_target(stmt.target)
+                value = stmt.value
+            else:
+                continue
+            if not target_ok or not isinstance(value, ast.Call):
+                continue
+            func = value.func
+            if not (isinstance(func, ast.Attribute) and
+                    func.attr == 'randbytes' and
+                    isinstance(func.value, ast.Call)):
+                continue
+            ctor = func.value
+            if (isinstance(ctor.func, ast.Attribute) and
+                    ctor.func.attr == 'Random' and
+                    isinstance(ctor.func.value, ast.Name) and
+                    ctor.func.value.id == 'random'):
+                weak_random_calls.add(id(ctor))
+
     def position(line, column):
         prefix = lines[line - 1].encode('utf-8')[:column].decode('utf-8')
         return sum(len(part) for part in lines[:line - 1]) + len(prefix)
@@ -287,7 +334,8 @@ def _edits(text):
                     if _is_protocol_md5(node):
                         continue
                     rule, replacement = 'PY-REPAIR-MD5', 'hashlib.sha256'
-                elif owner.id == 'random' and node.func.attr == 'Random':
+                elif (owner.id == 'random' and node.func.attr == 'Random' and
+                      id(node) in weak_random_calls):
                     rule, replacement = 'PY-REPAIR-WEAK-RANDOM', 'random.SystemRandom'
                 else:
                     continue

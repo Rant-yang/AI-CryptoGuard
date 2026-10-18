@@ -46,6 +46,21 @@ def main(argv=None):
     protocol_patch, protocol_rules = _apply(protocol)
     assert protocol_patch == protocol
     assert not protocol_rules['PY-REPAIR-MD5']
+    mixed_random = ('import random\n'
+                    'simulation = random.Random(7)\n'
+                    'sample = random.Random().randbytes(8)\n'
+                    'nonce = random.Random().randbytes(12)\n')
+    mixed_patch, mixed_rules = _apply(mixed_random)
+    assert mixed_rules['PY-REPAIR-WEAK-RANDOM']
+    assert 'simulation = random.Random(7)' in mixed_patch
+    assert 'sample = random.Random().randbytes(8)' in mixed_patch
+    assert 'nonce = random.SystemRandom().randbytes(12)' in mixed_patch
+    rebound = ('import random\n'
+               'def source(random):\n'
+               '    nonce = random.Random().randbytes(12)\n')
+    assert _apply(rebound)[0] == rebound
+    assert not _apply('import random\nsimulation = random.Random(7)\n')[1][
+        'PY-REPAIR-WEAK-RANDOM']
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, 'protocol.py')
         with open(src, 'w', encoding='utf-8') as fh:
@@ -55,6 +70,7 @@ def main(argv=None):
         assert guarded['verification_scope'] == 'NO_APPLICABLE_PATCH'
     print('[PASS] AST 定位不修改注释/字符串，兼容 Unicode 和 future 导入顺序')
     print('[PASS] usedforsecurity=False 的协议 MD5 不自动改写')
+    print('[PASS] 弱随机修复只触及安全用途 randbytes，保留同文件模拟/测试随机源')
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, 'demo.py')
         out = os.path.join(td, 'report.json')
