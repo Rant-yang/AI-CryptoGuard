@@ -91,7 +91,7 @@ function load(exported) {
   return new Function(...ARGS, code + '\n; return {' + exported.join(',') + '};')(...VALS);
 }
 
-const api = load(['S', 'reasonOf', 'REASON_META', 'RISK_CN', 'USAGE_CN']);
+const api = load(['S', 'reasonOf', 'REASON_META', 'RISK_CN', 'USAGE_CN', 'boot']);
 const htmlOf = sel => (store[sel] ? store[sel].innerHTML : '');
 
 // start() 是异步的，等一拍
@@ -107,6 +107,11 @@ setTimeout(() => {
   check('渲染的数据来自 argv 指定的文件',
         S.rows.length === data.length && data.every(f => ids.has(f.finding_id)),
         TARGET);
+  check('导入 JSON 不显示本地任务下载入口', mkEl('#reportDownload').hidden === true);
+  api.boot(data, '本地任务 web-test123');
+  check('本地任务提供对应的 HTML 下载链接',
+        mkEl('#reportDownload').hidden === false &&
+        mkEl('#reportDownload').href === '/api/tasks/web-test123/report');
 
   /* --- 2. 四个区块都渲染了 --- */
   const stats = htmlOf('#stats'), list = htmlOf('#list');

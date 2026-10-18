@@ -36,6 +36,7 @@ jobs:
           python -m ai.selftest_v02
           python ai/selftest.py
           python core/selftest.py
+          python -m core.report_selftest
           python repair/selftest.py
           python -m core.pipeline_ai_selftest
           python web/server_selftest.py

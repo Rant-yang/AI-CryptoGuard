@@ -117,10 +117,12 @@ python core\schema\validate_v02.py out\run\findings_assessed.json
 - **算法归一化表**（三个工具对同一算法的叫法不同）
 - **凭据检测规则**（方案要 ≥8 类，现有工具覆盖不到一半）
 
-### 3. `report.py` —— 报告渲染
+### 3. `report.py` —— 离线中文报告
 
-smoke 阶段的 `report_cn.py` 是原型（已验证跑通），可以搬过来改造。
-它落实了两条原则：规则库覆盖上游、公钥算法按用途分派。
+现已按 v0.2 Finding 与 Task 渲染自包含 HTML，只取归一化字段、规则结果、
+AI 解释、整改步骤和证据编号；`evidence.raw` 永不进入报告。
+`python core/report.py out/run/findings_assessed.json -o out/run/report.html --task out/run/task.json`
+仅生成待人工复核的审计报告，不表示候选补丁已部署或通过行为兼容性验证。
 
 ---
 

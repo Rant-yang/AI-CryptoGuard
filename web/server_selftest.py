@@ -70,6 +70,13 @@ def main():
                     "call_context": ["LEAK-ME-CONTEXT"]}]}]), encoding="utf-8")
             _, safe = request(base, "/api/tasks/%s/result" % task_id)
             assert "LEAK-ME" not in json.dumps(safe)
+            with urllib.request.urlopen(base + "/api/tasks/%s/report" % task_id, timeout=5) as page:
+                report = page.read().decode("utf-8")
+                assert page.status == 200
+                assert page.headers.get("Content-Type") == "text/html; charset=utf-8"
+                assert "attachment" in page.headers.get("Content-Disposition", "")
+                assert "AI-CryptoGuard 审计报告" in report
+                assert "LEAK-ME" not in report
             uploaded = serve._task_dir(task_id) / "input" / "demo" / "src" / "a.py"
             assert uploaded.read_bytes() == b"print('ok')\n"
             try:

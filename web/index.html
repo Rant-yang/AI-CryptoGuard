@@ -221,6 +221,8 @@
     user-select:none;
   }
   .chip:hover{border-color:var(--ink3)}
+  #reportDownload{display:inline-block;text-decoration:none}
+  #reportDownload[hidden]{display:none}
   .chip:focus-visible{outline:2px solid var(--info); outline-offset:1px}
   .chip.on{background:var(--ink); color:#fff; border-color:var(--ink)}
   .chip .n{font-family:var(--mono); opacity:.55; margin-left:5px}
@@ -370,6 +372,7 @@
     <h1>AI-CryptoGuard</h1>
     <span class="role">基于多源证据融合与大模型推理的密码安全审计</span>
     <span class="spacer"></span>
+    <a class="chip" id="reportDownload" hidden download="AI-CryptoGuard-report.html">下载中文报告</a>
     <button class="chip" id="reload" title="读取已经生成的 findings JSON，不会扫描源码项目">导入已有报告</button>
   </div>
   <div class="hmeta" id="hmeta"></div>
@@ -925,6 +928,9 @@ function ex_or(x){
 function boot(rows, from){
   S.rows = rows.filter(f => f && typeof f === 'object');
   S.src = from;
+  const live = /^本地任务 (web-[a-z0-9]+)$/.exec(from);
+  $('#reportDownload').hidden = !live;
+  if(live) $('#reportDownload').href = `/api/tasks/${live[1]}/report`;
   const files = new Set(S.rows.map(f => f.file)).size;
   $('#hmeta').innerHTML =
     `<span><b>${S.rows.length}</b> 条发现</span>` +
@@ -938,6 +944,7 @@ function boot(rows, from){
 async function start(){
   const got = await autoLoad();
   if(got) return boot(got.rows, got.from);
+  $('#reportDownload').hidden = true;
   $('#hmeta').innerHTML = '<span>尚无报告</span><span>请扫描项目或导入已有 JSON</span>';
   $('#list').innerHTML = '<div class="empty">尚无扫描结果。请使用上方入口选择项目文件夹。</div>';
 }

@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from core.quantum_timeline import make_profile  # noqa: E402
 from ai.redact import scrub  # noqa: E402
+from core.report import render_report  # noqa: E402
 
 TASK_BASE = ROOT / "workspace" / "web_tasks"
 PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
@@ -40,6 +41,22 @@ LOCK = threading.Lock()
 
 def _json_bytes(data):
     return (json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _safe_result_rows(rows):
+    """Browser/report view must never receive upstream raw scanner records."""
+    safe_rows = []
+    for finding in rows:
+        clean = json.loads(json.dumps(finding))
+        for evidence in clean.get("evidence", []):
+            evidence.pop("raw", None)
+            if clean.get("finding_kind") == "credential":
+                evidence.pop("call_context", None)
+                evidence.pop("call_shape", None)
+            elif "call_context" in evidence:
+                evidence["call_context"] = scrub(evidence["call_context"])
+        safe_rows.append(clean)
+    return safe_rows
 
 
 def _safe_relative(raw):
@@ -293,7 +310,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
                 return self._send_json(200, _snapshot(parts[2]))
-            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] == "result":
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] in ("result", "report"):
                 out = _task_dir(parts[2]) / "out"
                 result = out / "findings_explained.json"
                 if not result.is_file():
@@ -301,19 +318,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if not result.is_file():
                     return self._send_json(409, {"error": "result not ready"})
                 rows = json.loads(result.read_text(encoding="utf-8-sig"))
-                # Reports may contain original scanner records. The browser only
-                # needs normalized evidence, never raw source or credential values.
-                safe_rows = []
-                for finding in rows:
-                    clean = json.loads(json.dumps(finding))
-                    for evidence in clean.get("evidence", []):
-                        evidence.pop("raw", None)
-                        if clean.get("finding_kind") == "credential":
-                            evidence.pop("call_context", None)
-                            evidence.pop("call_shape", None)
-                        elif "call_context" in evidence:
-                            evidence["call_context"] = scrub(evidence["call_context"])
-                    safe_rows.append(clean)
+                safe_rows = _safe_result_rows(rows)
+                if parts[3] == "report":
+                    task_file = out / "task.json"
+                    task = json.loads(task_file.read_text(encoding="utf-8-sig")) if task_file.is_file() else None
+                    body = render_report(safe_rows, task).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Disposition", 'attachment; filename="AI-CryptoGuard-report.html"')
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 body = _json_bytes(safe_rows)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")

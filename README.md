@@ -130,11 +130,14 @@ cd AI-CryptoGuard
 python core/pipeline.py <要扫描的目录> --tools-dir <第三方工具目录> -o out/run
 # 需要时间窗口时再加：--data-lifetime-years X --migration-lead-years Y --threat-horizon-years Z --hndl-exposure yes
 python core/schema/validate_v02.py out/run/findings_assessed.json
+python core/report.py out/run/findings_assessed.json -o out/run/report.html --task out/run/task.json
 python web/serve.py
 ```
 
 也可以只运行 `python web/serve.py`，在页面顶部把项目文件夹拖进本地审计入口；
 扫描进度和结果会在同一页面连续展示。拖入内容只进入本机临时工作区，不发送到云端。
+扫描完成后可从页眉下载自包含中文 HTML 报告。导入已有 JSON 只负责查看；
+命令行入口可用上面的 `core/report.py` 单独导出。
 
 下面是兼容旧 v0.1 演示的手动链路：
 
