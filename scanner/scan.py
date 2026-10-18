@@ -241,8 +241,21 @@ def main(argv=None):
     findings.extend(credential_findings)
     credential_seconds = round(time.time() - t0, 2)
     t0 = time.time()
-    ast_findings = python_ast.scan(target)
-    findings.extend(ast_findings)
+    ast_diagnostics = {}
+    ast_findings = python_ast.scan(target, diagnostics=ast_diagnostics)
+    # AST can corroborate an existing algorithm Finding. Preserve the frozen
+    # one-(file, algorithm, usage) counting unit rather than emit two rows.
+    by_id = {row['finding_id']: row for row in findings}
+    for row in ast_findings:
+        prior = by_id.get(row['finding_id'])
+        if prior and row.get('algorithm_normalized'):
+            prior['evidence'].extend(row['evidence'])
+            prior['confidence'] = max(prior.get('confidence', 0),
+                                      row.get('confidence', 0))
+            prior['tags'] = sorted(set(prior.get('tags', []) + row.get('tags', [])))
+        else:
+            findings.append(row)
+            by_id[row['finding_id']] = row
     ast_seconds = round(time.time() - t0, 2)
     findings.sort(key=lambda f: (f['file'], f['line'], f['finding_id']))
     meta_tools[credential_scan.TOOL_NAME] = {
@@ -257,7 +270,8 @@ def main(argv=None):
         'seconds': ast_seconds,
         'groups': len(ast_findings),
         'raw': None,
-        'summary': {'rule_id': python_ast.RULE_ID},
+        'summary': {'rules': _count_by(ast_findings, 'rule_id'),
+                    'parse_coverage': ast_diagnostics},
     }
     _print_safe('[ok] %s 完成（%.2fs，产出 %d 条凭据 Finding；不保存原文）'
                 % (credential_scan.TOOL_NAME,

@@ -10,6 +10,7 @@ C 合并分支前跑这一条 + core/schema/validate.py，scanner 侧就算验�
 coverage 的差异计数、cbom_report 的结构与确定性。
 """
 import os
+import hashlib
 import re
 import sys
 import tempfile
@@ -845,6 +846,58 @@ def test_python_ast_weak_random(check):
               rows[0]['evidence'][0]['lines'], [2])
 
 
+def test_python_ast_hashlib_new(check):
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, 'hash_case.py')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('def weak():\n'
+                     '    import hashlib as h\n'
+                     '    return h.new("md5")\n'
+                     'def weak_two():\n'
+                     '    from hashlib import new as create\n'
+                     '    return create("sha1")\n'
+                     'def safe():\n'
+                     '    import hashlib\n'
+                     '    return hashlib.new("sha384")\n'
+                     'def rebound():\n'
+                     '    import hashlib as h\n'
+                     '    h = fake_provider()\n'
+                     '    return h.new("md5")\n'
+                     'def dynamic(name):\n'
+                     '    import hashlib\n'
+                     '    return hashlib.new(name)\n')
+        rows = python_ast.scan(td)
+        check('AST 抓标准库 hashlib.new 的 MD5/SHA-1 常量，排除安全/重绑定/动态调用',
+              [(r['algorithm_normalized'], r['line']) for r in rows],
+              [('MD5', 3), ('SHA1', 6)])
+        check('弱哈希 AST 输出不含源码原文并遵守稳定 Finding ID',
+              all(r['evidence'][0]['kind'] == 'ast' and
+                  'sourceStmt' not in r['evidence'][0]['raw'] and
+                  r['finding_id'] == hashlib.sha1(
+                      (r['file'] + '|' + r['algorithm_normalized'] + '|hashing')
+                      .encode('utf-8')).hexdigest()[:12] for r in rows), True)
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('def modern():\n'
+                     '    import hashlib\n'
+                     '    # hashlib.new("sha1") is only a comment\n'
+                     '    note = "hashlib.new(\\\"sha1\\\")"\n'
+                     '    digest = hashlib.new("md5")\n'
+                     '    print(f"value {digest.hexdigest()}")\n'
+                     "    print(f'bad {data['x']}')\n")
+        diagnostics = {}
+        recovered = python_ast.scan(td, diagnostics=diagnostics)
+        check('新语法解析失败时仅恢复有导入证据的真实调用',
+              [(r['algorithm_normalized'], r['line']) for r in recovered],
+              [('MD5', 5)])
+        check('词法回退显式标记 partial，绝不冒充完整 AST',
+              (recovered[0]['evidence'][0]['raw']['parse_scope'],
+               'partial-parse' in recovered[0]['tags']),
+              ('token_fallback', True))
+        check('解析覆盖率如实记录，不能把部分解析当成全部解析',
+              (diagnostics['full_ast_files'], diagnostics['partial_parse_files'],
+               diagnostics['token_recovery_findings']), (0, 1, 1))
+
+
 def test_cryptoscan_os_binary(check):
     with tempfile.TemporaryDirectory() as td:
         folder = os.path.join(td, 'cryptoscan')
@@ -876,6 +929,7 @@ def main():
                test_coverage,
                test_cbom_report, test_java_properties, test_credential_identity,
                test_conditional_default, test_python_ast_weak_random,
+               test_python_ast_hashlib_new,
                test_cryptoscan_os_binary):
         fn(check)
 
