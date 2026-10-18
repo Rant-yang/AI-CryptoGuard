@@ -49,6 +49,14 @@ def _table_borders(table):
     table._element.tblPr.append(borders)
 
 
+def _keep_table_rows_together(table):
+    for idx, row in enumerate(table.rows):
+        props = row._tr.get_or_add_trPr()
+        props.append(OxmlElement('w:cantSplit'))
+        if idx == 0:
+            props.append(OxmlElement('w:tblHeader'))
+
+
 def _fill_cover(doc, number):
     paragraphs = doc.paragraphs
     if len(paragraphs) < 18 or '作品编号' not in paragraphs[0].text:
@@ -57,6 +65,7 @@ def _fill_cover(doc, number):
     paragraphs[2].text = '作品类别：☑软件设计   □硬件制作   □工程实践'
     paragraphs[3].text = '□密码应用技术   □其它'
     paragraphs[14].text = '作品题目：' + TITLE
+    paragraphs[22].text = '2026 年 10 月'
     # The official template explicitly instructs entrants to delete this note.
     for p in list(doc.paragraphs):
         if '提交作品时请将此段落文字删除' in p.text:
@@ -153,6 +162,7 @@ def _append_report(doc, source):
                 for r_idx, row in enumerate(rows):
                     for c_idx, value in enumerate(row):
                         _set_cell(t.rows[r_idx].cells[c_idx], value)
+                _keep_table_rows_together(t)
             continue
         if re.match(r'^\d+\.\s+', line) or line.startswith('- '):
             flush_paragraph()
