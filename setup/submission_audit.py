@@ -23,6 +23,8 @@ FORBIDDEN_PATH = re.compile(
     r'(^|/)(?:\.git|workspace|out|_smoke|_anon|labels|node_modules|__pycache__)/', re.I)
 FORBIDDEN_SUFFIX = ('.jar', '.exe', '.dll', '.class', '.pyc', '.map.json')
 DOCX_NS = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+PPT_NS = {'p': 'http://schemas.openxmlformats.org/presentationml/2006/main',
+          'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'}
 
 
 def _text_xml(data):
@@ -48,8 +50,21 @@ def _office(path, kind, number=None, draft=False):
         if kind == 'slides' and not any(n.startswith('ppt/slides/slide') and
                                      n.endswith('.xml') for n in names):
             problems.append('missing-slides')
-        if kind == 'slides' and any(n.startswith('ppt/notesSlides/') for n in names):
-            problems.append('slide-notes-present')
+        # PptxGenJS creates empty notes parts with generated slide numbers.
+        # Reject actual note text, not the empty container itself.
+        if kind == 'slides':
+            for name in names:
+                if not re.fullmatch(r'ppt/notesSlides/notesSlide\d+\.xml', name):
+                    continue
+                root = ET.fromstring(archive.read(name))
+                for shape in root.findall('.//p:sp', PPT_NS):
+                    ph = shape.find('./p:nvSpPr/p:nvPr/p:ph', PPT_NS)
+                    if ph is not None and ph.get('type') == 'sldNum':
+                        continue
+                    if any((t.text or '').strip() for t in
+                           shape.findall('.//a:t', PPT_NS)):
+                        problems.append('slide-notes-content')
+                        break
         for name in names:
             if not name.endswith(('.xml', '.rels')):
                 continue

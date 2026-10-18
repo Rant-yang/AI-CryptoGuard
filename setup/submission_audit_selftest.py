@@ -52,8 +52,12 @@ def main():
         assert any(x.startswith('identity-marker:') for x in
                    audit(report, slides, source, number='TEST-123')['report'])
         _zip(slides, {'ppt/slides/slide1.xml': '<slide>Title</slide>',
-                      'ppt/notesSlides/notesSlide1.xml': '<notes />'})
-        assert 'slide-notes-present' in audit(report, slides, source,
+                      'ppt/notesSlides/notesSlide1.xml':
+                      '<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                      'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                      '<p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr>'
+                      '<p:txBody><a:t>secret note</a:t></p:txBody></p:sp></p:notes>'})
+        assert 'slide-notes-content' in audit(report, slides, source,
                                               number='TEST-123')['slides']
         _source(source, bad_hash=True)
         assert 'source-hash-mismatch:core/pipeline.py' in audit(
