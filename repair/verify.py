@@ -29,6 +29,7 @@ def main(argv=None):
     # Exit 0 means structural scan verification only. Project tests remain
     # NOT_RUN and manual review is still required; never imply safe deployment.
     ok = (report['original_unchanged'] and report['syntax'] == 'PASS'
+          and any(r['patch_applied'] for r in report['repairs'])
           and report['independent_scan']['status'] == 'COMPLETED'
           and report['new_high_findings'] == 0
           and all(r['scanner_rescan'] == 'ELIMINATED'

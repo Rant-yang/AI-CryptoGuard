@@ -41,7 +41,20 @@ def main(argv=None):
     assert not _apply('note = "hashlib.md5("\n')[1]['PY-REPAIR-MD5']
     assert not _syntax_check('import os\nfrom __future__ import annotations\n',
                              'bad_future.py')[0]
+    protocol = ('import hashlib\n'
+                'digest = hashlib.md5(b"wire", usedforsecurity=False).hexdigest()\n')
+    protocol_patch, protocol_rules = _apply(protocol)
+    assert protocol_patch == protocol
+    assert not protocol_rules['PY-REPAIR-MD5']
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, 'protocol.py')
+        with open(src, 'w', encoding='utf-8') as fh:
+            fh.write(protocol)
+        guarded = repair_and_verify(src)
+        assert guarded['skipped_protocol_md5'] == 1
+        assert guarded['verification_scope'] == 'NO_APPLICABLE_PATCH'
     print('[PASS] AST 定位不修改注释/字符串，兼容 Unicode 和 future 导入顺序')
+    print('[PASS] usedforsecurity=False 的协议 MD5 不自动改写')
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, 'demo.py')
         out = os.path.join(td, 'report.json')

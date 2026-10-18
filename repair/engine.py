@@ -79,6 +79,7 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None,
         'new_high_findings': independent.get('new_high_findings'),
         'independent_scan': independent,
         'verification_scope': ('FAILED' if not syntax_ok else
+                               'NO_APPLICABLE_PATCH' if not any(applied.values()) else
                                'SYNTAX_SCANNER_PROJECT_TESTS'
                                if (isinstance(tests, dict) and
                                    tests.get('before') == 'PASS' and
@@ -92,6 +93,7 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None,
                                if independent.get('status') == 'COMPLETED'
                                else 'SYNTAX_ONLY'),
         'manual_review_required': True,
+        'skipped_protocol_md5': _protocol_md5_count(original),
         'behavioral_compatibility': 'NOT_VERIFIED',
         'repairs': rows,
     }
@@ -235,6 +237,30 @@ def _detect(text):
     return {rule: any(item[2] == rule for item in _edits(text)) for rule in RULES}
 
 
+def _protocol_md5_count(text):
+    """Count explicitly non-security MD5 calls without recording their inputs."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return 0
+    return sum(1 for node in ast.walk(tree) if _is_protocol_md5(node))
+
+
+def _is_protocol_md5(node):
+    """usedforsecurity=False often means an interoperable protocol digest.
+
+    Replacing the hash changes its wire value. This is a conservative skip,
+    not a claim that the surrounding protocol is safe.
+    """
+    return (isinstance(node, ast.Call) and
+            isinstance(node.func, ast.Attribute) and
+            isinstance(node.func.value, ast.Name) and
+            node.func.value.id == 'hashlib' and node.func.attr == 'md5' and
+            any(k.arg == 'usedforsecurity' and
+                isinstance(k.value, ast.Constant) and k.value.value is False
+                for k in node.keywords))
+
+
 def _edits(text):
     """Return source spans for real AST expressions, excluding comments/strings.
 
@@ -258,6 +284,8 @@ def _edits(text):
             owner = node.func.value
             if isinstance(owner, ast.Name):
                 if owner.id == 'hashlib' and node.func.attr == 'md5':
+                    if _is_protocol_md5(node):
+                        continue
                     rule, replacement = 'PY-REPAIR-MD5', 'hashlib.sha256'
                 elif owner.id == 'random' and node.func.attr == 'Random':
                     rule, replacement = 'PY-REPAIR-WEAK-RANDOM', 'random.SystemRandom'

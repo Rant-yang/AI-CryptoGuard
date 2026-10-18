@@ -7,6 +7,9 @@
 3. 硬编码口令 → `os.environ["变量名"]`
 
 候选编辑按 Python AST 定位，只改真实调用/赋值表达式，不替换注释或字符串中的同名文本。
+显式 `hashlib.md5(..., usedforsecurity=False)` 可能是协议规定的摘要（例如 HTTP Digest），
+自动替换会破坏互操作，因此跳过并在报告中计入 `skipped_protocol_md5`；
+没有可应用补丁时报告 `NO_APPLICABLE_PATCH`，CLI 返回非零。跳过不代表安全。
 语法检查使用 `compile(..., 'exec')`，会拦住导入顺序等 `ast.parse` 不检查的错误；
 环境变量模板新增的 `import os` 放在模块文档字符串和 `from __future__` 导入之后。
 
@@ -41,3 +44,13 @@ CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 当前限制：这是可验证的 Python 首批模板，不声称自动修复任意语言或任意上下文；
 没有项目自带测试时，报告明确写 `tests: NOT_RUN`。例如 MD5 摘要长度从
 16 字节变为 32 字节，可能影响协议或存储格式；正式应用必须跑项目测试并人工复核。
+
+## 第三方项目反例：Requests HTTP Digest（2026-10-18）
+
+使用上游 [Requests](https://github.com/psf/requests) 的源码（本地 checkout
+`611c6162`）核对 `src/requests/auth.py`：HTTP Digest 的 MD5 分支明确调用
+`hashlib.md5(x, usedforsecurity=False)`。本工具对该文件的 AST 检查结果为
+`skipped_protocol_md5=1`、`patch_applied=False`、源码逐字不变。Requests 自带的
+`tests/test_requests.py::TestRequests::test_DIGEST_HTTP_200_OK_GET` 在隔离虚拟环境中
+通过（1 passed）。这证明该协议调用受到保护；**没有证明任何自动补丁在第三方项目中通过测试**。
+上游源码和测试依赖均保留在仓库外，不打包为本项目自研内容。
