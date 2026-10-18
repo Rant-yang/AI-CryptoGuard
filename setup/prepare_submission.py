@@ -49,7 +49,7 @@ def _check_inputs(number, template, slides, output_dir):
         raise ValueError('作品编号格式不符；须从参赛平台核对。')
     # Reject the known rehearsal prefixes. The human must still verify that
     # every other syntactically valid number really came from the platform.
-    if number.upper().startswith(('TEST', 'ACG-TEST')):
+    if number.upper().startswith(('TEST', 'ACG-TEST', 'REHEARSAL')):
         raise ValueError('测试编号不能用于正式出包。')
     output = Path(output_dir).resolve()
     if output == ROOT or ROOT in output.parents:

@@ -56,7 +56,7 @@ def main():
         for item in common:
             item.start()
         try:
-            result = target.prepare('REHEARSAL-001', template, slides, output)
+            result = target.prepare('P123456', template, slides, output)
             assert calls == ['report', 'source', 'support', 'audit'], calls
             assert output.is_dir() and len(list(output.iterdir())) == 3
             assert result['source_commit'] == 'a' * 40
@@ -64,7 +64,7 @@ def main():
             assert result['human_review_required']
             assert result['files'][target.SOURCE_NAME]['bytes'] == len(b'anonymous-source')
             try:
-                target.prepare('REHEARSAL-001', template, slides, output)
+                target.prepare('P123456', template, slides, output)
                 raise AssertionError('Existing release overwritten')
             except FileExistsError:
                 pass
@@ -74,7 +74,12 @@ def main():
             except ValueError:
                 pass
             try:
-                target.prepare('REHEARSAL-001', template, slides,
+                target.prepare('REHEARSAL-001', template, slides, root / 'rehearsal')
+                raise AssertionError('Rehearsal number accepted')
+            except ValueError:
+                pass
+            try:
+                target.prepare('P123456', template, slides,
                                target.ROOT / 'out' / 'release')
                 raise AssertionError('Release permitted inside repo')
             except ValueError:
@@ -90,7 +95,7 @@ def main():
              patch.object(target, 'build_support', side_effect=support_builder), \
              patch.object(target, 'audit', return_value={'source': ['tampered']}):
             try:
-                target.prepare('REHEARSAL-001', template, slides, failed)
+                target.prepare('P123456', template, slides, failed)
                 raise AssertionError('Failed audit published a release')
             except ValueError as exc:
                 assert 'source' in str(exc)
@@ -99,7 +104,7 @@ def main():
 
         with patch.object(target, '_git', return_value=b' M docs/report.md\n'):
             try:
-                target.prepare('REHEARSAL-001', template, slides, root / 'dirty')
+                target.prepare('P123456', template, slides, root / 'dirty')
                 raise AssertionError('Dirty Git tree accepted')
             except RuntimeError as exc:
                 assert '未提交' in str(exc)
