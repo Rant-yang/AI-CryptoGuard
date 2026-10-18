@@ -6,6 +6,10 @@
 2. `random.Random(...)` → `random.SystemRandom(...)`
 3. 硬编码口令 → `os.environ["变量名"]`
 
+候选编辑按 Python AST 定位，只改真实调用/赋值表达式，不替换注释或字符串中的同名文本。
+语法检查使用 `compile(..., 'exec')`，会拦住导入顺序等 `ast.parse` 不检查的错误；
+环境变量模板新增的 `import os` 放在模块文档字符串和 `from __future__` 导入之后。
+
 ```cmd
 python repair\verify.py path\to\demo.py --tools-dir D:\code_competition\_smoke -o out\repair_report.json
 python repair\verify.py examples\repair_demo\app.py --project-root examples\repair_demo --tools-dir D:\code_competition\_smoke -o out\repair_project_report.json
@@ -13,7 +17,7 @@ python repair\selftest.py
 python repair\selftest.py --tools-dir D:\code_competition\_smoke
 ```
 
-执行顺序：Before 检测 → 临时副本 → 应用模板 → `ast.parse` 语法检查 →
+执行顺序：Before 检测 → 临时副本 → 应用模板 → 编译级语法检查（不执行）→
 重新检测 → 输出结构化报告。提供 `--tools-dir` 时，另用**正式 scanner**
 分别扫描修复前后的隔离副本；不提供时只做模板与语法检查，CLI 退出码非零。
 原文件不改；口令原文不进入报告或日志。

@@ -21,13 +21,7 @@ from pathlib import Path
 RULES = ('PY-REPAIR-MD5', 'PY-REPAIR-WEAK-RANDOM',
          'PY-REPAIR-HARDCODED-PASSWORD')
 
-_MD5 = re.compile(r'\bhashlib\.md5\s*\(')
-_RANDOM = re.compile(r'\brandom\.Random\s*\(')
-_PASSWORD = re.compile(
-    r'(?P<indent>^[ \t]*)(?P<name>(?=[A-Za-z0-9_]*(?:password|passwd|passphrase|pwd))'
-    r'[A-Za-z_][A-Za-z0-9_]*)'
-    r'\s*=\s*(?P<quote>["\'])(?P<value>[^"\'\r\n]{3,4096})(?P=quote)',
-    re.I | re.M)
+_PASSWORD_NAME = re.compile(r'password|passwd|passphrase|pwd', re.I)
 
 
 def repair_and_verify(source_file, output_report=None, tools_dir=None,
@@ -238,35 +232,96 @@ def _read(path):
 
 
 def _detect(text):
-    return {
-        'PY-REPAIR-MD5': bool(_MD5.search(text)),
-        'PY-REPAIR-WEAK-RANDOM': bool(_RANDOM.search(text)),
-        'PY-REPAIR-HARDCODED-PASSWORD': bool(_PASSWORD.search(text)),
-    }
+    return {rule: any(item[2] == rule for item in _edits(text)) for rule in RULES}
+
+
+def _edits(text):
+    """Return source spans for real AST expressions, excluding comments/strings.
+
+    Python AST columns are UTF-8 byte offsets; translate each to a character
+    offset before slicing Unicode source. Invalid input is left untouched and
+    rejected by _syntax_check rather than repaired by a text regex.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    lines = text.splitlines(keepends=True)
+
+    def position(line, column):
+        prefix = lines[line - 1].encode('utf-8')[:column].decode('utf-8')
+        return sum(len(part) for part in lines[:line - 1]) + len(prefix)
+
+    edits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            owner = node.func.value
+            if isinstance(owner, ast.Name):
+                if owner.id == 'hashlib' and node.func.attr == 'md5':
+                    rule, replacement = 'PY-REPAIR-MD5', 'hashlib.sha256'
+                elif owner.id == 'random' and node.func.attr == 'Random':
+                    rule, replacement = 'PY-REPAIR-WEAK-RANDOM', 'random.SystemRandom'
+                else:
+                    continue
+                edits.append((position(node.func.lineno, node.func.col_offset),
+                              position(node.func.end_lineno, node.func.end_col_offset),
+                              rule, replacement))
+        elif (isinstance(node, ast.Assign) and len(node.targets) == 1 and
+              isinstance(node.targets[0], ast.Name) and
+              isinstance(node.value, ast.Constant) and
+              isinstance(node.value.value, str) and
+              3 <= len(node.value.value) <= 4096 and
+              _PASSWORD_NAME.search(node.targets[0].id)):
+            name = node.targets[0].id
+            env_name = re.sub(r'[^A-Za-z0-9]+', '_', name).upper()
+            edits.append((position(node.value.lineno, node.value.col_offset),
+                          position(node.value.end_lineno, node.value.end_col_offset),
+                          'PY-REPAIR-HARDCODED-PASSWORD',
+                          'os.environ["%s"]' % env_name))
+    return edits
+
+
+def _os_import_position(text):
+    """Insert after module docstring and future imports, preserving shebang."""
+    tree = ast.parse(text)
+    body = tree.body
+    index = 0
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and \
+            isinstance(body[0].value.value, str):
+        index = 1
+    while index < len(body) and isinstance(body[index], ast.ImportFrom) and \
+            body[index].module == '__future__':
+        index += 1
+    lines = text.splitlines(keepends=True)
+    if index:
+        return sum(len(part) for part in lines[:body[index - 1].end_lineno])
+    if body:
+        return sum(len(part) for part in lines[:body[0].lineno - 1])
+    return len(text)
 
 
 def _apply(text):
     applied = {rule: False for rule in RULES}
-    text, n = _MD5.subn('hashlib.sha256(', text)
-    applied['PY-REPAIR-MD5'] = n > 0
-    text, n = _RANDOM.subn('random.SystemRandom(', text)
-    applied['PY-REPAIR-WEAK-RANDOM'] = n > 0
-
-    def replace_password(match):
-        name = match.group('name')
-        env_name = re.sub(r'[^A-Za-z0-9]+', '_', name).upper()
-        return '%s%s = os.environ["%s"]' % (match.group('indent'), name, env_name)
-
-    text, n = _PASSWORD.subn(replace_password, text)
-    applied['PY-REPAIR-HARDCODED-PASSWORD'] = n > 0
-    if n and not re.search(r'^\s*(?:import os|from os\b)', text, re.M):
-        text = 'import os\n' + text
+    edits = _edits(text)
+    for start, end, rule, replacement in sorted(edits, reverse=True):
+        text = text[:start] + replacement + text[end:]
+        applied[rule] = True
+    if applied['PY-REPAIR-HARDCODED-PASSWORD']:
+        tree = ast.parse(text)
+        has_os = any(isinstance(node, ast.Import) and
+                     any(alias.name == 'os' and alias.asname is None
+                         for alias in node.names) for node in tree.body)
+        if not has_os:
+            at = _os_import_position(text)
+            newline = '\r\n' if '\r\n' in text else '\n'
+            separator = '' if at == 0 or text[at - 1] in '\r\n' else newline
+            text = text[:at] + separator + 'import os' + newline + text[at:]
     return text, applied
 
 
 def _syntax_check(text, filename):
     try:
-        ast.parse(text, filename=filename)
+        compile(text, filename, 'exec')
         return True, None
     except SyntaxError as exc:
         # 只保留位置和异常类型，不把包含源码的 exc.text 写入报告。

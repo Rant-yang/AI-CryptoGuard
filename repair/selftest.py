@@ -9,7 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from repair.engine import RULES, repair_and_verify  # noqa: E402
+from repair.engine import RULES, _apply, _syntax_check, repair_and_verify  # noqa: E402
 
 
 SYNTHETIC_SECRET = 'SyntheticOnly_DoNotUse_123!'
@@ -26,6 +26,22 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--tools-dir', help='同时跑正式 scanner 的独立前后对照')
     args = ap.parse_args(argv)
+    tricky = ('# coding: utf-8\nfrom __future__ import annotations\n'
+              'import hashlib\n# hashlib.md5( stays a comment\n'
+              'example = "hashlib.md5("\n'
+              'password = "SyntheticOnly_DoNotUse_123!"\n'
+              'digest = hashlib.md5("测试".encode())\n')
+    tricky_patch, tricky_rules = _apply(tricky)
+    assert _syntax_check(tricky_patch, 'tricky.py')[0]
+    assert tricky_patch.index('from __future__') < tricky_patch.index('import os')
+    assert '# hashlib.md5( stays a comment' in tricky_patch
+    assert 'example = "hashlib.md5("' in tricky_patch
+    assert 'hashlib.sha256("测试".encode())' in tricky_patch
+    assert tricky_rules['PY-REPAIR-MD5'] and tricky_rules['PY-REPAIR-HARDCODED-PASSWORD']
+    assert not _apply('note = "hashlib.md5("\n')[1]['PY-REPAIR-MD5']
+    assert not _syntax_check('import os\nfrom __future__ import annotations\n',
+                             'bad_future.py')[0]
+    print('[PASS] AST 定位不修改注释/字符串，兼容 Unicode 和 future 导入顺序')
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, 'demo.py')
         out = os.path.join(td, 'report.json')
