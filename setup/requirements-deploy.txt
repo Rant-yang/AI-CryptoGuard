@@ -1,0 +1,4 @@
+# Direct Python runtime requirements pinned for the submission container.
+# The transitive dependency graph and base-image digest are not locked yet.
+anthropic==1.11.0
+jsonschema==4.26.0

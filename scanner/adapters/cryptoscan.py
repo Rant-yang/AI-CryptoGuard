@@ -52,11 +52,12 @@ class ToolError(RuntimeError):
     """工具没找到 / 没跑起来 / 输出无法解析。"""
 
 
-def find_tool(tools_dir):
-    """定位 cryptoscan 可执行文件。约定布局: <tools_dir>/cryptoscan/cryptoscan.exe。"""
+def find_tool(tools_dir, platform_name=None):
+    """Find the OS-specific binary under an external tools directory."""
+    name = 'cryptoscan.exe' if (platform_name or os.name) == 'nt' else 'cryptoscan'
     cands = [
-        os.path.join(tools_dir, 'cryptoscan', 'cryptoscan.exe'),
-        os.path.join(tools_dir, 'cryptoscan.exe'),
+        os.path.join(tools_dir, 'cryptoscan', name),
+        os.path.join(tools_dir, name),
     ]
     for cand in cands:
         if os.path.isfile(cand):

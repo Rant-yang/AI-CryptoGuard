@@ -15,6 +15,47 @@
 
 当前统一入口默认只运行前两个快速工具；指定 `--mode deep-java` 时才调用仓库外的 CrySentry。第三方准确来源、版本和分发边界见[第三方说明](../docs/第三方来源与分发边界.md)。
 
+## Docker Compose（快速扫描 Web，尚待容器运行验收）
+
+仓库根的 `compose.yaml` 与 `setup/Dockerfile` 构建**我们的 Python/Web 程序**，
+镜像内安装 Python 依赖与 Node.js；**不下载、不复制 CryptoScan、cbom-scan、
+CrySentry、JDK 或 benchmark 数据**。第三方快速扫描工具由使用者准备在仓库外，
+作为只读目录挂载。Linux amd64 工具目录要求：
+
+```text
+<ACG_TOOLS_HOST>/
+├── cryptoscan/cryptoscan  # Linux 可执行文件，非 Windows .exe
+└── cbom-scan/cbom.js       # cbom-scan 原仓库脚本及它需要的同目录文件
+```
+
+CryptoScan v1.4.0 的 [官方发布页](https://github.com/csnp/cryptoscan/releases/tag/v1.4.0)
+提供 Linux amd64 压缩包和 `checksums.txt`；下载后按官方校验文件核对 SHA-256。
+cbom-scan 仍从[原仓库](https://github.com/thefinalmilkman/cbom-scan)单独取得。
+在 Linux 宿主机给 `cryptoscan` 执行权限。Windows Docker Desktop 的目录挂载
+权限行为取决于文件系统，启动后应进入容器运行 `setup/preflight.py` 检查；
+若挂载文件不可执行，先修复外部工具目录，不要改成 Windows `.exe`。
+
+Windows **cmd** 示例（路径须替换为你准备的 Linux 工具目录）：
+
+```cmd
+cd /d D:\code_competition\AI-CryptoGuard
+set "ACG_TOOLS_HOST=D:\code_competition\acg-linux-tools"
+docker compose config --quiet
+docker compose up --build
+```
+
+浏览器访问 `http://127.0.0.1:8000/web/index.html`。Compose 只发布到宿主机
+`127.0.0.1`，容器内的 Web 进程为端口映射绑定 `0.0.0.0`。扫描上传写入
+`acg_tasks` 命名卷；结束后 `docker compose down` 保留它，
+`docker compose down --volumes` **会删除其中所有上传项目与报告**。
+默认不开启云端 AI；要启用时由本机环境提供 `ANTHROPIC_AUTH_TOKEN`、
+`ANTHROPIC_MODEL`，兼容端点另设 `ANTHROPIC_BASE_URL`，不写入仓库或命令输出。
+
+**容器模式目前仅支持快速扫描。** Java 深度模式仍按下面的本机 JDK 17 +
+外部 CrySentry 步骤运行。2026-10-18 本机 `docker compose config --quiet`
+已通过；Docker Desktop daemon 当时未运行，**镜像构建、容器内扫描和异机部署
+尚未验证**，不能把静态配置通过冒充部署完成。
+
 ## 新环境先做只读预检
 
 以下命令不会扫描代码、调用模型或输出 API key。`--tools-dir` 指向外部工具目录；示例路径是本机 smoke 环境，队友机器应替换为自己的路径。

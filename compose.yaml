@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: setup/Dockerfile
+    ports:
+      - "127.0.0.1:${ACG_HOST_PORT:-8000}:8000"
+    environment:
+      ACG_TOOLS_DIR: /opt/acg-tools
+      ACG_WEB_HOST: 0.0.0.0
+      ACG_WEB_STRICT_PORT: "1"
+      ACG_NO_BROWSER: "1"
+      ACG_WEB_PORT: "8000"
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+    volumes:
+      - type: bind
+        source: ${ACG_TOOLS_HOST:?Set ACG_TOOLS_HOST to a directory with Linux CryptoScan and cbom-scan}
+        target: /opt/acg-tools
+        read_only: true
+      - type: volume
+        source: acg_tasks
+        target: /app/workspace
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+
+volumes:
+  acg_tasks:

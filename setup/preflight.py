@@ -73,6 +73,9 @@ def inspect(args):
     crypto = tools / 'cryptoscan' / ('cryptoscan.exe' if os.name == 'nt' else 'cryptoscan')
     cbom = tools / 'cbom-scan' / 'cbom.js'
     add('CryptoScan', crypto.is_file(), '在 --tools-dir 下放置 cryptoscan/cryptoscan.exe。')
+    if os.name != 'nt' and crypto.is_file():
+        add('CryptoScan 可执行权限', os.access(crypto, os.X_OK),
+            'Linux 工具文件缺少执行权限；在外部工具目录 chmod +x cryptoscan/cryptoscan。')
     add('cbom-scan', cbom.is_file(), '在 --tools-dir 下放置 cbom-scan/cbom.js。')
     add('Node.js', shutil.which('node') is not None, '安装 Node.js 并加入 PATH。')
 

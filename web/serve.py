@@ -28,6 +28,7 @@ from ai.redact import scrub  # noqa: E402
 
 TASK_BASE = ROOT / "workspace" / "web_tasks"
 PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
+HOST = os.environ.get("ACG_WEB_HOST", "127.0.0.1")
 TOOLS_DIR = Path(os.environ.get("ACG_TOOLS_DIR", str(ROOT.parent / "_smoke")))
 MAX_FILES = 4000
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -348,13 +349,17 @@ def port_busy(port):
 
 
 def main():
+    if HOST not in ("127.0.0.1", "0.0.0.0"):
+        raise ValueError("ACG_WEB_HOST 只接受 127.0.0.1 或 0.0.0.0。")
     _cleanup_expired()
     port = PORT
     while port_busy(port):
+        if os.environ.get("ACG_WEB_STRICT_PORT") == "1":
+            raise OSError("端口 %d 被占用；容器模式不自动换端口。" % port)
         print("[!] 端口 %d 被占用，试 %d" % (port, port + 1))
         port += 1
     url = "http://127.0.0.1:%d/web/index.html" % port
-    with Server(("127.0.0.1", port), Handler) as httpd:
+    with Server((HOST, port), Handler) as httpd:
         print("AI-CryptoGuard 本地审计入口")
         print("  地址     : %s" % url)
         print("  工具目录 : %s" % TOOLS_DIR)

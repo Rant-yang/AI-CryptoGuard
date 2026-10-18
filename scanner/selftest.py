@@ -830,6 +830,20 @@ def test_python_ast_weak_random(check):
         check('导入别名被重新绑定时不猜标准库身份', python_ast.scan(td), [])
 
 
+def test_cryptoscan_os_binary(check):
+    with tempfile.TemporaryDirectory() as td:
+        folder = os.path.join(td, 'cryptoscan')
+        os.mkdir(folder)
+        linux = os.path.join(folder, 'cryptoscan')
+        windows = os.path.join(folder, 'cryptoscan.exe')
+        Path(linux).touch()
+        Path(windows).touch()
+        check('Linux 容器选择无扩展名的外部 CryptoScan',
+              cryptoscan.find_tool(td, platform_name='posix'), linux)
+        check('Windows 本机继续使用 exe',
+              cryptoscan.find_tool(td, platform_name='nt'), windows)
+
+
 def main():
     fails = []
     _checks = [0]
@@ -846,7 +860,8 @@ def main():
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,
                test_cbom_report, test_java_properties, test_credential_identity,
-               test_conditional_default, test_python_ast_weak_random):
+               test_conditional_default, test_python_ast_weak_random,
+               test_cryptoscan_os_binary):
         fn(check)
 
     if fails:
