@@ -48,8 +48,14 @@ def render_report(findings, task=None):
     task = task if isinstance(task, dict) else {}
     counts = collections.Counter(f.get('severity') for f in findings)
     explained = sum(f.get('stage') == 'explained' for f in findings)
+    severity_rank = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
+    ordered = sorted(findings, key=lambda f: (
+        severity_rank.get(f.get('severity'), 5),
+        'conditional-default' in (f.get('tags') or []),
+        -(f.get('confidence') or 0),
+        str(f.get('file') or ''), str(f.get('finding_id') or '')))
     blocks = []
-    for i, finding in enumerate(findings, 1):
+    for i, finding in enumerate(ordered, 1):
         evidences = finding.get('evidence') or []
         evidence_html = []
         for n, ev in enumerate(evidences, 1):
@@ -66,6 +72,7 @@ def render_report(findings, task=None):
         rem = finding.get('remediation') or {}
         ai_done = finding.get('stage') == 'explained'
         kind = finding.get('finding_kind', 'algorithm')
+        conditional = 'conditional-default' in (finding.get('tags') or [])
         refs = ', '.join(finding.get('evidence_refs') or []) if ai_done else ''
         explanation = ('凭据类解释可能包含敏感上下文；离线报告仅保留规则编号、证据位置与整改步骤。'
                        if kind == 'credential' else
@@ -84,7 +91,7 @@ def render_report(findings, task=None):
                         if isinstance(x, dict) and x.get('route_id'))
         blocks.append('''<section class="finding">
           <h2>%d. %s <span class="sev">%s</span></h2>
-          <p class="loc">%s:%s · %s · %s</p>
+          <p class="loc">%s:%s · %s · %s%s</p>
           <p><b>风险成因：</b>%s · <b>量子评估：</b>%s</p>
           <p><b>迁移 / 加固：</b>%s%s</p>
           <p><b>解释：</b>%s%s</p>
@@ -95,6 +102,7 @@ def render_report(findings, task=None):
                        _text(SEVERITY.get(finding.get('severity'), '未分级'), 20),
                        _file(finding.get('file')), _text(finding.get('line'), 20),
                        _text(kind, 30), _text(finding.get('usage', 'unknown'), 35),
+                       ' · 仅备用值（当前是否生效待核实）' if conditional else '',
                        _text(RISK.get(finding.get('risk'), '未知'), 40),
                        _text(qa.get('status', '未运行'), 45),
                        ('请在授权环境中复核并轮换/撤销暴露凭据；报告不展示凭据原文。'
@@ -111,6 +119,15 @@ def render_report(findings, task=None):
                           (_text(STAGE.get(stage.get('name'), stage.get('name', '未知')), 60),
                            _text(STATUS.get(stage.get('status'), stage.get('status', '未知')), 30),
                            ('（%s）' % _text(stage.get('reason'), 120)) if stage.get('reason') else ''))
+    top = []
+    for row in ordered[:5]:
+        kind = row.get('finding_kind', 'algorithm')
+        label = row.get('rule_id') if kind == 'credential' else row.get('algorithm')
+        conditional = 'conditional-default' in (row.get('tags') or [])
+        top.append('<li>%s · %s · %s:%s%s</li>' %
+                   (_text(SEVERITY.get(row.get('severity'), '未分级'), 20),
+                    _text(label or kind, 120), _file(row.get('file')),
+                    _text(row.get('line'), 20), ' · 仅备用值' if conditional else ''))
     return '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <title>AI-CryptoGuard 审计报告</title><style>
@@ -123,12 +140,15 @@ ol{margin:4px 0 8px;padding-left:28px}li{padding:2px 0}small{font-size:12px}
 </style></head><body><header><h1>AI-CryptoGuard 审计报告</h1>
 <p class="muted">本报告是扫描线索与规则/AI 辅助解释，不是已验证的整改或正式密码测评结论。</p>
 <p>发现 <b>%d</b> 条 · 严重 %d · 高 %d · AI 已解释 %d · AI 未解释 %d</p>
+<h2>优先复核（前 5 条）</h2><ol>%s</ol>
+<p class="muted">仅按严重程度、条件性标记和置信度初排；实际整改顺序需结合业务影响与项目测试人工确认。</p>
 <h2>执行阶段</h2><ol>%s</ol>
 <p class="muted">证据编号 E1、E2 … 仅指向同一发现中的证据项。未运行/跳过的阶段不能视为阴性结论。
 候选迁移算法需核对用途、规则依据和实施环境；整改步骤默认未执行。</p></header>
 %s</body></html>''' % (
          len(findings), counts['critical'], counts['high'], explained,
          len(findings) - explained,
+         ''.join(top) or '<li>无待复核发现</li>',
          ''.join(stages) or '<li>未提供任务状态；不能确认各阶段是否运行</li>',
          ''.join(blocks) or '<section class="finding">本次没有发现条目；请核对扫描阶段状态。</section>')
 

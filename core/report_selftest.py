@@ -28,6 +28,14 @@ def main():
     assert '&lt;script&gt;bad&lt;/script&gt;' in safe
     assert '<script>bad</script>' not in safe and secret not in safe
     assert '未提供任务状态' in safe
+    high = dict(other, algorithm='HIGH-EXAMPLE', severity='high', tags=[])
+    low = dict(other, algorithm='LOW-EXAMPLE', severity='low', tags=[])
+    conditional = dict(other, algorithm='BACKUP-EXAMPLE', severity='high',
+                       tags=['conditional-default'])
+    ranked = render_report([low, conditional, high])
+    assert ranked.index('HIGH-EXAMPLE') < ranked.index('BACKUP-EXAMPLE')
+    assert ranked.index('BACKUP-EXAMPLE') < ranked.index('LOW-EXAMPLE')
+    assert '仅备用值（当前是否生效待核实）' in ranked
     try:
         render_report({'not': 'a list'})
         raise AssertionError('non-array input accepted')
