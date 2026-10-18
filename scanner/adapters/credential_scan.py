@@ -106,7 +106,8 @@ _ALGO_NAME_VALUES = frozenset({
     'PBKDF2', 'BCRYPT', 'SCRYPT', 'ARGON2',
 })
 _RUNTIME_SOURCE_RE = re.compile(
-    r'(?i)(?:getenv|environ|getProperty|process\.env|config\.|vault|secretManager)')
+    r'(?i)(?:getenv|environ|getProperty|process\.env|config\.|vault|secretManager|'
+    r'\b(?:input|getpass(?:\.getpass)?)\s*\()')
 #: 方法调用实参：`key.getBytes("UTF-8")` 的 "UTF-8" 是编码参数，不是密钥。
 #: 只认 `.方法(` —— `[]byte("...")` / `bytes("...")` 是类型转换，字面量就是
 #: 密钥本身，不能跳过。见 _scan_line 的 `_ASSIGN_RE` 循环。

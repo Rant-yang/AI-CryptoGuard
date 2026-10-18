@@ -46,6 +46,24 @@ def main(argv=None):
     protocol_patch, protocol_rules = _apply(protocol)
     assert protocol_patch == protocol
     assert not protocol_rules['PY-REPAIR-MD5']
+    password_md5 = ('import hashlib\n'
+                    'def hash_password(data):\n'
+                    '    return hashlib.md5(data).hexdigest()\n'
+                    'password_hash = hashlib.md5(password.encode()).hexdigest()\n')
+    password_patch, password_rules = _apply(password_md5)
+    assert password_patch == password_md5
+    assert not password_rules['PY-REPAIR-MD5']
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, 'password_hash.py')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write(password_md5)
+        guarded_password = repair_and_verify(path)
+        assert guarded_password['skipped_password_md5'] == 2
+        assert guarded_password['verification_scope'] == 'NO_APPLICABLE_PATCH'
+        md5_row = next(r for r in guarded_password['repairs']
+                       if r['rule_id'] == 'PY-REPAIR-MD5')
+        assert md5_row['original_finding'] == 'PRESENT'
+        assert md5_row['rescan'] == 'STILL_PRESENT'
     mixed_random = ('import random\n'
                     'simulation = random.Random(7)\n'
                     'sample = random.Random().randbytes(8)\n'
@@ -70,6 +88,7 @@ def main(argv=None):
         assert guarded['verification_scope'] == 'NO_APPLICABLE_PATCH'
     print('[PASS] AST 定位不修改注释/字符串，兼容 Unicode 和 future 导入顺序')
     print('[PASS] usedforsecurity=False 的协议 MD5 不自动改写')
+    print('[PASS] 口令哈希 MD5 不自动换成另一种快速摘要')
     print('[PASS] 弱随机修复只触及安全用途 randbytes，保留同文件模拟/测试随机源')
     with tempfile.TemporaryDirectory() as td:
         src = os.path.join(td, 'demo.py')

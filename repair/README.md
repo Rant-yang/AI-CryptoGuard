@@ -9,6 +9,9 @@
 候选编辑按 Python AST 定位，只改真实调用/赋值表达式，不替换注释或字符串中的同名文本。
 显式 `hashlib.md5(..., usedforsecurity=False)` 可能是协议规定的摘要（例如 HTTP Digest），
 自动替换会破坏互操作，因此跳过并在报告中计入 `skipped_protocol_md5`；
+明显用于口令处理的 MD5 也不自动替换：SHA-256 仍是快速摘要，不能代替口令 KDF，
+而已有口令摘要还需要兼容验证与渐进迁移。这类调用计入 `skipped_password_md5`，
+须由人工设计口令 KDF（如 Argon2id）和迁移/回滚方案；
 没有可应用补丁时报告 `NO_APPLICABLE_PATCH`，CLI 返回非零。跳过不代表安全。
 语法检查使用 `compile(..., 'exec')`，会拦住导入顺序等 `ast.parse` 不检查的错误；
 环境变量模板新增的 `import os` 放在模块文档字符串和 `from __future__` 导入之后。
@@ -57,3 +60,15 @@ CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 `tests/test_requests.py::TestRequests::test_DIGEST_HTTP_200_OK_GET` 在隔离虚拟环境中
 通过（1 passed）。这证明该协议调用受到保护；**没有证明任何自动补丁在第三方项目中通过测试**。
 上游源码和测试依赖均保留在仓库外，不打包为本项目自研内容。
+
+## 第三方口令哈希反例：Bandit 教程（2026-10-18）
+
+在 [Bandit tutorial 的公开示例](https://github.com/mkathiari/bandit-tutorial/blob/a963e79746a8ad8dbd90390cee10bc93d2c543b5/examples/3bad_crypto.py)
+（上游提交 `a963e79746a8ad8dbd90390cee10bc93d2c543b5`）中，
+`hashlib.md5(password.encode())` 用于口令哈希。把 MD5 自动替换成 SHA-256
+仍是快速摘要，无法完成安全的口令存储迁移；修复器因此返回
+`skipped_password_md5=1`、`NO_APPLICABLE_PATCH`、退出码 1，正式 scanner
+如实标记 MD5 仍在。调用 `input("Enter your password: ")` 的提示文案曾被
+凭据扫描器误报为硬编码口令；已修复，复扫为 `NOT_DETECTED_BEFORE`。
+该教程没有可运行的项目自带 `tests/`，所以这**不是第三方正向补丁或行为兼容性验收**。
+对真正的口令数据库应人工设计 Argon2id 等口令 KDF、现存摘要的渐进迁移及回滚方案。

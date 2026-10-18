@@ -34,6 +34,8 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None,
         raise FileNotFoundError(source_file)
     original = _read(source_file)
     before = _detect(original)
+    skipped_protocol_md5 = _protocol_md5_count(original)
+    skipped_password_md5 = _password_md5_count(original)
 
     with tempfile.TemporaryDirectory(prefix='acg-repair-') as td:
         temp_file = os.path.join(td, os.path.basename(source_file))
@@ -60,13 +62,19 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None,
                  if project_root and syntax_ok else 'NOT_RUN')
         rows = []
         for rule in RULES:
+            # _detect reports editable AST calls. A skipped MD5 call is still
+            # a real scanner finding; do not describe it as ABSENT or resolved.
+            held_md5 = (rule == 'PY-REPAIR-MD5' and
+                        (skipped_protocol_md5 > 0 or skipped_password_md5 > 0))
+            present_before = before[rule] or held_md5
+            present_after = after[rule] or held_md5
             rows.append({
                 'rule_id': rule,
-                'original_finding': 'PRESENT' if before[rule] else 'ABSENT',
+                'original_finding': 'PRESENT' if present_before else 'ABSENT',
                 'patch_applied': bool(applied[rule]),
                 'syntax': 'PASS' if syntax_ok else 'FAIL',
-                'rescan': ('ELIMINATED' if before[rule] and not after[rule]
-                           else 'NOT_PRESENT' if not before[rule]
+                'rescan': ('ELIMINATED' if present_before and not present_after
+                           else 'NOT_PRESENT' if not present_before
                            else 'STILL_PRESENT'),
                 'scanner_rescan': independent.get('rules', {}).get(rule, 'NOT_RUN'),
             })
@@ -95,7 +103,8 @@ def repair_and_verify(source_file, output_report=None, tools_dir=None,
                                if independent.get('status') == 'COMPLETED'
                                else 'SYNTAX_ONLY'),
         'manual_review_required': True,
-        'skipped_protocol_md5': _protocol_md5_count(original),
+        'skipped_protocol_md5': skipped_protocol_md5,
+        'skipped_password_md5': skipped_password_md5,
         'behavioral_compatibility': 'NOT_VERIFIED',
         'repairs': rows,
     }
@@ -248,6 +257,49 @@ def _protocol_md5_count(text):
     return sum(1 for node in ast.walk(tree) if _is_protocol_md5(node))
 
 
+def _password_md5_count(text):
+    """Count MD5 calls in obvious password-handling contexts, without values."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return 0
+    parents = {child: node for node in ast.walk(tree)
+               for child in ast.iter_child_nodes(node)}
+    return sum(1 for node in ast.walk(tree)
+               if _is_md5_call(node) and _is_password_md5(node, parents))
+
+
+def _is_md5_call(node):
+    return (isinstance(node, ast.Call) and
+            isinstance(node.func, ast.Attribute) and
+            isinstance(node.func.value, ast.Name) and
+            node.func.value.id == 'hashlib' and node.func.attr == 'md5')
+
+
+def _is_password_md5(node, parents):
+    """Guard the contexts where a SHA-256 substitution is unsafe.
+
+    Password storage needs a password KDF and a data migration plan, not a
+    different fast hash. This is intentionally conservative; ambiguous calls
+    remain subject to manual review and project tests.
+    """
+    if any(isinstance(item, ast.Name) and _PASSWORD_NAME.search(item.id)
+           for arg in node.args for item in ast.walk(arg)):
+        return True
+    parent = parents.get(node)
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)) and \
+                _PASSWORD_NAME.search(parent.name):
+            return True
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+            targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+            if any(isinstance(item, ast.Name) and _PASSWORD_NAME.search(item.id)
+                   for target in targets for item in ast.walk(target)):
+                return True
+        parent = parents.get(parent)
+    return False
+
+
 def _is_protocol_md5(node):
     """usedforsecurity=False often means an interoperable protocol digest.
 
@@ -274,6 +326,8 @@ def _edits(text):
         tree = ast.parse(text)
     except SyntaxError:
         return []
+    parents = {child: node for node in ast.walk(tree)
+               for child in ast.iter_child_nodes(node)}
     lines = text.splitlines(keepends=True)
 
     # Match the bounded scanner rule, not every use of Random in the file.
@@ -331,7 +385,7 @@ def _edits(text):
             owner = node.func.value
             if isinstance(owner, ast.Name):
                 if owner.id == 'hashlib' and node.func.attr == 'md5':
-                    if _is_protocol_md5(node):
+                    if _is_protocol_md5(node) or _is_password_md5(node, parents):
                         continue
                     rule, replacement = 'PY-REPAIR-MD5', 'hashlib.sha256'
                 elif (owner.id == 'random' and node.func.attr == 'Random' and

@@ -32,6 +32,8 @@ NEGATIVE = '''
 password = os.getenv("APP_PASSWORD")
 api_token = "${API_TOKEN}"
 key = generate_key()
+user_password = input("Enter your password: ")
+user_password2 = getpass.getpass("Password: ")
 '''
 
 IMPORT_CONTEXT = '''
