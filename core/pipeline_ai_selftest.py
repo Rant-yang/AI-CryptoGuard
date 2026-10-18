@@ -1,13 +1,16 @@
 """Offline end-to-end check for optional AI stage. No cloud requests."""
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ai.enrich_v02 import enrich_file
 from core import pipeline
 from core.schema.validate_v02 import errors
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def stub(finding, _context, _max_tokens):

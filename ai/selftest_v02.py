@@ -1,15 +1,18 @@
 """Offline v0.2 AI contract, grounding, redaction and resume checks."""
 import copy
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from ai.enrich_v02 import (_has_direct_usage_evidence, _model_payload,
                            enrich_file, enrich_one)
 from core.quantum_assessment import assess_one
 from core.schema.validate_v02 import errors
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def sample(name):
