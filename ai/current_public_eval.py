@@ -21,15 +21,23 @@ from core.schema.validate_v02 import errors
 
 FROZEN_INPUT_SHA256 = '4675eca5c270422d8be26fc58cc0a4e39e0c20b17bb5913a9661746e527a4584'
 COHORT = 'public-crypto-samples-current-pipeline-20261018-v1'
+TLS_REVIEW_INPUT_SHA256 = '429d80ffd2ebe2e00ca03b3297ffa7cec7a3e733c62ce42b0714b5cd28526257'
+TLS_REVIEW_COHORT = 'public-crypto-samples-tls-rule-review-20261018-v2'
 
 
-def evaluate(assessed_path, explained_path, score_path, packet_path):
+def evaluate(assessed_path, explained_path, score_path, packet_path,
+             cohort='original'):
+    if cohort not in ('original', 'tls-review'):
+        raise ValueError('未知的公开 AI 复验批次')
+    expected_sha = (FROZEN_INPUT_SHA256 if cohort == 'original'
+                    else TLS_REVIEW_INPUT_SHA256)
+    cohort_id = COHORT if cohort == 'original' else TLS_REVIEW_COHORT
     assessed_path, explained_path = Path(assessed_path), Path(explained_path)
     score_path, packet_path = Path(score_path), Path(packet_path)
     if score_path == packet_path or score_path.exists() or packet_path.exists():
         raise FileExistsError('结果路径必须不同且为全新文件；不得覆盖首次记录')
     content = assessed_path.read_bytes()
-    if hashlib.sha256(content).hexdigest() != FROZEN_INPUT_SHA256:
+    if hashlib.sha256(content).hexdigest() != expected_sha:
         raise ValueError('当前 assessed 输入与预登记 SHA-256 不同')
     assessed = json.loads(content.decode('utf-8-sig'))
     explained = json.loads(explained_path.read_text(encoding='utf-8-sig'))
@@ -59,7 +67,7 @@ def evaluate(assessed_path, explained_path, score_path, packet_path):
         new_path.write_text(json.dumps(algo_out, ensure_ascii=False), encoding='utf-8')
         summary = semantic_eval.score(
             old_path, new_path, result_path,
-            case_ids=[f['finding_id'] for f in algorithms], cohort=COHORT)
+            case_ids=[f['finding_id'] for f in algorithms], cohort=cohort_id)
         if summary['total'] != 28 or summary['explained'] != 28 or summary['schema_invalid']:
             raise ValueError('算法结果未完成结构验收')
         score = json.loads(result_path.read_text(encoding='utf-8'))
@@ -70,7 +78,7 @@ def evaluate(assessed_path, explained_path, score_path, packet_path):
     packet_path.parent.mkdir(parents=True, exist_ok=True)
     score_path.write_text(json.dumps(score, ensure_ascii=False, indent=2), encoding='utf-8')
     packet_path.write_text(json.dumps(packet, ensure_ascii=False, indent=2), encoding='utf-8')
-    return {'total': 35, 'algorithm_cloud': 28, 'credential_local': 7,
+    return {'cohort': cohort_id, 'total': 35, 'algorithm_cloud': 28, 'credential_local': 7,
             'explained': 35, 'schema_invalid': 0,
             'algorithm_usage_after': summary['usage_after'],
             'blind_review_pending': len(packet['cases'])}
@@ -82,9 +90,12 @@ def main():
     parser.add_argument('explained')
     parser.add_argument('--score', required=True)
     parser.add_argument('--packet', required=True)
+    parser.add_argument('--cohort', choices=('original', 'tls-review'),
+                        default='original', help='选择预登记的输入 SHA；默认旧批次')
     args = parser.parse_args()
     print(json.dumps(evaluate(args.assessed, args.explained,
-                              args.score, args.packet), ensure_ascii=False, indent=2))
+                              args.score, args.packet, args.cohort),
+                     ensure_ascii=False, indent=2))
 
 
 if __name__ == '__main__':
