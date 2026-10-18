@@ -4,7 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from ai.enrich_v02 import _model_payload, enrich_file, enrich_one
+from ai.enrich_v02 import (_has_direct_usage_evidence, _model_payload,
+                           enrich_file, enrich_one)
 from core.quantum_assessment import assess_one
 from core.schema.validate_v02 import errors
 
@@ -34,7 +35,19 @@ def model(usage="signing", refs=None):
 
 
 def main():
-    rsa = assess_one(sample("java_complete"))
+    bare = assess_one(sample("java_complete"))
+    unsupported = enrich_one(bare, lambda *_: model(), model_id="offline-test")
+    check("仅凭算法名和无关污点汇点不能认定 RSA 签名用途",
+          unsupported["usage"] == "unknown" and
+          unsupported["remediation"]["reason"] == "usage-undetermined")
+    kdf = copy.deepcopy(bare)
+    kdf["algorithm"] = kdf["algorithm_normalized"] = "HKDF"
+    check("单独的 KDF 调用不能证明认证或密钥交换用途",
+          not _has_direct_usage_evidence(kdf, "authentication"))
+
+    rsa = copy.deepcopy(bare)
+    rsa["evidence"][0]["flow"]["sink"]["method"] = "java.security.Signature.sign"
+    rsa = assess_one(rsa)
     got = enrich_one(rsa, lambda *_: model(), model_id="offline-test")
     check("用途变更后重新路由到签名，结果符合 v0.2", not errors(got) and
           got["usage"] == "signing" and got["quantum_assessment"]
@@ -53,7 +66,9 @@ def main():
 
     for bad in (model(refs=["E2"]),
                 {**model(), "steps": [{**model()["steps"][0],
-                                       "action": "将 RSA 换成 ML-KEM"}]}):
+                                       "action": "将 RSA 换成 ML-KEM"}]},
+                {**model(), "steps": [{**model()["steps"][0],
+                                       "action": "立即改用 AES-256-GCM"}]}):
         try:
             enrich_one(rsa, lambda *_: bad, model_id="offline-test")
         except ValueError:
@@ -98,6 +113,47 @@ def main():
         rows, failed, reused = enrich_file(src, dst, model_call=stub,
                                           model_id="offline-test", resume=True)
         check("证据变化使缓存失效", reused == 1 and len(calls) == 2 and not failed)
+
+        tries = []
+        def flaky(*args):
+            tries.append(1)
+            return model(refs=['E2']) if len(tries) == 1 else model()
+        rows, failed, reused = enrich_file(src, dst, model_call=flaky,
+                                            model_id='offline-flaky', checkpoint=1)
+        attempt_log = json.loads(Path(str(dst) + '.attempts.json').read_text(encoding='utf-8'))
+        check('单条证据校验失败后只重试一次，且只记录安全错误类别',
+              len(tries) == 2 and not failed and
+              attempt_log == [{'finding_id': altered['finding_id'],
+                               'recovered_after': 'invalid_refs'}])
+
+        budgets = []
+        def truncated_then_ok(_finding, _context, tokens):
+            budgets.append(tokens)
+            if len(budgets) == 1:
+                raise RuntimeError('模型响应达到 token 上限；提高 --max-tokens')
+            return model()
+        rows, failed, reused = enrich_file(
+            src, dst, model_call=truncated_then_ok, model_id='offline-budget',
+            max_tokens=4000, checkpoint=1)
+        check('模型截断仅在第二次将 token 预算加倍',
+              not failed and budgets == [4000, 8000] and
+              'tokens=8000' in rows[0]['analysis_provenance']['model_id'])
+        rows, failed, reused = enrich_file(
+            src, dst, model_call=truncated_then_ok, model_id='offline-budget',
+            max_tokens=4000, checkpoint=1, resume=True)
+        check('加倍预算成功的结果可安全断点复用',
+              not failed and reused == 2 and budgets == [4000, 8000])
+
+        config_calls = []
+        def bad_config(*_args):
+            config_calls.append(1)
+            raise PermissionError('no credentials')
+        rows, failed, _ = enrich_file(src, dst, model_call=bad_config,
+                                       model_id='offline-config', checkpoint=1)
+        check('不可重试的配置错误只请求一次且不记录异常原文',
+              len(config_calls) == 1 and rows[0]['stage'] == 'assessed' and
+              failed == [{'finding_id': altered['finding_id'],
+                          'error': 'PermissionError', 'category': 'PermissionError'}])
 
     print("AI v0.2 离线自检完成。")
 
