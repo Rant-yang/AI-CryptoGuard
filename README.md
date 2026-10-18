@@ -10,7 +10,7 @@ Java 深扫后同变量 `Cipher.init(ENCRYPT_MODE)` 的无源码正文用途证�
 
 比赛展示的三段公开样例、Windows cmd 命令与尚待完成的两次彩排记录见[演示脚本](docs/演示脚本与彩排记录_2026-10-18.md)。
 
-快速扫描 Web 的 [Docker Compose 方案](setup/README.md#docker-compose快速扫描-web本机容器已验收) 已完成本机镜像构建、容器健康检查与公开样例真实扫描；异机完整部署仍待验证。第三方扫描器须在仓库外准备 Linux 可执行文件并只读挂载。
+快速扫描 Web 的 [Docker Compose 方案](setup/README.md#docker-compose快速扫描-web本机容器已验收) 已完成本机镜像、公开样例真实扫描；新的 [GitHub Ubuntu runner](docs/干净Linux快扫与Web闭环_2026-10-19.md)也已从干净 checkout 完成外部快速工具预检、实际快扫与容器 Web 上传→扫描→结果→删除。AI、CrySentry 深度模式和队友机器上的完整部署仍待验证。第三方扫描器须在仓库外准备并只读挂载。
 
 # AI-CryptoGuard
 
@@ -260,9 +260,9 @@ git checkout feat/scanner        # B 换成 feat/ai
 
 > 这一条不定死，分支开再多也没用：冲突会全部集中爆发在 `core/`。
 
-**不搞 PR、不搞 review、不搞 CI/CD。** 这个阶段流程越轻越好。
-C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.py`
-和 `core/rules/pqc_routing.py`（后者自带自检，退出码 0 = 通过）。
+2026-09-29 初期只靠 C 手工验收合并；现在已有
+[干净 Linux CI](.github/workflows/verify.yml)，覆盖离线契约、真实快扫与容器 Web 闭环。
+C 合并前仍需按改动范围运行本机自检，CI 通过也不替代 AI/CrySentry 的专项实跑。
 
 ---
 
