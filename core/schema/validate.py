@@ -82,7 +82,7 @@ def main():
     # 这三个以前都糊成一句「需人工确认」，分开报才看得出该往哪使劲。
     rsn = collections.Counter(
         (f.get('remediation') or {}).get('reason', '(缺失)') for f in findings)
-    order = ('decided', 'usage-undetermined', 'not-an-algorithm',
+    order = ('decided', 'usage-undetermined', 'usage-incompatible', 'not-an-algorithm',
              'rule-missing', 'not-enriched')
     known_r = [k for k in order if k in rsn]
     rest_r = sorted(k for k in rsn if k not in order)

@@ -344,6 +344,7 @@
           "enum": [
             "decided",
             "usage-undetermined",
+            "usage-incompatible",
             "not-an-algorithm",
             "rule-missing",
             "not-enriched",

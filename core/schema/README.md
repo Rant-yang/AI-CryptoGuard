@@ -158,6 +158,7 @@ LLM 只判断用途  →  规则库查表  →  得到算法
 |---|---|---|
 | `decided` | 已给出确定结论 | —— |
 | `usage-undetermined` | 用途判不出来（§9.1） | 补证据；**这是正确行为，不是缺陷** |
+| `usage-incompatible` | 具体原语无法承担声称的用途（如 ECDSA 加密） | 核对算法名和调用点；不给迁移目标 |
 | `not-an-algorithm` | 命中的是库名 / Provider / 配置项 | 展开到实际算法 |
 | `rule-missing` | 规则库确实没有这一条 | **扩充 `core/rules/`** |
 | `not-enriched` | 尚未增强（等价于 `source == "none"`） | 跑 `ai/` |

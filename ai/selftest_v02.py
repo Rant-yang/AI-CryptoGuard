@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ai.enrich_v02 import (_checkpoint_rows, _has_direct_usage_evidence, _model_payload,
+                           _reuse,
                            enrich_file, enrich_one)
 from core.quantum_assessment import assess_one
 from core.schema.validate_v02 import errors
@@ -152,6 +153,32 @@ def main():
     check("实际 publicEncrypt 调用可证明加密用途",
           _has_direct_usage_evidence(rsa_constructor, "encryption", ["E1"]))
 
+    incompatible = copy.deepcopy(rsa_constructor)
+    incompatible["algorithm"] = incompatible["algorithm_normalized"] = "ECDSA"
+    incompatible = assess_one(incompatible)
+    check("ECDSA 不能因为同条记录出现 encrypt 就被判成加密用途",
+          not _has_direct_usage_evidence(incompatible, "encryption", ["E1"]))
+    check("ECDSA 未知用途候选里不得有 ML-KEM 加密或协商路线",
+          [c["usage"] for c in incompatible["quantum_assessment"]
+           ["migration_candidates"]] == ["signing"])
+    declined_incompatible = enrich_one(
+        incompatible, lambda *_: model("encryption"), model_id="offline-test")
+    check("模型给 ECDSA 不相容用途时回退 unknown、不给错误迁移目标",
+          declined_incompatible["usage"] == "unknown" and
+          declined_incompatible["remediation"]["reason"] ==
+          "usage-undetermined" and not errors(declined_incompatible))
+
+    mixed = copy.deepcopy(rsa_constructor)
+    mixed["algorithm"] = "Ed25519 / X25519"
+    mixed["algorithm_normalized"] = "ED25519X25519"
+    mixed["usage"] = "unknown"
+    mixed = assess_one(mixed)
+    check("混合家族名用途未知时只有签名和协商候选，没有加密候选",
+          [c["usage"] for c in mixed["quantum_assessment"]
+           ["migration_candidates"]] == ["signing", "key_exchange"])
+    check("混合家族名不能接受模型的加密用途",
+          not _has_direct_usage_evidence(mixed, "encryption", ["E1"]))
+
     ecdh = copy.deepcopy(bare)
     ecdh["algorithm"] = ecdh["algorithm_normalized"] = "ECC"
     ecdh["evidence"] = [{
@@ -177,6 +204,8 @@ def main():
     check("实际 computeSecret 证据能路由到 ML-KEM",
           decided_ecdh["usage"] == "key_exchange" and
           "ML-KEM" in decided_ecdh["remediation"]["action"])
+    check("旧的密钥协商结果不能复用到 ECDSA 发现",
+          not _reuse(decided_ecdh, incompatible, "offline-test", "full", 4000))
 
     tls = copy.deepcopy(bare)
     tls["algorithm"] = tls["algorithm_normalized"] = "TLS"

@@ -36,6 +36,36 @@ PURPOSE_DEPENDENT = frozenset({
     'ED25519', 'X25519', 'EDDSA',
 })
 
+# A generic RSA/ECC inventory item does not identify the protocol role.  A
+# named signature or agreement primitive does: never route an impossible
+# (algorithm, usage) pair to an otherwise valid PQC standard.
+_SIGNATURE_ONLY = ('ECDSA', 'ED25519', 'EDDSA', 'DSA')
+_AGREEMENT_ONLY = ('ECDH', 'X25519', 'DH')
+
+
+def usage_compatible(algorithm, usage, algorithm_normalized=None):
+    """Whether a *specific* public-key primitive can serve the claimed role.
+
+    This is only a rejection guard, not evidence that the role is actually used.
+    Combined upstream family labels remain ambiguous and need call evidence.
+    """
+    if usage not in ('signing', 'encryption', 'key_exchange'):
+        return True
+    # The canonical scanner bucket may be generic ECC even when the raw name
+    # identifies a narrower primitive.  A generic alias must not erase that
+    # semantic restriction.
+    raw = _norm(algorithm)
+    key = raw if raw.startswith(_SIGNATURE_ONLY + _AGREEMENT_ONLY +
+                                ('ED25519X25519', 'ECDSAEC')) else \
+        _norm(algorithm_normalized or algorithm)
+    if key.startswith(('ED25519X25519', 'ECDSAEC')):
+        return usage != 'encryption' if key.startswith('ED25519X25519') else True
+    if key.startswith(_SIGNATURE_ONLY):
+        return usage == 'signing'
+    if key.startswith(_AGREEMENT_ONLY):
+        return usage == 'key_exchange'
+    return True
+
 #: 用途取值 -> (建议文本, 标准依据)
 #: 取值集合与 core/schema/finding.v0.1.json 的 usage enum 保持一致。
 _BY_USAGE = {
@@ -267,9 +297,10 @@ def route(algorithm, usage, algorithm_normalized=None):
     Returns:
         dict，可直接作为 schema 里 `remediation` 字段的值：
             decided   : bool  —— 是否已给出确定结论
-            reason    : str   —— **为什么是这个结论**。四种取值：
+            reason    : str   —— **为什么是这个结论**。主要取值：
                                  'decided'            已给出确定结论
                                  'usage-undetermined' 用途判不出来（§9.1）
+                                 'usage-incompatible' 算法与声称的用途不相容
                                  'not-an-algorithm'   命中的是库名/配置项
                                  'rule-missing'       规则库确实没有这一条
             action    : str   —— 建议文本
@@ -286,10 +317,19 @@ def route(algorithm, usage, algorithm_normalized=None):
 
     # 1) 公钥类：必须按用途分派 —— 这是方案 §9.1 的核心
     if _is_public_key(key):
+        if not usage_compatible(algorithm, usage, algorithm_normalized):
+            return {
+                'decided': False,
+                'reason': 'usage-incompatible',
+                'action': ('该具体算法与声称的用途不相容；先核对算法识别、调用点'
+                           '与实际原语，暂不给出迁移目标。'),
+                'source': 'rule-base',
+                'references': [],
+            }
         hit = _BY_USAGE.get(usage)
         if hit is None:
             # 用途缺失 / unknown / 无法识别 —— 明确拒绝给出算法
-            return _undecided()
+            return _undecided(key)
         return {
             'decided': True,
             'reason': 'decided',
@@ -337,10 +377,28 @@ def _is_public_key(key):
     if key in PURPOSE_DEPENDENT:
         return True
     return any(key.startswith(p) for p in ('RSA', 'ECC', 'ECDSA', 'ECDH',
-                                           'ED25519', 'X25519', 'EDDSA'))
+                                           'ED25519', 'X25519', 'EDDSA',
+                                           'DSA', 'DH'))
 
 
-def _undecided():
+def _undecided(key=''):
+    if not key.startswith(('ED25519X25519', 'ECDSAEC')):
+        if key.startswith(_SIGNATURE_ONLY):
+            return {
+                'decided': False, 'reason': 'usage-undetermined',
+                'action': ('尚未证实该签名原语被实际调用，暂不给出具体迁移结论。'
+                           '若核实执行签名，再按签名场景评估 ML-DSA / SLH-DSA；'
+                           '不得把该原语当成加密或密钥交换。'),
+                'source': 'rule-base', 'references': ['FIPS 204', 'FIPS 205'],
+            }
+        if key.startswith(_AGREEMENT_ONLY):
+            return {
+                'decided': False, 'reason': 'usage-undetermined',
+                'action': ('尚未证实该密钥协商原语被实际调用，暂不给出具体迁移结论。'
+                           '若核实执行密钥协商，再按该场景评估 ML-KEM；'
+                           '不得把该原语当成签名。'),
+                'source': 'rule-base', 'references': ['FIPS 203'],
+            }
     return {
         'decided': False,
         'reason': 'usage-undetermined',
@@ -378,6 +436,31 @@ def _selftest():
     # 反过来，加密路线也不该给签名算法
     check('RSA/加密 不得给出 ML-DSA 签名路线',
           'ML-DSA (FIPS 204)' in enc['action'], False)
+
+    # FIPS 186-5 specifies ECDSA/EdDSA as signature algorithms; SP 800-56A
+    # and RFC 7748 specify ECDH/X25519 for key agreement.  An impossible
+    # usage must never receive a plausible-looking migration target.
+    for name, bad_usage in (('ECDSA', 'encryption'), ('ECDSA', 'key_exchange'),
+                            ('Ed25519', 'encryption'), ('EdDSA', 'key_exchange'),
+                            ('DSA', 'encryption'), ('ECDH', 'signing'),
+                            ('X25519', 'signing'), ('DH', 'signing'),
+                            ('Ed25519 / X25519', 'encryption')):
+        wrong = route(name, bad_usage)
+        check('%s/%s 不得给迁移目标' % (name, bad_usage),
+              (wrong['decided'], wrong['reason']),
+              (False, 'usage-incompatible'))
+    check('Ed25519/X25519 混合名在归一化后也不得推出加密路线',
+          route('Ed25519 / X25519', 'encryption', 'ED25519X25519')['reason'],
+          'usage-incompatible')
+    check('泛化 ECC 别名不得掩盖原始 Ed25519 签名限制',
+          route('Ed25519', 'encryption', 'ECC')['reason'],
+          'usage-incompatible')
+    check('ECDSA 正常签名仍有路线', route('ECDSA', 'signing')['decided'], True)
+    check('ECDH 正常协商仍有路线', route('ECDH', 'key_exchange')['decided'], True)
+    check('ECDSA 用途未知时不误导为加密候选',
+          'ML-KEM' in route('ECDSA', 'unknown')['action'], False)
+    check('ECDH 用途未知时不误导为签名候选',
+          'ML-DSA' in route('ECDH', 'unknown')['action'], False)
 
     # --- 用途判不出来，必须 decided=False，不许猜 ---
     #     注意：未判定的文案里**会**提到 ML-DSA / ML-KEM —— 但那是并列解释

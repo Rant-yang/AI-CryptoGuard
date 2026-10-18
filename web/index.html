@@ -508,13 +508,15 @@ const SEV_CN = {critical:'严重', high:'高', medium:'中', low:'低', info:'�
 
 // 四种「给不出结论」分开表述 —— 这是契约要求的核心区分，
 // 不能糊成一句「需人工确认」。
-const REASONS = ['decided','usage-undetermined','not-an-algorithm',
+const REASONS = ['decided','usage-undetermined','usage-incompatible','not-an-algorithm',
                  'rule-missing','not-enriched','conditional-default'];
 const REASON_META = {
   'decided':           {cn:'已给结论',   cls:'tag ok',   tone:'v-ok',
                         why:'规则库已给出确定的迁移或加固建议。'},
   'usage-undetermined':{cn:'用途待定',   cls:'tag undet',tone:'v-undet',
                         why:'算法用途无法从证据判定。方案 §9.1 明确禁止在用途未知时给出固定映射 —— 这是正确行为，不是缺陷。'},
+  'usage-incompatible':{cn:'用途与算法冲突',cls:'tag warn',tone:'v-warn',
+                        why:'具体密码原语不能承担声称的用途；先核对算法识别及调用证据，不给错误的迁移目标。'},
   'not-an-algorithm':  {cn:'非算法命中', cls:'tag mute', tone:'v-warn',
                         why:'上游命中的是密码库名 / Provider 名 / 配置项，不是具体算法。需要展开到实际调用的算法才能判断。'},
   'rule-missing':      {cn:'规则库未覆盖',cls:'tag warn',tone:'v-warn',

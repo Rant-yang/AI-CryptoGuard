@@ -158,7 +158,7 @@
         },
 
         "reason": {
-          "enum": ["decided", "usage-undetermined", "not-an-algorithm", "rule-missing", "not-enriched", "conditional-default"],
+          "enum": ["decided", "usage-undetermined", "usage-incompatible", "not-an-algorithm", "rule-missing", "not-enriched", "conditional-default"],
           "description": "**为什么是这个结论。** 2026-10-03 新增（可选）。原先 decided=false 同时表示「用途判不出」和「规则库没这条」，但这两件事对用户是完全不同的消息，前端不能都糊成一句「需人工确认」。decided=已给出结论 / usage-undetermined=用途判不出来（§9.1）/ not-an-algorithm=命中的是库名或配置项 / rule-missing=规则库确实没这条 / not-enriched=尚未增强。不变量：decided == (reason == 'decided')，且 reason=='not-enriched' 等价于 source=='none'。"
         },
         "action": {

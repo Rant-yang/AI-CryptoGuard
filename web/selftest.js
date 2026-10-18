@@ -271,6 +271,9 @@ setTimeout(() => {
   check('条件性结论有独立中文状态',
         !!api.REASON_META['conditional-default'] &&
         api.REASON_META['conditional-default'].cn === '条件性默认值');
+  check('算法与用途不相容时有独立中文状态',
+        !!api.REASON_META['usage-incompatible'] &&
+        api.REASON_META['usage-incompatible'].cn === '用途与算法冲突');
 
   /* --- 9. CrySentry taint flow 必须可见，来源缺失不能伪装成完整链 --- */
   const deep = JSON.parse(JSON.stringify(cited));

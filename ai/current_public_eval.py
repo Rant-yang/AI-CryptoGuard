@@ -29,20 +29,22 @@ DESFIX_INPUT_SHA256 = 'b8f5e8372457692d5f372918eec80a775050d2f0b68f5ceae113e1733
 DESFIX_COHORT = 'public-crypto-samples-desede-correction-20261019-v5'
 ECDH_GATE_COHORT = 'public-crypto-samples-ecdh-use-gate-20261019-v6'
 CONSTRUCTOR_GATE_COHORT = 'public-crypto-samples-constructor-use-gate-20261019-v7'
+ROLE_COMPAT_COHORT = 'public-crypto-samples-role-compat-20261019-v8'
 
 
 def evaluate(assessed_path, explained_path, score_path, packet_path,
              cohort='original'):
     if cohort not in ('original', 'tls-review', 'tls-ref5', 'tls-ref6',
-                      'desfix', 'ecdh-gate', 'constructor-gate'):
+                      'desfix', 'ecdh-gate', 'constructor-gate', 'role-compat'):
         raise ValueError('未知的公开 AI 复验批次')
     expected_sha = (FROZEN_INPUT_SHA256 if cohort == 'original' else
                     DESFIX_INPUT_SHA256 if cohort in ('desfix', 'ecdh-gate',
-                                                    'constructor-gate') else
+                                                    'constructor-gate',
+                                                    'role-compat') else
                     TLS_REVIEW_INPUT_SHA256)
     total_expected, algorithm_expected, credential_expected = (
         (44, 29, 15) if cohort in ('desfix', 'ecdh-gate',
-                                  'constructor-gate') else (35, 28, 7))
+                                  'constructor-gate', 'role-compat') else (35, 28, 7))
     cohort_id = {
         'original': COHORT,
         'tls-review': TLS_REVIEW_COHORT,
@@ -51,6 +53,7 @@ def evaluate(assessed_path, explained_path, score_path, packet_path,
         'desfix': DESFIX_COHORT,
         'ecdh-gate': ECDH_GATE_COHORT,
         'constructor-gate': CONSTRUCTOR_GATE_COHORT,
+        'role-compat': ROLE_COMPAT_COHORT,
     }[cohort]
     assessed_path, explained_path = Path(assessed_path), Path(explained_path)
     score_path, packet_path = Path(score_path), Path(packet_path)
@@ -86,6 +89,7 @@ def evaluate(assessed_path, explained_path, score_path, packet_path,
         'desfix': 'ai-v02-2026-10-19.6',
         'ecdh-gate': 'ai-v02-2026-10-19.7',
         'constructor-gate': 'ai-v02-2026-10-19.8',
+        'role-compat': 'ai-v02-2026-10-19.9',
     }.get(cohort)
     if expected_prompt and any(
             (f.get('analysis_provenance') or {}).get('prompt_version') !=
@@ -135,7 +139,7 @@ def main():
     parser.add_argument('--packet', required=True)
     parser.add_argument('--cohort', choices=('original', 'tls-review', 'tls-ref5',
                                             'tls-ref6', 'desfix', 'ecdh-gate',
-                                            'constructor-gate'),
+                                            'constructor-gate', 'role-compat'),
                         default='original', help='选择预登记的输入 SHA；默认旧批次')
     args = parser.parse_args()
     print(json.dumps(evaluate(args.assessed, args.explained,

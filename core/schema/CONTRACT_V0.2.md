@@ -35,6 +35,8 @@ Finding 顶层必须有项目相对 file 和有效 line。无法可靠定位的�
 
 quantum_assessment 包含 status、quantum_effect、classical_issues、rule_version、rule_refs、evidence_refs、unknowns、migration_candidates。风险事实先于 AI 解释。未知用途允许提供带 usage/route_id/rule_refs/conditions 的条件候选，不直接选定迁移算法。
 
+具体公钥原语与用途不相容时，`remediation.reason=usage-incompatible`、`decided=false`；例如 ECDSA 不能走加密/密钥协商路线，ECDH 不能走签名路线。未知用途的条件候选也必须按原语过滤，不得列出本原语根本无法承担的角色。通用 RSA/ECC 或上游合并的算法家族仍须由实际调用证据确认用途，不能只凭名字选路。
+
 quantum_effect 区分 shor、quantum_search、no_known_quantum_break、unknown、not_applicable；它不替代经典风险字段。凭据发现必须是 not_applicable，候选列表为空，不能把换密码解释为 PQC 迁移。insufficient_evidence 必须列出缺少的信息。assessed 必须引用规则和扫描证据。
 
 rule_refs 是规则标识，evidence_refs 是扫描证据标识，两者不能混用。C1 将维护实际规则注册表；当前夹具中的 fixture.* 只为接口测试，不能当正式规则。注册表存在后还需检查规则真实存在和版本一致。

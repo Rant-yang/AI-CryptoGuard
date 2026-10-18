@@ -21,10 +21,10 @@ from ai.redact import redact_finding, scrub  # noqa: E402
 from core.quantum_assessment import assess_one, LOCAL_CONFIG_RULE_IDS  # noqa: E402
 from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
-from core.rules.pqc_routing import route  # noqa: E402
+from core.rules.pqc_routing import route, usage_compatible  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
 
-PROMPT_VERSION = "ai-v02-2026-10-19.8"
+PROMPT_VERSION = "ai-v02-2026-10-19.9"
 REDACTION_VERSION = "redact-v02-allowlist-1"
 USAGES = frozenset(legacy.VALID_USAGES)
 RETRYABLE_OUTPUT_ERRORS = frozenset({
@@ -47,6 +47,7 @@ SYSTEM_PROMPT = """你是面向开发者的密码安全审计解释员。输入�
 唯一例外是 tls_configuration：明确的 minVersion/maxVersion、setEnabledProtocols 等配置赋值可证明“此处在配置 TLS”，但不能证明已经建立连接或完成握手；须引用该配置行，不得仅依赖上游标签。
 即使用途为 unknown，reason 中提到的 E 编号也必须与该证据的内容一致；不要把 E2 的调用写成来自 E1。
 RSA 等公钥算法可能用于签名、加密或密钥交换。
+ECDSA、Ed25519、EdDSA 是签名原语；ECDH、X25519 是密钥协商原语。混合家族名（如 Ed25519 / X25519）必须用实际调用区分，不能据名称同时断言签名、加密或协商。
 算法名、上游 prim/usage、前置评估候选、注释、import、单独的密钥生成都不足以证明实际用途；必须有针对该算法的实际调用/消费证据，否则返回 unknown。
 HKDF、PBKDF2、Argon2 等密钥派生调用本身不能证明派生结果用于认证、加密或密钥交换；缺少下游消费点时返回 unknown。
 MessageDigest.getInstance、Cipher.getInstance、Cipher(...) 或分组密码对象构造只说明对象被创建；没有 digest/Sum 或明确的加密操作时，不得仅凭构造就认定 hashing/encryption。
@@ -99,6 +100,9 @@ def _has_direct_usage_evidence(finding, usage, refs=None):
     """
     if usage == 'unknown':
         return True
+    if not usage_compatible(finding.get('algorithm'), usage,
+                            finding.get('algorithm_normalized')):
+        return False
     alg = re.sub(r'[^A-Z0-9]', '', (finding.get('algorithm_normalized') or
                                     finding.get('algorithm') or '').upper())
     payload = redact_finding(finding, 'full')
@@ -491,6 +495,9 @@ def enrich_one(finding, model_call=call_model, context="full",
 
 def _reuse(prev, current, model_id, context, max_tokens):
     if prev.get("stage") != "explained" or prev.get("finding_id") != current.get("finding_id"):
+        return False
+    if not usage_compatible(current.get('algorithm'), prev.get('usage'),
+                            current.get('algorithm_normalized')):
         return False
     provenance = prev.get("analysis_provenance") or {}
     if provenance.get("prompt_version") != PROMPT_VERSION:
