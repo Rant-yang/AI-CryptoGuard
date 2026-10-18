@@ -34,6 +34,7 @@ jobs:
           python scanner/credential_selftest.py
           python scanner/selftest_crysentry.py
           python -m ai.selftest_v02
+          python -m benchmark.ai_semantic_review_selftest
           python ai/selftest.py
           python core/selftest.py
           python -m core.report_selftest
