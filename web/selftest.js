@@ -3,7 +3,7 @@
  * 断言的是**渲染出来的 HTML 里有没有该有的东西**，不是「代码能解析」。
  * 不需要浏览器、不需要装任何依赖（有 node 就行）。
  *
- *     node web/selftest.js                  # 默认喂 out/findings_ai.json
+ *     node web/selftest.js                  # 有 out/findings_ai.json 就测它，否则测仓库示例
  *     node web/selftest.js findings.json    # 也可以喂 scanner 的原始产出
  *
  * 退出码: 0 = 全过, 1 = 有断言失败。
@@ -22,14 +22,18 @@ const path = require('path');
 const ROOT = path.dirname(__dirname);           // web/ 的上一级 = 仓库根
 const TARGET_NAME = (process.argv[2] || 'findings_ai.json')
   .replace(/\\/g, '/').replace(/^out\//, '');
-const TARGET = 'out/' + TARGET_NAME;
-const TARGET_PATH = path.join(ROOT, 'out', TARGET_NAME);
+const requested = path.join(ROOT, 'out', TARGET_NAME);
+const fixture = path.join(ROOT, 'core', 'samples', 'example_finding.json');
+const useFixture = !process.argv[2] && !fs.existsSync(requested);
+const TARGET_PATH = useFixture ? fixture : requested;
+const TARGET = useFixture ? 'core/samples/example_finding.json' : 'out/' + TARGET_NAME;
 
 if (!fs.existsSync(TARGET_PATH)) {
   console.error('找不到数据文件: ' + TARGET_PATH);
   console.error('先跑一遍 scanner 或 ai/ 生成 out/ 下的产出。');
   process.exit(2);
 }
+if (useFixture) console.log('尚无 out/findings_ai.json；改用仓库内两条格式示例自检。');
 
 const html = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
 const m = html.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);

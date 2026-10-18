@@ -135,7 +135,7 @@ python web/serve.py
 ## 自检
 
 ```bash
-node web/selftest.js                  # 喂 out/findings_ai.json
+node web/selftest.js                  # 优先喂 out/findings_ai.json；空仓库改用内置示例
 node web/selftest.js findings.json    # 喂 scanner 的原始产出
 ```
 
