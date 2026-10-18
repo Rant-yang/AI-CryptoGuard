@@ -255,8 +255,27 @@ def to_relative_path(path, target_root):
         - relpath 抛 ValueError: Windows 跨盘（C: vs D:）等无法相对化
     """
     import os
+    import ntpath
     if path is None:
         return ''
+    # Saved CryptoScan JSON may carry Windows absolute paths even when an
+    # adapter or its contract test runs on Linux. POSIX os.path.isabs() treats
+    # ``D:\\project\\a.py`` as relative, which previously discarded every
+    # such finding. Interpret *both* sides with ntpath only when each has an
+    # explicit Windows drive/share; never map a Windows file into a POSIX root.
+    source = str(path)
+    root = str(target_root)
+    if (os.name != 'nt' and ntpath.isabs(source) and
+            ntpath.splitdrive(source)[0]):
+        if not (ntpath.isabs(root) and ntpath.splitdrive(root)[0]):
+            return ''
+        try:
+            rel = ntpath.relpath(source, root)
+        except ValueError:
+            return ''
+        if rel == '..' or rel.startswith('..' + ntpath.sep):
+            return ''
+        return rel.replace('\\', '/')
     if not os.path.isabs(str(path)):
         p = str(path).replace('\\', '/')
         # Windows「驱动器相对路径」（D:foo\bar）: isabs 判它为相对，但它

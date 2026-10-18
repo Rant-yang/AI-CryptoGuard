@@ -137,6 +137,19 @@ def test_relative_path(check):
         other_root = 'C:\\' if root[:1].upper() != 'C' else 'D:\\'
         check('跨盘路径 -> 空串（不抛 ValueError）',
               to_relative_path(other_root + 'x\\a.go', root), '')
+        # GitHub Linux runner must also handle an explicitly Windows-styled
+        # pair from saved CryptoScan JSON; never turn it into a POSIX-relative
+        # path or accept a different drive / a file outside the project.
+        win_root = r'D:\acg-fixture'
+        check('Windows 绝对路径对在 Linux 仍归位',
+              to_relative_path(r'D:\acg-fixture\sub\a.go', win_root), 'sub/a.go')
+        check('Windows 绝对路径跨盘拒绝',
+              to_relative_path(r'C:\elsewhere\a.go', win_root), '')
+        check('Windows 绝对路径目标外拒绝',
+              to_relative_path(r'D:\elsewhere\a.go', win_root), '')
+        if os.name != 'nt':
+            check('Windows 源路径不能映射进 POSIX 目标',
+                  to_relative_path(r'D:\acg-fixture\a.go', root), '')
 
 
 def test_merge_absorb_and_fuse(check):
