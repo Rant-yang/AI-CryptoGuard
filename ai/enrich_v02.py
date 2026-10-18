@@ -24,7 +24,7 @@ from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
 
-PROMPT_VERSION = "ai-v02-2026-10-18.5"
+PROMPT_VERSION = "ai-v02-2026-10-19.6"
 REDACTION_VERSION = "redact-v02-allowlist-1"
 USAGES = frozenset(legacy.VALID_USAGES)
 RETRYABLE_OUTPUT_ERRORS = frozenset({
@@ -44,6 +44,7 @@ SYSTEM_PROMPT = """你是面向开发者的密码安全审计解释员。输入�
 前置量子评估和规则依据由程序产生，你不能修改风险事实、挑选 PQC 算法、声称已执行修复或测试。
 只依据编号证据判断用途。每条 evidence 都有显式 ref；逐条核对 ref 和内容，不要靠数组位置猜编号。
 确定用途时，evidence_refs 至少引用一条展示实际调用的证据；资产清单或上游用途标签不能代替调用点。
+唯一例外是 tls_configuration：明确的 minVersion/maxVersion、setEnabledProtocols 等配置赋值可证明“此处在配置 TLS”，但不能证明已经建立连接或完成握手；须引用该配置行，不得仅依赖上游标签。
 即使用途为 unknown，reason 中提到的 E 编号也必须与该证据的内容一致；不要把 E2 的调用写成来自 E1。
 RSA 等公钥算法可能用于签名、加密或密钥交换。
 算法名、上游 prim/usage、前置评估候选、注释、import、单独的密钥生成都不足以证明实际用途；必须有针对该算法的实际调用/消费证据，否则返回 unknown。
@@ -112,6 +113,10 @@ def _has_direct_usage_evidence(finding, usage, refs=None):
     contexts = [str(line) for i, ev in enumerate(payload.get('evidence', []))
                 if i in selected for line in ev.get('call_context', [])]
     calls = shapes + contexts
+    if usage == 'tls_configuration':
+        if not alg.startswith(('TLS', 'SSL')):
+            return False
+        return any(_is_tls_configuration_signal(s) for s in calls)
     if usage == 'hashing' and alg.startswith((
             'MD5', 'MD4', 'MD2', 'SHA1', 'SHA2', 'SHA3', 'SHA256',
             'SHA384', 'SHA512')):
@@ -140,7 +145,17 @@ def _has_direct_usage_evidence(finding, usage, refs=None):
     return True
 
 
-def _cites_call_evidence(finding, refs):
+_TLS_CONFIG_RE = re.compile(
+    r'\b(?:minVersion|maxVersion|secureProtocol|setEnabledProtocols|'
+    r'setMinimumVersion|setMaximumVersion)\b\s*(?:[:=(]|\.)', re.I)
+
+
+def _is_tls_configuration_signal(text):
+    """A configuration assignment/call proves a TLS configuration role only."""
+    return bool(_TLS_CONFIG_RE.search(str(text)))
+
+
+def _cites_call_evidence(finding, refs, usage=None):
     """Do not attribute a call seen in E2 to an E1 inventory record.
 
     This checks citation *provenance*, not whether a cited call proves the
@@ -152,8 +167,12 @@ def _cites_call_evidence(finding, refs):
     for original, safe in zip(finding['evidence'], redacted):
         flow = original.get('flow') or {}
         sink = flow.get('sink') or {}
-        signals.append(bool(safe.get('call_shape') or safe.get('call_context') or
-                            sink.get('method')))
+        calls = safe.get('call_shape') or []
+        context = safe.get('call_context') or []
+        signals.append(bool(calls or sink.get('method') or
+                            (context if usage != 'tls_configuration' else
+                             any(_is_tls_configuration_signal(x)
+                                 for x in context))))
     return not any(signals) or any(signals[int(ref[1:]) - 1] for ref in refs)
 
 
@@ -374,7 +393,7 @@ def enrich_one(finding, model_call=call_model, context="full",
         if usage not in USAGES:
             raise ValueError("模型返回不合法用途")
         refs = _refs(raw.get("evidence_refs"), len(finding["evidence"]))
-        if usage != 'unknown' and not _cites_call_evidence(finding, refs):
+        if usage != 'unknown' and not _cites_call_evidence(finding, refs, usage):
             raise ValueError('模型用途引用缺少实际调用证据')
         reason = _text(raw.get("reason"), "reason")
         explanation = _text(raw.get("explanation"), "explanation")

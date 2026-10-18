@@ -116,6 +116,31 @@ def main():
     check("明确的加密调用仍可判为 encryption",
           _has_direct_usage_evidence(primitive, "encryption", ["E1"]))
 
+    tls = copy.deepcopy(bare)
+    tls["algorithm"] = tls["algorithm_normalized"] = "TLS"
+    tls["evidence"] = [
+        {"tool": "cbom-scan", "kind": "pattern", "lines": [6],
+         "raw": {"algo": "TLS"}},
+        {"tool": "cryptoscan", "kind": "pattern", "lines": [12],
+         "raw": {"records": [{"context": "minVersion: 'TLSv1.3',"}]}}
+    ]
+    tls = assess_one(tls)
+    check("TLS 资产名本身不能证明配置角色",
+          not _has_direct_usage_evidence(tls, "tls_configuration", ["E1"]))
+    try:
+        enrich_one(tls, lambda *_: model("tls_configuration", ["E1"]),
+                   model_id="offline-test")
+    except ValueError as exc:
+        check("TLS 配置用途不得引用只有资产名的 E1",
+              str(exc) == "模型用途引用缺少实际调用证据")
+    else:
+        raise AssertionError("TLS inventory was accepted as config evidence")
+    configured = enrich_one(tls, lambda *_: model("tls_configuration", ["E2"]),
+                            model_id="offline-test")
+    check("明确版本赋值可证明 TLS 配置角色，但不证明握手已执行",
+          not errors(configured) and configured["usage"] == "tls_configuration" and
+          configured["evidence_refs"] == ["E2"])
+
     undecided = enrich_one(rsa, lambda *_: model("unknown"), model_id="offline-test")
     check("用途未知时不选定 PQC 路线", not errors(undecided) and
           not undecided["remediation"]["decided"] and
