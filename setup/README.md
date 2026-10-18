@@ -5,7 +5,7 @@
 
 ## 制作源码提交候选包（仅完整开发仓库）
 
-本节的 `package.py`、`support_bundle.py` 及其核查脚本是团队制作提交材料时使用的工具，
+本节的 `package.py`、`support_bundle.py`、`prepare_submission.py` 及其核查脚本是团队制作提交材料时使用的工具，
 **不包含在匿名源码候选包内**。支撑材料合包和正式核查步骤见[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)。如果你拿到的是解压后的匿名包，请跳过本节，
 直接按下文的“新环境先做只读预检”运行 `setup/preflight.py`；不要运行
 `python -m setup.package_selftest`，否则会因缺少该模块而报错。
@@ -16,6 +16,7 @@
 python setup\package.py -o D:\code_competition\AI-CryptoGuard-source.zip
 python setup\package.py --anonymous -o D:\code_competition\AI-CryptoGuard-anonymous-source.zip
 python -m setup.package_selftest
+python -m setup.prepare_submission_selftest
 ```
 
 只从**已提交的 HEAD** 读取跟踪文件，不读取本机工作区；压缩包内附

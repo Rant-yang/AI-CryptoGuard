@@ -43,6 +43,7 @@ jobs:
           python -m core.pipeline_ai_selftest
           python -m setup.package_selftest
           python -m setup.submission_audit_selftest
+          python -m setup.prepare_submission_selftest
           python web/server_selftest.py
       - name: Render committed public fixture in the Web viewer
         run: |

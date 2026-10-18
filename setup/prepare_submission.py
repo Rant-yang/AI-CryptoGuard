@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parent.parent
 if __package__ in (None, ''):
     sys.path.insert(0, str(ROOT))
 
-from docs.build_submission_report import build as build_report
 from setup.package import build as build_source
 from setup.submission_audit import audit
 from setup.support_bundle import build as build_support
@@ -29,6 +28,12 @@ from setup.support_bundle import build as build_support
 REPORT_SUFFIX = '-2026密码竞赛复赛作品设计报告.docx'
 SUPPORT_SUFFIX = '-2026密码竞赛复赛相关支撑材料.zip'
 SOURCE_NAME = '匿名源码.zip'
+
+
+def build_report(template, output, number):
+    # python-docx is needed for real report generation, not CI guard tests.
+    from docs.build_submission_report import build
+    return build(template, output, number)
 
 
 def _git(*args):
