@@ -15,6 +15,16 @@
       throw new Error('文件不是本轮 AI v0.2 人工盲审包。');
     }
     const ids = new Set();
+    if (data.expected_cases !== undefined &&
+        (!Number.isSafeInteger(data.expected_cases) ||
+         data.expected_cases !== data.cases.length)) {
+      throw new Error('盲审包条数与声明的固定批次不一致。');
+    }
+    if (data.assessed_sha256 !== undefined &&
+        (typeof data.assessed_sha256 !== 'string' ||
+         !/^[0-9a-f]{64}$/.test(data.assessed_sha256))) {
+      throw new Error('冻结输入摘要格式不正确。');
+    }
     for (const row of data.cases) {
       if (!row || typeof row.finding_id !== 'string' || !row.finding_id || ids.has(row.finding_id)) {
         throw new Error('案例 ID 缺失或重复。');
@@ -40,9 +50,16 @@
     return {complete, failed, total: cases.length};
   }
 
+  function reviewFilename(data) {
+    const batch = typeof data.cohort === 'string' && data.cohort
+      ? data.cohort.replace(/[^A-Za-z0-9_-]/g, '_')
+      : `unidentified-${data.cases.length}`;
+    return `ai_semantic_${batch}_human_review.json`;
+  }
+
   // Exports keep the format checks testable without relying on a mirrored DOM stub.
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {KEYS, PROTOCOL, validatePacket, progress};
+    module.exports = {KEYS, PROTOCOL, validatePacket, progress, reviewFilename};
   }
   if (typeof document === 'undefined') return;
 
@@ -143,6 +160,7 @@
       $('workspace').hidden = false;
       $('empty').hidden = true;
       $('error').textContent = '';
+      $('cohort-note').textContent = `批次：${parsed.cohort || '未标明'}；输入 SHA-256：${parsed.assessed_sha256 || '未标明'}；冻结案例 ${parsed.cases.length} 条。全部完成后导出 JSON，再运行 python benchmark\\ai_semantic_review.py 审阅结果.json --require-complete。未审完不能计算本批语义通过率。`;
       render();
     } catch (error) {
       $('error').textContent = `无法导入：${error.message}`;
@@ -168,7 +186,7 @@
     const url = URL.createObjectURL(blob);
     const link = elt('a');
     link.href = url;
-    link.download = 'ai_semantic_30_human_review.json';
+    link.download = reviewFilename(state.packet);
     document.body.append(link);
     link.click();
     link.remove();

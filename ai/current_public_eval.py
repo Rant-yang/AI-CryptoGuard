@@ -72,6 +72,12 @@ def evaluate(assessed_path, explained_path, score_path, packet_path,
             raise ValueError('算法结果未完成结构验收')
         score = json.loads(result_path.read_text(encoding='utf-8'))
         packet = make_packet(score, algorithms)
+        # Preserve the pre-registered input identity in the private review
+        # packet. The 28-case v2 cohort must not be mistaken for the earlier
+        # 30-case review or the pre-TLS-rule 28-case cohort.
+        packet['cohort'] = cohort_id
+        packet['assessed_sha256'] = expected_sha
+        packet['expected_cases'] = 28
     if len(packet['cases']) != 28:
         raise ValueError('盲审包数量错误')
     score_path.parent.mkdir(parents=True, exist_ok=True)

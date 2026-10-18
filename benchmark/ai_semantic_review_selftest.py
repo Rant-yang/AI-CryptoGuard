@@ -27,6 +27,11 @@ def main():
     assert partial['reviewed_subset_rate'] == 1.0
     assert partial['semantic_rate'] is None and not partial['complete']
     try:
+        summarize({'cases': reviewed['cases'], 'expected_cases': 28})
+        raise AssertionError('declared cohort size mismatch accepted')
+    except ValueError:
+        pass
+    try:
         summarize({'cases': [reviewed['cases'][0], reviewed['cases'][0]]})
         raise AssertionError('duplicate ID accepted')
     except ValueError:

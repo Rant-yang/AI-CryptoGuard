@@ -78,6 +78,9 @@ def summarize(data):
     cases = data.get('cases') if isinstance(data, dict) else None
     if not isinstance(cases, list) or not cases:
         raise ValueError('Expected a nonempty semantic_eval review case list')
+    declared = data.get('expected_cases')
+    if declared is not None and (type(declared) is not int or declared != len(cases)):
+        raise ValueError('Review case count does not match the frozen cohort declaration')
     ids = [c.get('finding_id') for c in cases]
     if any(not item for item in ids) or len(set(ids)) != len(ids):
         raise ValueError('Finding IDs must be unique and nonempty')
@@ -118,6 +121,8 @@ def main(argv=None):
                         help='提供固定 assessed 数组时生成盲审包，不计算分数')
     parser.add_argument('-o', '--output', type=Path, help='盲审包输出路径')
     parser.add_argument('--require-complete', action='store_true')
+    parser.add_argument('--expect-cohort', help='预登记的 cohort 标识；缺失或不符则拒绝计分')
+    parser.add_argument('--expect-sha', help='预登记 assessed 输入 SHA-256；缺失或不符则拒绝计分')
     args = parser.parse_args(argv)
     if args.assessed:
         if not args.output:
@@ -130,7 +135,12 @@ def main(argv=None):
                                encoding='utf-8')
         print('Blind review packet: %d cases' % len(packet['cases']))
         return 0
-    result = summarize(json.loads(args.review.read_text(encoding='utf-8-sig')))
+    review = json.loads(args.review.read_text(encoding='utf-8-sig'))
+    if args.expect_cohort and review.get('cohort') != args.expect_cohort:
+        raise ValueError('盲审包 cohort 与预登记批次不一致')
+    if args.expect_sha and review.get('assessed_sha256') != args.expect_sha:
+        raise ValueError('盲审包 assessed SHA-256 与预登记输入不一致')
+    result = summarize(review)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if args.require_complete and result['fully_reviewed'] != result['total'] else 0
 
