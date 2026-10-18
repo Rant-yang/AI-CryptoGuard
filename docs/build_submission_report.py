@@ -6,7 +6,11 @@ platform-assigned work number. Neither mode inserts team identity fields.
 Requires python-docx. The result still needs a human page-layout review.
 """
 import argparse
+import os
 import re
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 from docx import Document
@@ -164,6 +168,80 @@ def _append_report(doc, source):
     flush_code()
 
 
+def _scrub_package_metadata(source_path, output_path):
+    """Remove inherited WPS/Office custom data, including encoded user IDs."""
+    omitted = ('docProps/custom.xml',)
+    with tempfile.NamedTemporaryFile(prefix='acg-report-', suffix='.docx',
+                                     dir=output_path.parent, delete=False) as stream:
+        staged = Path(stream.name)
+    try:
+        with zipfile.ZipFile(source_path) as src, zipfile.ZipFile(staged, 'w') as dst:
+            for item in src.infolist():
+                name = item.filename
+                if name in omitted or name.startswith('customXml/'):
+                    continue
+                data = src.read(name)
+                if name in ('[Content_Types].xml', '_rels/.rels',
+                            'word/_rels/document.xml.rels'):
+                    root = ET.fromstring(data)
+                    for child in list(root):
+                        path = (child.attrib.get('Target', '') + ' ' +
+                                child.attrib.get('PartName', '') + ' ' +
+                                child.attrib.get('Type', '')).lower()
+                        if 'customxml/' in path or 'custom-properties' in path or \
+                                'docprops/custom.xml' in path:
+                            root.remove(child)
+                    data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                elif name == 'docProps/app.xml':
+                    root = ET.fromstring(data)
+                    for child in root:
+                        if child.tag.rsplit('}', 1)[-1] in (
+                                'Company', 'Manager', 'Application'):
+                            child.text = None
+                    data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+                dst.writestr(item, data)
+        with zipfile.ZipFile(staged) as check:
+            if check.testzip() is not None:
+                raise ValueError('DOCX archive failed integrity check')
+            if any(name.startswith('customXml/') or name in omitted
+                   for name in check.namelist()):
+                raise ValueError('Inherited custom metadata remained')
+        # Confirm python-docx can re-open the cleaned official template.
+        Document(staged)
+        os.replace(staged, output_path)
+    finally:
+        if staged.exists():
+            staged.unlink()
+
+
+def _audit_generated_report(path, number):
+    doc = Document(path)
+    body = '\n'.join(p.text for p in doc.paragraphs)
+    body += '\n' + '\n'.join(
+        cell.text for table in doc.tables for row in table.rows for cell in row.cells)
+    if number not in body:
+        raise ValueError('Report number missing')
+    if number != PLACEHOLDER and PLACEHOLDER in body:
+        raise ValueError('Unfilled number placeholder in final report')
+    if '提交作品时请将此段落文字删除' in body:
+        raise ValueError('Official template warning remained')
+    if re.search(r'Rant[-_ ]?yang|Alanxbr|BQ[-_]?park|lenovo|C:[\\/]Users',
+                 body, re.I):
+        raise ValueError('Known identity or local account marker in report')
+    if doc.core_properties.author or doc.core_properties.last_modified_by:
+        raise ValueError('Author metadata in report')
+    with zipfile.ZipFile(path) as archive:
+        if archive.testzip() is not None:
+            raise ValueError('DOCX integrity failure')
+        if any(n == 'docProps/custom.xml' or n.startswith('customXml/')
+               for n in archive.namelist()):
+            raise ValueError('Inherited custom metadata in report')
+        app = ET.fromstring(archive.read('docProps/app.xml'))
+        if any((child.text or '').strip() for child in app
+               if child.tag.rsplit('}', 1)[-1] in ('Company', 'Manager')):
+            raise ValueError('Company/manager metadata in report')
+
+
 def build(template, output, number):
     template, output = Path(template), Path(output)
     if output.exists():
@@ -180,7 +258,20 @@ def build(template, output, number):
     props.comments = ''
     props.title = 'AI-CryptoGuard 作品设计报告'
     output.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(output)
+    with tempfile.NamedTemporaryFile(prefix='acg-unscrubbed-', suffix='.docx',
+                                     dir=output.parent, delete=False) as stream:
+        unsanitized = Path(stream.name)
+    try:
+        doc.save(unsanitized)
+        _scrub_package_metadata(unsanitized, output)
+        try:
+            _audit_generated_report(output, number)
+        except BaseException:
+            output.unlink(missing_ok=True)
+            raise
+    finally:
+        if unsanitized.exists():
+            unsanitized.unlink()
     return {'output': str(output), 'draft': number == PLACEHOLDER,
             'paragraphs': len(doc.paragraphs), 'tables': len(doc.tables)}
 
