@@ -54,8 +54,12 @@ def main():
             assert snapshot["uploaded_files"] == 1
             with urllib.request.urlopen(base + "/web/index.html", timeout=5) as page:
                 assert page.status == 200 and b"AI-CryptoGuard" in page.read()
+            for allowed in ("/web/semantic_review.html", "/web/semantic_review.js"):
+                with urllib.request.urlopen(base + allowed, timeout=5) as page:
+                    assert page.status == 200 and b"review" in page.read().lower()
             for forbidden in ("/README.md", "/out/run/findings.json",
-                              "/workspace/web_tasks", "/.env"):
+                              "/workspace/web_tasks", "/.env",
+                              "/web/semantic_review_selftest.js"):
                 try:
                     urllib.request.urlopen(base + forbidden, timeout=5)
                     raise AssertionError("static file exposed: " + forbidden)

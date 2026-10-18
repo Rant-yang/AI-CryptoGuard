@@ -221,6 +221,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         route = urllib.parse.urlparse(path).path
         if route in ("/", "/web/index.html"):
             return str(HERE / "index.html")
+        if route == "/web/semantic_review.html":
+            return str(HERE / "semantic_review.html")
+        if route == "/web/semantic_review.js":
+            return str(HERE / "semantic_review.js")
         return str(HERE / "__not_found__")
 
     def end_headers(self):
