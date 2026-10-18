@@ -17,6 +17,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from scanner.adapters.credential_scan import is_password_metadata_name
+
 
 RULES = ('PY-REPAIR-MD5', 'PY-REPAIR-WEAK-RANDOM',
          'PY-REPAIR-HARDCODED-PASSWORD')
@@ -496,7 +498,8 @@ def _edits(text):
               isinstance(node.value, ast.Constant) and
               isinstance(node.value.value, str) and
               3 <= len(node.value.value) <= 4096 and
-              _PASSWORD_NAME.search(node.targets[0].id)):
+              _PASSWORD_NAME.search(node.targets[0].id) and
+              not is_password_metadata_name(node.targets[0].id)):
             name = node.targets[0].id
             env_name = re.sub(r'[^A-Za-z0-9]+', '_', name).upper()
             edits.append((position(node.value.lineno, node.value.col_offset),

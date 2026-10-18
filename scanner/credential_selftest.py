@@ -103,6 +103,9 @@ def main():
             fh.write(FIXTURE)
         with open(os.path.join(td, 'negative.py'), 'w', encoding='utf-8') as fh:
             fh.write(NEGATIVE)
+        with open(os.path.join(td, 'password_metadata.py'), 'w', encoding='utf-8') as fh:
+            fh.write('_FPTN_PASSWD_FILENAME = "synthetic-passwd-file"\n'
+                     'password_hash = "synthetic-digest"\n')
         with open(os.path.join(td, 'import_context.py'), 'w', encoding='utf-8') as fh:
             fh.write(IMPORT_CONTEXT)
         with open(os.path.join(td, 'password_context.java'), 'w', encoding='utf-8') as fh:
@@ -169,6 +172,8 @@ def main():
         'KeyStore/PBE 上下文里的通用 key 必须按口令裁决'
     assert not any(f['file'] == 'negative.py' for f in first), \
         '注释、环境变量、占位符或函数返回值被误报'
+    assert not any(f['file'] == 'password_metadata.py' for f in first), \
+        '口令文件名或摘要元数据被误报为口令材料'
     assert not any(f['file'] == 'java_constructor_negative.java' for f in first), \
         'SecretKeySpec 的算法名参数被误报为硬编码 token'
     assert any(f['file'] == 'java_constructor_positive.java' and

@@ -78,6 +78,10 @@ _LOG_RE = re.compile(r'(?i)\b(?:print|println|printf|console\.log|log\.(?:trace|
 _STRING_LITERAL_RE = re.compile(r'(["\'])(?:\\.|(?!\1).)*\1')
 
 _PASSWORD = re.compile(r'(?i)(?:pass(?:word|wd|phrase)?|pwd|keystorepass|storepass)')
+# A variable that names a password *artifact* is not the password itself.
+# Keep this narrow: a generic password variable still needs to be reported.
+_PASSWORD_METADATA_SUFFIX = re.compile(
+    r'(?i)(?:^|[_\-.])(?:file(?:name)?|path|hash|digest|prompt|label|field)$')
 _TOKEN = re.compile(r'(?i)(?:api[_-]?(?:key|token)|access[_-]?token|auth[_-]?token|bearer|jwt[_-]?secret|client[_-]?secret|secret[_-]?key|credential)')
 _CRYPTO_KEY = re.compile(r'(?i)(?:aes|des|rsa|hmac|crypto|cipher|encrypt|decrypt)[_.-]*(?:key|secret)|(?:private|master|signing)[_.-]*key')
 _SENSITIVE = re.compile(r'(?i)(?:pass(?:word|wd|phrase)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)')
@@ -134,6 +138,10 @@ _OPAQUE_CONTEXT_RE = re.compile(
 _HASH_ARTIFACT_RE = re.compile(
     r'(?i)hash|sha[0-9_-]*|bcrypt|scrypt|argon2|pbkdf2|digest|'
     r'checksum|integrity')
+
+
+def is_password_metadata_name(name):
+    return bool(_PASSWORD.search(name) and _PASSWORD_METADATA_SUFFIX.search(name))
 
 
 def scan(root):
@@ -243,7 +251,8 @@ def _scan_line(rel, line_no, line, pepper, context=None):
         if ' + ' in value or line[m.end():m.end() + 2].lstrip().startswith('+'):
             continue
         rule = _assignment_rule(name, value, context)
-        is_weak = value.lower() in _WEAK and _SENSITIVE.search(name)
+        is_weak = (value.lower() in _WEAK and _SENSITIVE.search(name)
+                   and not is_password_metadata_name(name))
         # 同一字面量只给一个主结论：弱口令比泛化的“硬编码口令”更具体。
         if is_weak:
             out.append(_finding(rel, line_no, m.start(), 'CRED-DEFAULT-WEAK',
@@ -253,6 +262,7 @@ def _scan_line(rel, line_no, line, pepper, context=None):
                                 kind='pattern'))
         # 高熵规则只兜底未知敏感变量，避免与 token/key 确定规则重复上报。
         if (not rule and not is_weak and _SENSITIVE.search(name)
+                and not is_password_metadata_name(name)
                 and len(value) >= 20
                 and _entropy(value) >= 3.5):
             out.append(_finding(rel, line_no, m.start(),
@@ -298,6 +308,8 @@ def _is_algo_name(value):
 
 def _assignment_rule(name, value, context=None):
     v = value.strip()
+    if is_password_metadata_name(name):
+        return None
     if _PASSWORD.search(name):
         # 纯数字开关值（"0" / "1" / "90"）是配置开关或周期，不是口令。
         if re.fullmatch(r'\d{1,3}', v):

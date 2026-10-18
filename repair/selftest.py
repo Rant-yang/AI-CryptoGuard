@@ -39,6 +39,13 @@ def main(argv=None):
     assert 'hashlib.sha256("测试".encode())' in tricky_patch
     assert tricky_rules['PY-REPAIR-MD5'] and tricky_rules['PY-REPAIR-HARDCODED-PASSWORD']
     assert not _apply('note = "hashlib.md5("\n')[1]['PY-REPAIR-MD5']
+    # Third-party source used a filename constant containing PASSWD.  It is
+    # metadata, not a hardcoded password; rewriting it breaks the project.
+    metadata = '_FPTN_PASSWD_FILENAME = "synthetic-passwd-file"\n'
+    assert _apply(metadata)[0] == metadata
+    assert not _apply(metadata)[1]['PY-REPAIR-HARDCODED-PASSWORD']
+    assert _apply('password = "SyntheticOnly_DoNotUse_123!"\n')[1][
+        'PY-REPAIR-HARDCODED-PASSWORD']
     assert not _syntax_check('import os\nfrom __future__ import annotations\n',
                              'bad_future.py')[0]
     protocol = ('import hashlib\n'
