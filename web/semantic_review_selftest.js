@@ -35,7 +35,7 @@ assert.equal(reviewFilename({...packet, cohort: 'public-tls-review-v2'}),
 
 if (process.argv[2]) {
   if (process.argv[3] === undefined) {
-    throw new Error('传入盲审包时必须显式给出预登记条数（旧批次 30，当前批次 28）。');
+    throw new Error('传入盲审包时必须显式给出预登记条数（历史批次 30/28，当前 v7 为 29）。');
   }
   const expected = Number(process.argv[3]);
   assert.ok(Number.isSafeInteger(expected) && expected > 0,
