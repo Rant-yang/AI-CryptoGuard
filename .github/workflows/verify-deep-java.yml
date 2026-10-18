@@ -100,5 +100,9 @@ jobs:
                      for ev in row['evidence']) >= 2
           assert any(ev.get('kind') == 'taint' for row in rows
                      for ev in row['evidence'])
-          print('Clean Linux Java deep scan: 2 findings, CrySentry evidence and taint present.')
+          ecb = next(row for row in rows if row.get('algorithm_normalized') == 'AESECB')
+          assert ecb['risk'] == 'broken', ecb['risk']
+          assert ecb['quantum_assessment']['status'] == 'assessed'
+          assert ecb['quantum_assessment']['quantum_effect'] == 'no_known_quantum_break'
+          print('Clean Linux Java deep scan: 2 findings, CrySentry taint and classical ECB risk present.')
           PY
