@@ -37,6 +37,14 @@ def main():
                 raise AssertionError('Older prompt was accepted for review')
             assert not review.exists(), 'Rejected result created a review file'
 
+            historical = root / 'historical.json'
+            old_summary = semantic_eval.score(
+                assessed, explained, historical,
+                case_ids=('synthetic-only',), cohort='synthetic-historical-v1',
+                prompt_version='older-prompt')
+            assert old_summary['cohort'] == 'synthetic-historical-v1'
+            assert historical.exists(), 'Frozen historical cohort did not replay'
+
             after[0]['analysis_provenance']['prompt_version'] = PROMPT_VERSION
             explained.write_text(json.dumps(after), encoding='utf-8')
             summary = semantic_eval.score(

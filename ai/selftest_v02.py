@@ -116,6 +116,32 @@ def main():
     check("明确的加密调用仍可判为 encryption",
           _has_direct_usage_evidence(primitive, "encryption", ["E1"]))
 
+    ecdh = copy.deepcopy(bare)
+    ecdh["algorithm"] = ecdh["algorithm_normalized"] = "ECC"
+    ecdh["evidence"] = [{
+        "tool": "cryptoscan", "kind": "pattern", "lines": [13],
+        "raw": {"records": [{"context":
+                "const ecdhAlice = crypto.createECDH('prime256v1')"}]},
+    }]
+    ecdh = assess_one(ecdh)
+    check("createECDH 只建对象，不能证明实际密钥交换",
+          not _has_direct_usage_evidence(ecdh, "key_exchange", ["E1"]))
+    undecided_ecdh = enrich_one(
+        ecdh, lambda *_: model("key_exchange"), model_id="offline-test")
+    check("模型猜 key_exchange 时本地校验降为 unknown，不选择 ML-KEM",
+          undecided_ecdh["usage"] == "unknown" and
+          undecided_ecdh["remediation"]["reason"] == "usage-undetermined")
+    ecdh["evidence"][0]["raw"]["records"][0]["context"] = \
+        "const secret = ecdhAlice.computeSecret(peerPublicKey)"
+    ecdh = assess_one(ecdh)
+    check("computeSecret 是实际交换调用，可判为 key_exchange",
+          _has_direct_usage_evidence(ecdh, "key_exchange", ["E1"]))
+    decided_ecdh = enrich_one(
+        ecdh, lambda *_: model("key_exchange"), model_id="offline-test")
+    check("实际 computeSecret 证据能路由到 ML-KEM",
+          decided_ecdh["usage"] == "key_exchange" and
+          "ML-KEM" in decided_ecdh["remediation"]["action"])
+
     tls = copy.deepcopy(bare)
     tls["algorithm"] = tls["algorithm_normalized"] = "TLS"
     tls["evidence"] = [

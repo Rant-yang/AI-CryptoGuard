@@ -60,7 +60,7 @@ def prepare(assessed_path, output_path):
 
 
 def score(assessed_path, explained_path, report_path,
-          case_ids=None, cohort=None):
+          case_ids=None, cohort=None, prompt_version=None):
     before, after = _load(assessed_path), _load(explained_path)
     expected_ids = list(CASE_IDS if case_ids is None else case_ids)
     if [r['finding_id'] for r in before] != expected_ids or \
@@ -69,13 +69,14 @@ def score(assessed_path, explained_path, report_path,
     # IDs alone are insufficient: an older prompt can explain the same 30
     # findings, pass the schema, and silently produce a stale blind-review
     # packet. Refuse it before creating any review artifact.
+    expected_prompt = prompt_version or PROMPT_VERSION
     stale = [r['finding_id'] for r in after
              if (r.get('analysis_provenance') or {}).get('prompt_version')
-             != PROMPT_VERSION]
+             != expected_prompt]
     if stale:
         raise ValueError('模型结果的提示词版本不是当前 %s：%d 条不匹配；'
                          '请使用本轮 v0.2 输出，不能复用旧盲审包。'
-                         % (PROMPT_VERSION, len(stale)))
+                         % (expected_prompt, len(stale)))
     rows = []
     for old, new in zip(before, after):
         invalid = errors(new)

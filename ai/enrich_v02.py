@@ -24,7 +24,7 @@ from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
 
-PROMPT_VERSION = "ai-v02-2026-10-19.6"
+PROMPT_VERSION = "ai-v02-2026-10-19.7"
 REDACTION_VERSION = "redact-v02-allowlist-1"
 USAGES = frozenset(legacy.VALID_USAGES)
 RETRYABLE_OUTPUT_ERRORS = frozenset({
@@ -132,7 +132,12 @@ def _has_direct_usage_evidence(finding, usage, refs=None):
     if alg.startswith(('RSA', 'ECC', 'ECDSA', 'ECDH', 'ED25519', 'X25519', 'EDDSA')):
         signatures = {
             'signing': r'(?:^|\.)(?:sign|verify|initSign|initVerify|Signature)(?:\.|$)|Signature\.getInstance',
-            'key_exchange': r'createECDH|computeSecret|KeyAgreement|\.exchange(?:\.|$)|\.doPhase(?:\.|$)',
+            # createECDH / KeyAgreement.getInstance only construct objects;
+            # they do not prove a shared secret was computed or consumed.
+            'key_exchange': (r'(?:^|\.)computeSecret(?:\.|$)|'
+                             r'(?:^|\.)exchange(?:\.|$)|'
+                             r'(?:^|\.)doPhase(?:\.|$)|'
+                             r'(?:^|\.)generateSecret(?:\.|$)'),
             'encryption': r'Cipher\.|createCipher|\.encrypt(?:\.|$)|\.decrypt(?:\.|$)',
         }
         pattern = signatures.get(usage)
