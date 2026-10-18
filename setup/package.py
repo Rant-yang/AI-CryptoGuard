@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -67,6 +68,30 @@ def _anonymous_audit(entries):
                          'markers in: ' + ', '.join(sorted(hits)))
 
 
+_MD_LINK = re.compile(r'(?<!!)\[([^\]]+)\]\(([^)]+)\)')
+
+
+def _strip_missing_local_links(entries):
+    """Keep a curated archive readable without pointing to omitted records."""
+    available = set(entries)
+    for name, data in list(entries.items()):
+        if not name.lower().endswith('.md'):
+            continue
+        content = data.decode('utf-8')
+        def replace(match):
+            label, target = match.groups()
+            if target.startswith(('http:', 'https:', 'mailto:', '#')):
+                return match.group(0)
+            path = target.split('#', 1)[0]
+            resolved = posixpath.normpath(posixpath.join(
+                posixpath.dirname(name), path))
+            if not path or resolved in available or any(
+                    item.startswith(resolved.rstrip('/') + '/') for item in available):
+                return match.group(0)
+            return label
+        entries[name] = _MD_LINK.sub(replace, content).encode('utf-8')
+
+
 def _check_member(name, info):
     path = PurePosixPath(name)
     parts = tuple(part.lower() for part in path.parts)
@@ -111,7 +136,8 @@ def build(output, anonymous=False):
     if anonymous:
         if ANONYMOUS_README not in entries:
             raise ValueError('Missing anonymous submission README')
-        entries['README.md'] = entries[ANONYMOUS_README]
+        entries['README.md'] = entries.pop(ANONYMOUS_README)
+        _strip_missing_local_links(entries)
         _anonymous_audit(entries)
     if sum(len(data) for data in entries.values()) > 30 * 1024 * 1024:
         raise ValueError('Source release exceeds 30 MiB')

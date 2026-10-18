@@ -1,6 +1,8 @@
 """Submission candidate must be deterministic and contain only reviewed source."""
 import hashlib
 import json
+import posixpath
+import re
 import tempfile
 import zipfile
 from pathlib import Path
@@ -53,9 +55,23 @@ def main():
             assert PREFIX + 'core/pipeline.py' in names
             assert PREFIX + 'scanner/runners/crysentry.py' in names
             assert PREFIX + 'docs/第三方来源与分发边界.md' in names
+            assert PREFIX + 'setup/submission_readme.md' not in names
             readme = archive.read(PREFIX + 'README.md').decode('utf-8')
             assert 'Rant-yang' not in readme
             assert '第三方' in readme
+            for name in names:
+                if not name.endswith('.md'):
+                    continue
+                text = archive.read(name).decode('utf-8')
+                for target in re.findall(r'(?<!!)\[[^\]]+\]\(([^)]+)\)', text):
+                    if target.startswith(('http:', 'https:', 'mailto:', '#')):
+                        continue
+                    rel = target.split('#', 1)[0]
+                    resolved = posixpath.normpath(posixpath.join(
+                        posixpath.dirname(name), rel))
+                    assert not rel or resolved in names or any(
+                        member.startswith(resolved.rstrip('/') + '/')
+                        for member in names), (name, target)
             for name, expected in manifest['files'].items():
                 assert hashlib.sha256(archive.read(PREFIX + name)).hexdigest() == expected
     print('PASS: deterministic source-only and anonymous releases, checksums and path exclusions')
