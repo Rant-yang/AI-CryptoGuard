@@ -128,6 +128,8 @@ def _independent_rescan(original, patched, filename, work, tools_dir):
             'PY-REPAIR-HARDCODED-PASSWORD': any(
                 f.get('rule_id') in ('CRED-HARDCODED-PASSWORD', 'CRED-DEFAULT-WEAK')
                 for f in findings),
+            'PY-REPAIR-WEAK-RANDOM': any(
+                f.get('rule_id') == 'PY-WEAK-RANDOM-CRYPTO' for f in findings),
         }
 
     b, a = markers(rows['before']), markers(rows['after'])

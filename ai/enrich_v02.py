@@ -255,6 +255,30 @@ def _local_conditional_default(finding):
     return out
 
 
+def _local_weak_random(finding):
+    """Explain a deterministic Python AST fact locally, without cloud source."""
+    out = copy.deepcopy(finding)
+    refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
+    out["usage_assessment"] = {
+        "usage": out["usage"],
+        "reason": "AST 定位到弱伪随机字节直接赋给安全用途变量。",
+        "evidence_refs": refs,
+        "unknowns": ["实际协议是否依赖随机字节的唯一性及长度需人工确认。"],
+    }
+    out["explanation"] = (
+        "安全用途变量使用了 random.Random 生成的字节；该生成器不适合密码学用途。"
+        "建议改用系统安全随机源，并验证长度、唯一性和调用方兼容性。"
+        "这不是量子算法迁移问题。")
+    out["evidence_refs"] = refs
+    out["remediation_steps"] = [_step(
+        out["remediation"]["action"], out, refs,
+        verification=["运行项目自带测试，并确认调用方仍收到所需长度的字节",
+                      "对临时副本重新运行正式扫描器，确认该规则不再命中"])]
+    out["stage"] = "explained"
+    out["analysis_provenance"] = _provenance(out, "local-ast-rule", "local-no-cloud")
+    return out
+
+
 def enrich_one(finding, model_call=call_model, context="full",
                max_tokens=legacy.MAX_TOKENS, model_id=None):
     if finding.get("stage") != "assessed":
@@ -266,6 +290,8 @@ def enrich_one(finding, model_call=call_model, context="full",
         out = _local_credential(finding)
     elif "conditional-default" in finding.get("tags", []):
         out = _local_conditional_default(finding)
+    elif finding.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
+        out = _local_weak_random(finding)
     else:
         raw = model_call(finding, context, max_tokens)
         if not isinstance(raw, dict):
@@ -367,6 +393,8 @@ def _reuse(prev, current, model_id, context, max_tokens):
         expected_model, expected_redaction = "local-rule-base", "local-no-cloud"
     elif "conditional-default" in current.get("tags", []):
         expected_model, expected_redaction = "local-config-rule", "local-no-cloud"
+    elif current.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
+        expected_model, expected_redaction = "local-ast-rule", "local-no-cloud"
     else:
         expected_model = "%s|tokens=%d|context=%s" % (model_id, max_tokens, context)
         expected_redaction = REDACTION_VERSION + "-" + context
@@ -441,7 +469,8 @@ def enrich_file(input_path, output_path, context="full", max_tokens=legacy.MAX_T
             else:
                 last_error = None
                 local_only = (finding.get('finding_kind') == 'credential' or
-                              'conditional-default' in finding.get('tags', []))
+                              'conditional-default' in finding.get('tags', []) or
+                              finding.get('rule_id') == 'PY-WEAK-RANDOM-CRYPTO')
                 for attempt in range(1 if local_only else 2):
                     try:
                         budget = (max_tokens * 2 if attempt and last_error and
@@ -495,7 +524,8 @@ def main(argv=None):
         rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
         cloud = [r for r in rows
                  if r.get("finding_kind") != "credential" and
-                 "conditional-default" not in r.get("tags", [])]
+                 "conditional-default" not in r.get("tags", []) and
+                 r.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"]
         credentials = sum(r.get("finding_kind") == "credential" for r in rows)
         conditional = sum("conditional-default" in r.get("tags", []) for r in rows)
         print("本地凭据 %d 条，条件性备用值 %d 条，拟发送云端 %d 条，脱敏载荷总字符数 %d" %
@@ -505,7 +535,8 @@ def main(argv=None):
         return 0
     rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
     needs_cloud = any(r.get("finding_kind") != "credential" and
-                      "conditional-default" not in r.get("tags", [])
+                      "conditional-default" not in r.get("tags", []) and
+                      r.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"
                       for r in rows[:args.limit or None])
     if needs_cloud and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                         not os.environ.get("ANTHROPIC_MODEL")):

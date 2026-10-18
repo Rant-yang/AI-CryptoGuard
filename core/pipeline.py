@@ -189,7 +189,8 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
     if ai:
         remote_rows = [f for f in result
                        if f.get("finding_kind") != "credential" and
-                       "conditional-default" not in f.get("tags", [])]
+                       "conditional-default" not in f.get("tags", []) and
+                       f.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"]
         if remote_rows and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                             not os.environ.get("ANTHROPIC_MODEL")):
             task["stages"][3] = _stage(

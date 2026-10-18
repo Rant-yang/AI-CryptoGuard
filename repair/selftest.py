@@ -49,9 +49,9 @@ def main(argv=None):
         assert report['independent_scan']['status'] == 'COMPLETED'
         assert report['independent_scan']['rules']['PY-REPAIR-MD5'] == 'ELIMINATED'
         assert report['independent_scan']['rules']['PY-REPAIR-HARDCODED-PASSWORD'] == 'ELIMINATED'
-        assert report['independent_scan']['rules']['PY-REPAIR-WEAK-RANDOM'] == 'NOT_COVERED'
+        assert report['independent_scan']['rules']['PY-REPAIR-WEAK-RANDOM'] == 'ELIMINATED'
         assert report['new_high_findings'] == 0
-        print('[PASS] 正式 scanner 独立对照：MD5 / 口令消失；弱随机未覆盖，未冒称通过')
+        print('[PASS] 正式 scanner 独立对照：MD5 / 口令 / 弱随机均消失')
     else:
         assert report['independent_scan']['status'] == 'NOT_RUN'
         assert report['new_high_findings'] is None

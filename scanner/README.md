@@ -161,8 +161,10 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 
 - **CrySentry 指标对照**：runner 已接通；仍需在固定 Java 样本上比较 fast 与 deep-java
   的 P/R/F1、完成率、耗时和失败清单。
-- **Python AST 检测**：现有工具对 Python 只有一条 import 正则，**完全不理解 Python 的 crypto API 语义**。
-  用 Python 自带的 `ast` 模块写轻量局部数据流，**能追踪"这个密钥从哪来"就够**。
+- **Python AST 检测**：`adapters/python_ast.py` 已加入一个高置信规则：
+  `random.Random().randbytes(...)` 直接赋给 nonce/IV/salt/key 等安全变量时，
+  产出 `kind=ast` 的结构证据；普通模拟用途和 `SystemRandom` 不报。
+  尚未具备通用 Python 跨函数数据流分析或“密钥从哪来”的追踪能力。
   ⚠️ 不要试图"照着 CrySentry 重写一个 Python 版" —— 它背后是一整套研究级程序分析引擎，
   不是可以照抄的扫描逻辑。
 - **凭据检测（2026-10-14 已接入第一版）**：`adapters/credential_scan.py` 实现 8 类

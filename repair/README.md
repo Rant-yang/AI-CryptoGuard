@@ -17,9 +17,10 @@ python repair\selftest.py --tools-dir D:\code_competition\_smoke
 分别扫描修复前后的隔离副本；不提供时只做模板与语法检查，CLI 退出码非零。
 原文件不改；口令原文不进入报告或日志。
 
-`random.Random` 当前不在正式 scanner 的规则范围内：该类的 `scanner_rescan`
-明确标为 `NOT_COVERED`，即使替换后的源码能通过语法检查，也不会声称完成
-独立扫描验证。报告的 `new_high_findings` 只有扫描成功时才给数字，否则为 null。
+`random.Random().randbytes(...)` 现在有保守的 Python AST 扫描规则：仅当结果直接赋给
+nonce/IV/salt/key 等安全用途变量时报告。三类模板均可在合成夹具上由正式 scanner
+独立复扫为 `ELIMINATED`；这仍不等于真实项目测试或行为兼容性已验证。
+报告的 `new_high_findings` 只有扫描成功时才给数字，否则为 null。
 CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 `behavioral_compatibility: NOT_VERIFIED` / `manual_review_required: true`。
 

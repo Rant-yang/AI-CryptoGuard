@@ -21,7 +21,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from scanner.adapters import (cbom_scan, credential_scan, cryptoscan, java_properties,
-                              local_literal, source_filter)  # noqa: E402
+                              local_literal, python_ast, source_filter)  # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
 from scanner.merge import merge                              # noqa: E402
@@ -804,6 +804,32 @@ def test_conditional_default(check):
           annotate_conditional_defaults(independent, cond), 0)
 
 
+def test_python_ast_weak_random(check):
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, 'sample.py')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('import random as r\n'
+                     'nonce = r.Random().randbytes(12)\n'
+                     'simulation = r.Random().randbytes(12)\n'
+                     'safe_iv = r.SystemRandom().randbytes(12)\n'
+                     'from random import Random as R\n'
+                     'session_key = R().randbytes(32)\n')
+        rows = python_ast.scan(td)
+        check('AST 只把安全用途的弱随机字节报告为问题', len(rows), 1)
+        check('AST 排除模拟用途和 SystemRandom',
+              rows[0]['evidence'][0]['lines'], [2, 6])
+        check('AST 来源和风险类别真实标注',
+              (rows[0]['evidence'][0]['tool'], rows[0]['evidence'][0]['kind'],
+               rows[0]['risk']), ('python-ast', 'ast', 'not_applicable'))
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('import random\nnonce = random.SystemRandom().randbytes(12)\n')
+        check('修复后 AST 结果消失', python_ast.scan(td), [])
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('import random as r\nr = fake_provider()\n'
+                     'nonce = r.Random().randbytes(12)\n')
+        check('导入别名被重新绑定时不猜标准库身份', python_ast.scan(td), [])
+
+
 def main():
     fails = []
     _checks = [0]
@@ -820,7 +846,7 @@ def main():
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,
                test_cbom_report, test_java_properties, test_credential_identity,
-               test_conditional_default):
+               test_conditional_default, test_python_ast_weak_random):
         fn(check)
 
     if fails:

@@ -61,6 +61,10 @@ def prepare_scanned(finding):
             "action": ("该算法仅是配置读取的备用值。先核对实际部署配置；"
                        "若备用值仍可能生效，应消除该不安全默认值。"),
         }
+    elif out.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
+        # Deterministic AST configuration fact: preserve the scanner's local
+        # remediation instead of replacing it with an AI placeholder.
+        out["remediation"] = copy.deepcopy(finding["remediation"])
     else:
         out["remediation"] = {
             "decided": False,

@@ -94,6 +94,20 @@ def main():
           fallback_local["remediation"]["reason"] == "conditional-default" and
           "不能断言" in fallback_local["usage_assessment"]["reason"])
 
+    from scanner.adapters import python_ast
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, 'case.py').write_text(
+            'import random\nnonce = random.Random().randbytes(12)\n',
+            encoding='utf-8')
+        weak = assess_one(python_ast.scan(td)[0])
+    weak_local = enrich_one(weak, lambda *_: (_ for _ in ()).throw(
+        AssertionError("weak random AST fact sent to model")))
+    check("弱随机 AST 事实本地解释并保留扫描器整改结论",
+          not errors(weak_local) and
+          weak_local["analysis_provenance"]["model_id"] == "local-ast-rule" and
+          weak_local["remediation"]["decided"] and
+          weak_local["evidence_refs"] == ["E1"])
+
     sensitive = copy.deepcopy(rsa)
     sensitive["file"] = "src/Actual.java"
     sensitive["evidence"][0]["raw"] = {"context":

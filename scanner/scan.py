@@ -34,7 +34,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from scanner.adapters import (cbom_scan, credential_scan, cryptoscan,
-                              java_properties, local_literal)   # noqa: E402
+                              java_properties, local_literal, python_ast)   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
@@ -239,13 +239,25 @@ def main(argv=None):
     t0 = time.time()
     credential_findings = credential_scan.scan(target)
     findings.extend(credential_findings)
+    credential_seconds = round(time.time() - t0, 2)
+    t0 = time.time()
+    ast_findings = python_ast.scan(target)
+    findings.extend(ast_findings)
+    ast_seconds = round(time.time() - t0, 2)
     findings.sort(key=lambda f: (f['file'], f['line'], f['finding_id']))
     meta_tools[credential_scan.TOOL_NAME] = {
         'ok': True,
-        'seconds': round(time.time() - t0, 2),
+        'seconds': credential_seconds,
         'groups': len(credential_findings),
         'raw': None,
         'summary': {'rules': _count_by(credential_findings, 'rule_id')},
+    }
+    meta_tools[python_ast.TOOL_NAME] = {
+        'ok': True,
+        'seconds': ast_seconds,
+        'groups': len(ast_findings),
+        'raw': None,
+        'summary': {'rule_id': python_ast.RULE_ID},
     }
     _print_safe('[ok] %s 完成（%.2fs，产出 %d 条凭据 Finding；不保存原文）'
                 % (credential_scan.TOOL_NAME,
@@ -277,6 +289,7 @@ def main(argv=None):
                 if TAG_UPSTREAM_RISK_CORRECTED in f.get('tags', [])),
             'conditional_defaults': conditional_count,
             'credentials': len(credential_findings),
+            'python_ast': len(ast_findings),
             'by_credential_rule': _count_by(credential_findings, 'rule_id'),
         },
         'seconds_total': round(time.time() - t_all, 2),
