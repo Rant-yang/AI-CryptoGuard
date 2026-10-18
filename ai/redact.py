@@ -194,11 +194,12 @@ def redact_evidence(evidence, context='shape'):
         # forward any other local-literal raw fields or arbitrary API strings.
         api = raw.get('api')
         if api in ('Signature.getInstance', 'Signature.sign',
-                   'KeyAgreement.getInstance', 'KeyAgreement.generateSecret'):
+                   'KeyAgreement.getInstance', 'KeyAgreement.generateSecret',
+                   'Cipher.getInstance', 'Cipher.init(ENCRYPT_MODE)'):
             out['call_shape'].append(api)
             algorithm = raw.get('algorithm')
             if algorithm in ('RSA', 'ECDSA', 'ED25519', 'DSA',
-                             'ECDH', 'DH', 'X25519'):
+                             'ECDH', 'DH', 'X25519', 'AESECB'):
                 out['upstream'] = {'algorithm_literal': algorithm}
 
     # 其它工具（含将来新增的）：默认不发 raw。

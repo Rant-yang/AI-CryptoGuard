@@ -26,6 +26,15 @@ def main():
             'Signature x = Signature.getInstance("SHA256withRSA");\n'
             'x.initSign(key); x.sign();\n'
             '""";\n', encoding='utf-8')
+        (root / 'Cipher.java').write_text(
+            'String decoy = "Cipher.getInstance(\\\"AES/ECB/PKCS5Padding\\\")";\n'
+            'Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");\n'
+            'String trick = "cipher.init(Cipher.ENCRYPT_MODE, key)";\n'
+            'other.init(Cipher.ENCRYPT_MODE, key);\n'
+            'cipher.init(Cipher.ENCRYPT_MODE, key);\n}\n', encoding='utf-8')
+        (root / 'CipherDecoy.java').write_text(
+            'Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");\n'
+            'other.init(Cipher.ENCRYPT_MODE, key);\n}\n', encoding='utf-8')
         rows = [
             {'file': 'Signing.java', 'algorithm_normalized': 'RSA', 'usage': 'signing',
              'evidence': [{'tool': 'cbom-scan', 'lines': [4]}]},
@@ -40,8 +49,12 @@ def main():
              'usage': 'signing', 'evidence': [{'tool': 'cbom-scan', 'lines': [100]}]},
             {'file': 'TextBlock.java', 'algorithm_normalized': 'RSA',
              'usage': 'signing', 'evidence': [{'tool': 'cbom-scan', 'lines': [2]}]},
+            {'file': 'Cipher.java', 'algorithm_normalized': 'AESECB',
+             'usage': 'encryption', 'evidence': [{'tool': 'cryptoscan', 'lines': [2]}]},
+            {'file': 'CipherDecoy.java', 'algorithm_normalized': 'AESECB',
+             'usage': 'encryption', 'evidence': [{'tool': 'cryptoscan', 'lines': [1]}]},
         ]
-        assert attach_java_consumers(rows, root) == 4
+        assert attach_java_consumers(rows, root) == 7
         assert [(r['evidence'][1]['lines'], r['evidence'][1]['raw']['api'])
                 for r in rows[:2]] == [([4], 'Signature.getInstance'),
                                        ([1], 'KeyAgreement.getInstance')]
@@ -52,6 +65,10 @@ def main():
         assert not rows[2]['evidence'] and not rows[3]['evidence']
         assert len(rows[4]['evidence']) == len(rows[5]['evidence']) == 1
         assert len(rows[6]['evidence']) == 1
+        assert [(e['lines'], e['raw']['api']) for e in rows[7]['evidence'][1:]] == [
+            ([2], 'Cipher.getInstance'), ([5], 'Cipher.init(ENCRYPT_MODE)')]
+        assert [(e['lines'], e['raw']['api']) for e in rows[8]['evidence'][1:]] == [
+            ([1], 'Cipher.getInstance')]
         assert attach_java_consumers(rows, root) == 0  # idempotent
         safe = redact_evidence(rows[0]['evidence'][1], 'shape')
         assert safe['call_shape'] == ['Signature.getInstance']
@@ -59,6 +76,9 @@ def main():
         unsafe = {'tool': 'local-literal', 'kind': 'pattern', 'lines': [1],
                   'raw': {'kind': 'java-jca-consumer', 'api': 'secret.example()'}}
         assert redact_evidence(unsafe, 'shape')['call_shape'] == []
+        cipher_safe = redact_evidence(rows[7]['evidence'][2], 'shape')
+        assert cipher_safe['call_shape'] == ['Cipher.init(ENCRYPT_MODE)']
+        assert 'raw' not in cipher_safe and 'key' not in str(cipher_safe)
     print('PASS: Java JCA consumer evidence is bounded, source-free and idempotent')
 
 

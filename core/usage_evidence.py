@@ -1,8 +1,10 @@
 """Attach bounded Java JCA consumer evidence to an existing Finding.
 
 This is a source-side evidence bridge, not a dataflow proof or new detector.
-Only a literal algorithm argument to Signature/KeyAgreement.getInstance is
-accepted. The source text is never copied into the Finding or cloud payload.
+Only a literal algorithm argument to Signature/KeyAgreement.getInstance or
+AES/ECB Cipher.getInstance is accepted. The source text is never copied into
+the Finding or cloud payload. Cipher.init(ENCRYPT_MODE) proves configuration,
+not execution of doFinal or runtime reachability.
 """
 import re
 from pathlib import Path
@@ -11,6 +13,9 @@ from pathlib import Path
 _CALL = re.compile(
     r'\b(?P<api>Signature|KeyAgreement)\s*\.\s*getInstance\s*\('
     r'\s*"(?P<literal>[A-Za-z0-9_-]{2,60})"\s*[,)]', re.S)
+_CIPHER_CALL = re.compile(
+    r'\bCipher\s*\.\s*getInstance\s*\(\s*'
+    r'"(?P<literal>[A-Za-z0-9_-]+/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?)"\s*[,)]', re.S)
 _SIGNATURE = ('ED25519', 'ECDSA', 'RSA', 'DSA')
 _AGREEMENT = {'ECDH': 'ECDH', 'DH': 'DH', 'X25519': 'X25519'}
 
@@ -122,6 +127,33 @@ def _consumer_hits(src):
             consumed = occurrences[-1]
             line = clean.count('\n', 0, match.end() + consumed.start()) + 1
             yield algorithm, usage, api + '.' + methods[-1], line
+
+    # This source-side bridge only asserts that a single local Cipher is
+    # configured for encryption.  It does not claim doFinal runs, that the
+    # branch is feasible, or that interprocedural aliases point to this value.
+    for match in _CIPHER_CALL.finditer(clean):
+        if not code_at[match.start()]:
+            continue
+        parts = match.group('literal').upper().split('/')
+        if parts[:2] != ['AES', 'ECB']:
+            continue
+        yield 'AESECB', 'encryption', 'Cipher.getInstance', clean.count('\n', 0, match.start()) + 1
+        prefix = clean[max(0, match.start() - 100):match.start()]
+        binding = re.search(r'\bCipher\s+([A-Za-z_]\w*)\s*=\s*$', prefix)
+        tail = clean[match.end():match.end() + 2000]
+        end = tail.find('}')
+        if binding is None or end < 0:
+            continue
+        tail = tail[:end]
+        variable = re.escape(binding.group(1))
+        init_re = re.compile(r'\b' + variable +
+                             r'\s*\.\s*init\s*\(\s*Cipher\s*\.\s*ENCRYPT_MODE\b')
+        init = next((hit for hit in init_re.finditer(tail)
+                     if code_at[match.end() + hit.start()]), None)
+        if init is None:
+            continue
+        line = clean.count('\n', 0, match.end() + init.start()) + 1
+        yield 'AESECB', 'encryption', 'Cipher.init(ENCRYPT_MODE)', line
 
 
 def attach_java_consumers(rows, source_root):
