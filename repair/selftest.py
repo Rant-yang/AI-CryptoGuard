@@ -73,6 +73,22 @@ def main(argv=None):
     assert 'simulation = random.Random(7)' in mixed_patch
     assert 'sample = random.Random().randbytes(8)' in mixed_patch
     assert 'nonce = random.SystemRandom().randbytes(12)' in mixed_patch
+    conditional = ('from __future__ import annotations\nimport random\n'
+                   'nonce = random.Random().randbytes(16) if hasattr(random.Random, "randbytes") '
+                   'else bytes(random.randint(0, 255) for _ in range(16))\n')
+    conditional_patch, conditional_rules = _apply(conditional)
+    assert conditional_rules['PY-REPAIR-WEAK-RANDOM']
+    assert 'nonce = secrets.token_bytes(16)' in conditional_patch
+    assert conditional_patch.index('from __future__') < conditional_patch.index('import secrets')
+    assert _syntax_check(conditional_patch, 'conditional.py')[0]
+    assert not _apply(conditional.replace('range(16)', 'range(15)'))[1][
+        'PY-REPAIR-WEAK-RANDOM']
+    assert not _apply(conditional.replace('randint(0, 255)', 'randint(1, 255)'))[1][
+        'PY-REPAIR-WEAK-RANDOM']
+    assert not _apply(conditional.replace('import random\n', 'import random\nsecrets = fake\n'))[1][
+        'PY-REPAIR-WEAK-RANDOM']
+    assert not _apply(conditional.replace('import random\n', 'import random\nbytes = fake\n'))[1][
+        'PY-REPAIR-WEAK-RANDOM']
     rebound = ('import random\n'
                'def source(random):\n'
                '    nonce = random.Random().randbytes(12)\n')

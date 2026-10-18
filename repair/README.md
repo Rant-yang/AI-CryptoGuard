@@ -34,6 +34,10 @@ nonce/IV/salt/key 等安全用途变量时报告。三类模板均可在合成�
 修复模板现在也只触及这一受限形态：同文件中供模拟/测试使用的 `random.Random(7)`、
 赋给普通变量的 `randbytes` 均保持不变；若 `random` 名称在文件内被重绑定，也不自动
 改写。不要把此模板理解成全文件替换 `Random`。
+安全用途变量上的条件表达式也可被 AST 检出。修复器只对一种两侧均弱随机的明确形态
+给出临时补丁：`random.Random().randbytes(n) if hasattr(random.Random, "randbytes")
+else bytes(random.randint(0,255) for _ in range(n))`，整体改为 `secrets.token_bytes(n)`。
+长度、备用分支或命名稍有不同则只报告、不自动改；测试仍需验证协议行为。
 报告的 `new_high_findings` 只有扫描成功时才给数字，否则为 null。
 CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 `behavioral_compatibility: NOT_VERIFIED` / `manual_review_required: true`。
@@ -50,6 +54,8 @@ CLI 退出码 0 仅表示**语法 + 扫描结构验证**；所有报告仍标注
 当前限制：这是可验证的 Python 首批模板，不声称自动修复任意语言或任意上下文；
 没有项目自带测试时，报告明确写 `tests: NOT_RUN`。例如 MD5 摘要长度从
 16 字节变为 32 字节，可能影响协议或存储格式；正式应用必须跑项目测试并人工复核。
+
+第三方正向案例见 [Chimera Telegram nonce 验证](../docs/第三方正向修复验证_2026-10-18.md)：条件表达式弱随机 nonce 已检出、临时改为 `secrets.token_bytes(16)`、正式扫描复扫消除，上游模块 45 条原版测试在补丁前后均通过。该项目全量测试和真实网络协议兼容性没有验证；报告仍要求人工复核。
 
 ## 第三方项目反例：Requests HTTP Digest（2026-10-18）
 

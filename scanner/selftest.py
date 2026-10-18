@@ -834,6 +834,15 @@ def test_python_ast_weak_random(check):
             fh.write('import random as r\nr = fake_provider()\n'
                      'nonce = r.Random().randbytes(12)\n')
         check('导入别名被重新绑定时不猜标准库身份', python_ast.scan(td), [])
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('import random\n'
+                     'nonce = random.Random().randbytes(16) if hasattr(random.Random, "randbytes") '
+                     'else bytes(random.randint(0, 255) for _ in range(16))\n'
+                     'simulation = random.Random().randbytes(16) if enabled else b""\n')
+        rows = python_ast.scan(td)
+        check('条件表达式的弱随机 nonce 仍被检测', len(rows), 1)
+        check('条件表达式来源行号，不误报模拟数据',
+              rows[0]['evidence'][0]['lines'], [2])
 
 
 def test_cryptoscan_os_binary(check):

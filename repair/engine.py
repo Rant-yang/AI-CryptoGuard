@@ -315,6 +315,67 @@ def _is_protocol_md5(node):
                 for k in node.keywords))
 
 
+def _weak_random_conditional_length(expr):
+    """Recognize one bounded fallback: Random.randbytes(n) else randint bytes.
+
+    Both branches are weak, so replacing the *whole* expression with
+    secrets.token_bytes(n) avoids leaving an insecure legacy-Python branch.
+    Anything with a different condition, length, or side effect needs review.
+    """
+    if not isinstance(expr, ast.IfExp):
+        return None
+    body, test, fallback = expr.body, expr.test, expr.orelse
+    if not (isinstance(body, ast.Call) and isinstance(body.func, ast.Attribute)
+            and body.func.attr == 'randbytes' and len(body.args) == 1
+            and not body.keywords and isinstance(body.args[0], ast.Constant)
+            and type(body.args[0].value) is int
+            and 1 <= body.args[0].value <= 4096):
+        return None
+    length = body.args[0].value
+    ctor = body.func.value
+    if not (isinstance(ctor, ast.Call) and not ctor.args and not ctor.keywords
+            and isinstance(ctor.func, ast.Attribute) and ctor.func.attr == 'Random'
+            and isinstance(ctor.func.value, ast.Name)
+            and ctor.func.value.id == 'random'):
+        return None
+    if not (isinstance(test, ast.Call) and isinstance(test.func, ast.Name)
+            and test.func.id == 'hasattr' and len(test.args) == 2
+            and not test.keywords and isinstance(test.args[0], ast.Attribute)
+            and test.args[0].attr == 'Random'
+            and isinstance(test.args[0].value, ast.Name)
+            and test.args[0].value.id == 'random'
+            and isinstance(test.args[1], ast.Constant)
+            and test.args[1].value == 'randbytes'):
+        return None
+    if not (isinstance(fallback, ast.Call) and isinstance(fallback.func, ast.Name)
+            and fallback.func.id == 'bytes' and len(fallback.args) == 1
+            and not fallback.keywords and isinstance(fallback.args[0], ast.GeneratorExp)):
+        return None
+    gen = fallback.args[0]
+    if len(gen.generators) != 1:
+        return None
+    comp = gen.generators[0]
+    if not (isinstance(comp.target, ast.Name) and comp.target.id == '_'
+            and not comp.ifs and not comp.is_async
+            and isinstance(comp.iter, ast.Call)
+            and isinstance(comp.iter.func, ast.Name)
+            and comp.iter.func.id == 'range' and len(comp.iter.args) == 1
+            and not comp.iter.keywords and isinstance(comp.iter.args[0], ast.Constant)
+            and comp.iter.args[0].value == length):
+        return None
+    elt = gen.elt
+    if not (isinstance(elt, ast.Call) and isinstance(elt.func, ast.Attribute)
+            and elt.func.attr == 'randint'
+            and isinstance(elt.func.value, ast.Name)
+            and elt.func.value.id == 'random' and len(elt.args) == 2
+            and not elt.keywords
+            and all(isinstance(a, ast.Constant) and type(a.value) is int
+                    for a in elt.args)
+            and [a.value for a in elt.args] == [0, 255]):
+        return None
+    return length
+
+
 def _edits(text):
     """Return source spans for real AST expressions, excluding comments/strings.
 
@@ -342,6 +403,27 @@ def _edits(text):
          isinstance(node.ctx, ast.Store)) or
         (isinstance(node, ast.arg) and node.arg == 'random')
         for node in ast.walk(tree))
+    secrets_rebound = any(
+        (isinstance(node, ast.Name) and node.id == 'secrets' and
+         isinstance(node.ctx, ast.Store)) or
+        (isinstance(node, ast.arg) and node.arg == 'secrets') or
+        (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+         and node.name == 'secrets') or
+        (isinstance(node, ast.ImportFrom) and
+         any((a.asname or a.name) == 'secrets' for a in node.names)) or
+        (isinstance(node, ast.Import) and
+         any(a.asname == 'secrets' for a in node.names))
+        for node in ast.walk(tree))
+    builtin_rebound = any(
+        (isinstance(node, ast.Name) and node.id in ('hasattr', 'bytes', 'range')
+         and isinstance(node.ctx, ast.Store)) or
+        (isinstance(node, ast.arg) and node.arg in ('hasattr', 'bytes', 'range')) or
+        (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+         and node.name in ('hasattr', 'bytes', 'range')) or
+        (isinstance(node, (ast.Import, ast.ImportFrom)) and
+         any((a.asname or a.name) in ('hasattr', 'bytes', 'range')
+             for a in node.names))
+        for node in ast.walk(tree))
 
     def security_target(target):
         if isinstance(target, ast.Name):
@@ -351,6 +433,7 @@ def _edits(text):
         return False
 
     weak_random_calls = set()
+    weak_random_conditionals = {}
     if imported_random and not rebound_random:
         for stmt in ast.walk(tree):
             if isinstance(stmt, ast.Assign):
@@ -362,6 +445,11 @@ def _edits(text):
             else:
                 continue
             if not target_ok or not isinstance(value, ast.Call):
+                if (target_ok and not secrets_rebound and not builtin_rebound and
+                        isinstance(value, ast.IfExp)):
+                    n = _weak_random_conditional_length(value)
+                    if n is not None:
+                        weak_random_conditionals[id(value)] = n
                 continue
             func = value.func
             if not (isinstance(func, ast.Attribute) and
@@ -381,6 +469,13 @@ def _edits(text):
 
     edits = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.IfExp) and id(node) in weak_random_conditionals:
+            n = weak_random_conditionals[id(node)]
+            edits.append((position(node.lineno, node.col_offset),
+                          position(node.end_lineno, node.end_col_offset),
+                          'PY-REPAIR-WEAK-RANDOM',
+                          'secrets.token_bytes(%d)' % n))
+            continue
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             owner = node.func.value
             if isinstance(owner, ast.Name):
@@ -433,19 +528,24 @@ def _os_import_position(text):
 def _apply(text):
     applied = {rule: False for rule in RULES}
     edits = _edits(text)
+    needs_secrets = any(replacement.startswith('secrets.token_bytes(')
+                        for _, _, _, replacement in edits)
     for start, end, rule, replacement in sorted(edits, reverse=True):
         text = text[:start] + replacement + text[end:]
         applied[rule] = True
-    if applied['PY-REPAIR-HARDCODED-PASSWORD']:
+    for module, needed in (('os', applied['PY-REPAIR-HARDCODED-PASSWORD']),
+                           ('secrets', needs_secrets)):
+        if not needed:
+            continue
         tree = ast.parse(text)
-        has_os = any(isinstance(node, ast.Import) and
-                     any(alias.name == 'os' and alias.asname is None
+        has_module = any(isinstance(node, ast.Import) and
+                     any(alias.name == module and alias.asname is None
                          for alias in node.names) for node in tree.body)
-        if not has_os:
+        if not has_module:
             at = _os_import_position(text)
             newline = '\r\n' if '\r\n' in text else '\n'
             separator = '' if at == 0 or text[at - 1] in '\r\n' else newline
-            text = text[:at] + separator + 'import os' + newline + text[at:]
+            text = text[:at] + separator + 'import ' + module + newline + text[at:]
     return text, applied
 
 

@@ -1,7 +1,8 @@
 """Conservative Python AST rule for security bytes from ``random.Random``.
 
-Only report direct ``Random().randbytes`` assignments to security-named
-variables. General simulation/test use of ``random.Random`` is out of scope.
+Only report ``Random().randbytes`` assigned to security-named variables,
+including a conditional expression with a weak-random branch. General
+simulation/test use of ``random.Random`` is out of scope.
 The evidence contains structure and location, never a source line or value.
 """
 
@@ -75,7 +76,11 @@ def _lines(tree):
             value = node.value
         else:
             continue
-        if target_ok and _is_weak_bytes(value, modules, ctors):
+        weak = _is_weak_bytes(value, modules, ctors)
+        if isinstance(value, ast.IfExp):
+            weak = (weak or _is_weak_bytes(value.body, modules, ctors) or
+                    _is_weak_bytes(value.orelse, modules, ctors))
+        if target_ok and weak:
             hits.add(node.lineno)
     return sorted(hits)
 
