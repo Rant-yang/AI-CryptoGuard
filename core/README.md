@@ -1,6 +1,6 @@
 # core/ —— 统一格式 · 规则库 · 主流程
 
-> **2026-10-15：C0 契约、C1 前置量子评估、量子危机时间窗口及 C2 统一入口第一阶段已实现。** 先读 [详细操作指南](../docs/本轮操作指南_2026-10-14.md) 和 [下一步计划](../docs/下一步计划.md)。
+> **2026-10-18：统一入口已接通快速扫描、可选 CrySentry Java 深度证据、前置量子评估、可选 AI v0.2，以及离线 HTML 报告。** 当前能力与未完成项以[项目现状](../docs/项目现状.md)为准；[本轮操作指南](../docs/本轮操作指南_2026-10-14.md)保留当时的任务分工记录。
 
 > **负责人：C**
 > **一句话：把 scanner 和 ai 拼起来，并证明整个系统真的有效。**
@@ -8,11 +8,11 @@
 ```
 一个项目目录
         ↓
-   core/pipeline.py          ← 快速扫描 + 任务状态
+   core/pipeline.py          ← 快速扫描 + 可选 Java 深扫 + 任务状态
         ↓
-findings_assessed.json       ← 量子评估在 AI 之前
+findings_assessed.json       ← 量子评估在 AI 之前；可显式开启 AI
         ↓
-AI v0.2（等待 B 合入）+ Java 深度证据（等待 A 合入）
+core/report.py              ← 自包含中文 HTML 审计报告
 ```
 
 ---
@@ -27,7 +27,7 @@ core/
 ├── quantum_timeline.py    X/Y/Z 迁移窗口 + HNDL 评估
 ├── pipeline.py     C 线统一入口
 ├── selftest.py     离线入口与评估回归
-└── report.py       渲染报告（待写）
+└── report.py       渲染自包含中文 HTML 报告
 ```
 
 ---
@@ -101,28 +101,26 @@ python core\pipeline.py --findings out\findings.json -o out\run
 python core\schema\validate_v02.py out\run\findings_assessed.json
 ```
 
-产出 `findings_assessed.json` 与 `task.json`。当前 A/B 的新接口尚未合入，
-相应阶段明确标记 `skipped`，不会把未执行写成成功。`out/` 不入库。
+产出 `findings_assessed.json` 与 `task.json`。Java 深扫需要用户先提供同源码编译的
+jar/classes、仓库外 CrySentry 和 JDK 17；AI 须显式传入 `--ai` 并配置模型端点。
+未启用的阶段明确标记 `skipped`，失败也保留快速扫描结果，不能把未执行写成成功。
+完整命令见 [CrySentry 集成验收](../docs/CrySentry集成验收_2026-10-18.md)和
+[用户手册](../docs/用户手册.md)。`out/` 不入库。
 离线自检：`python core\selftest.py`。
 
-## 待做的
+## 已接通的报告与仍需验收的边界
 
-### 1. 接入 A/B v0.2 交付
+`core/report.py` 已按 v0.2 Finding 与 Task 渲染自包含 HTML，只取归一化字段、
+规则结果、AI 解释、整改步骤和证据编号；`evidence.raw` 不进入报告：
 
-### 2. `rules/` 补齐
+```cmd
+python core\report.py out\run\findings_assessed.json -o out\run\report.html --task out\run\task.json
+```
 
-现在只有 `pqc_routing.py`。还需要：
-- **量子风险分类表**（`shor` / `broken` / `grover` / `review` / `safe`）
-  —— smoke 阶段的 `zh_map.json` 里有初版，可以直接搬过来
-- **算法归一化表**（三个工具对同一算法的叫法不同）
-- **凭据检测规则**（方案要 ≥8 类，现有工具覆盖不到一半）
-
-### 3. `report.py` —— 离线中文报告
-
-现已按 v0.2 Finding 与 Task 渲染自包含 HTML，只取归一化字段、规则结果、
-AI 解释、整改步骤和证据编号；`evidence.raw` 永不进入报告。
-`python core/report.py out/run/findings_assessed.json -o out/run/report.html --task out/run/task.json`
-仅生成待人工复核的审计报告，不表示候选补丁已部署或通过行为兼容性验证。
+报告是供人复核的建议，不能表示补丁已经部署或行为兼容性已经验证。
+CrySentry 可提供额外 Java 证据，但固定 25 例同题对照的 P/R 未提升；污点链
+只有来源与汇点位置时必须标为 `partial`。AI 输出通过 Schema 不等于语义正确，
+当前公开样例的独立人工语义盲审仍未完成。具体边界见[项目现状](../docs/项目现状.md)。
 
 ---
 
