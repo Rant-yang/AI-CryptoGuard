@@ -3,6 +3,23 @@
 > 🔴 **工具本体不入库。** 这个目录只放"怎么下载"和"踩过的坑"。
 > CrySentry 解包后 **444MB**，塞进仓库就废了，而且历史里删不掉。
 
+## 制作源码提交候选包
+
+仓库根目录运行（Windows cmd；输出路径可换）：
+
+```cmd
+python setup\package.py -o D:\code_competition\AI-CryptoGuard-source.zip
+python -m setup.package_selftest
+```
+
+只从**已提交的 HEAD** 读取跟踪文件，不读取本机工作区；压缩包内附
+`RELEASE_MANIFEST.json`（提交号、逐文件 SHA-256），重复构建同一提交得到相同字节。
+缺少 README、统一入口、Web 或第三方来源说明时拒绝打包；路径、符号链接、
+`.env*`、`workspace/`、`out/`、benchmark 派生数据和第三方二进制被拒绝。
+这是**源码候选包**，不含 CryptoScan、cbom-scan、CrySentry、JDK、测试数据或真实凭据。
+评委机需按本页单独准备第三方工具；不要把候选包说成免安装独立产品。
+正式提交前仍需核对比赛要求、异机部署、最终材料与许可证边界。
+
 ---
 
 ## 三个工具的实际情况
