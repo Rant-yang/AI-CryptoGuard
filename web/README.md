@@ -1,6 +1,6 @@
 # web/ —— 结果查看器
 
-另有 [离线人工语义复核页](semantic_review.html)：它可审阅旧版固定 30 条或[当前流水线预登记的 28 条算法样本](../docs/当前流水线AI复验结果_2026-10-18.md)，导入盲审 JSON、逐项填写四个布尔判断并导出同格式结果。页面不联网、不自动打分、不存原始源码。旧版操作见 [AI 语义人工复核操作](../docs/AI语义人工复核操作_2026-10-18.md)。`node web/semantic_review_selftest.js <盲审包路径> <期望条数>` 可验证包契约与进度计算；省略条数时沿用旧版 30 条。
+另有 [离线人工语义复核页](semantic_review.html)：它可导入盲审 JSON、逐项填写四个判断并导出同格式结果。当前待审的是 [v7 的 29 条算法样本](../docs/AI_构造器用途门槛复验预登记_2026-10-19.md)；旧版 30 条和 28 条批次仅作历史记录，不能混算。页面不联网、不自动打分、不存原始源码。旧版操作见 [AI 语义人工复核操作](../docs/AI语义人工复核操作_2026-10-18.md)。`node web/semantic_review_selftest.js <盲审包路径> <期望条数>` 可验证包契约与进度计算；省略条数时沿用旧版 30 条。
 
 容器快速模式见 [Docker Compose 部署步骤](../setup/README.md)。本机
 `web/serve.py` 默认只监听 `127.0.0.1`；容器内显式绑定 `0.0.0.0`，
@@ -52,6 +52,12 @@ python web\serve.py
 API 与真实扫描闭环自检：`python web\server_selftest.py --integration`。
 
 统一任务的结果 API 优先返回 `findings_explained.json`，否则返回 `findings_assessed.json`。v0.2 详情页显示量子机制、规则依据、待确认项、用途判断与整改验证步骤；没有 AI 结果时明确显示“尚未生成”。
+`/api/tasks/<id>/result` 返回的是**浏览器脱敏展示副本**（响应头
+`X-ACG-Projection: browser-redacted`），会移除 `evidence.raw` 等敏感上下文。
+它不是可用于 v0.2 摘要校验、AI 断点续跑或科研复评的原始 Finding：原始证据
+被移除后，`analysis_provenance.input_digest` 必然不再对应此副本。需要校验正式
+契约时，应在本机私有任务目录的 `out/findings_explained.json` 上运行
+`core/schema/validate_v02.py`；不要将原始任务目录分享或提交到 Git。
 
 ## 怎么跑
 

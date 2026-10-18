@@ -29,6 +29,9 @@ def request(base, path, method="GET", body=None, content_type="application/json"
 
 
 def main():
+    ai_integration = "--ai-integration" in sys.argv
+    if ai_integration and "--deep-integration" not in sys.argv:
+        raise ValueError("--ai-integration 需要同时启用 --deep-integration")
     original = serve.TASK_BASE
     old_home = os.environ.get("ACG_CRYSENTRY_HOME")
     old_java = os.environ.get("ACG_CRYSENTRY_JAVA")
@@ -81,6 +84,9 @@ def main():
                     "call_context": ["LEAK-ME-CONTEXT"]}]}]), encoding="utf-8")
             _, safe = request(base, "/api/tasks/%s/result" % task_id)
             assert "LEAK-ME" not in json.dumps(safe)
+            with urllib.request.urlopen(base + "/api/tasks/%s/result" % task_id,
+                                        timeout=5) as page:
+                assert page.headers.get("X-ACG-Projection") == "browser-redacted"
             with urllib.request.urlopen(base + "/api/tasks/%s/report" % task_id, timeout=5) as page:
                 report = page.read().decode("utf-8")
                 assert page.status == 200
@@ -214,6 +220,7 @@ def main():
                 _, live = request(base, "/api/tasks", "POST", json.dumps({
                     "name": "java-deep-demo", "file_count": 1,
                     "total_bytes": len(source_bytes), "scan_mode": "deep-java",
+                    "ai_enabled": ai_integration, "ai_context": "full",
                 }).encode("utf-8"))
                 live_id = live["task_id"]
                 path = urllib.parse.quote("java_deep_demo/Demo.java", safe="")
@@ -232,9 +239,19 @@ def main():
                 stages = {stage["name"]: stage["status"]
                           for stage in live["pipeline"]["stages"]}
                 assert stages["deep_java"] == "completed", stages
+                assert stages["quantum_assessment"] == "completed", stages
+                if ai_integration:
+                    assert stages["ai"] == "completed", stages
                 _, rows = request(base, "/api/tasks/%s/result" % live_id)
                 assert any(e["tool"] == "crysentry" and e["kind"] == "taint"
                            for row in rows for e in row["evidence"]), rows
+                assert all("raw" not in e for row in rows for e in row["evidence"])
+                if ai_integration:
+                    assert rows and all(row["stage"] == "explained" for row in rows)
+                    with urllib.request.urlopen(base + "/api/tasks/%s/report" % live_id,
+                                                timeout=5) as page:
+                        report = page.read().decode("utf-8")
+                    assert "AI 已解释" in report and "Java 深度证据：已完成" in report
                 serve._remove_task(live_id)
         finally:
             server.shutdown()
@@ -246,9 +263,10 @@ def main():
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = previous
-    print("PASS: local web task API%s%s" %
+    print("PASS: local web task API%s%s%s" %
           (" + real scanner integration" if "--integration" in sys.argv else "",
-           " + real CrySentry integration" if "--deep-integration" in sys.argv else ""))
+           " + real CrySentry integration" if "--deep-integration" in sys.argv else "",
+           " + real AI integration" if ai_integration else ""))
     return 0
 
 
