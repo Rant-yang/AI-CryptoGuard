@@ -69,6 +69,18 @@ password: "<SET_AT_RUNTIME>"
 headers = {"Authorization": "Bearer ${TOKEN_FROM_ENV}"}
 '''
 
+OPAQUE_CONTEXT_POSITIVE = '''
+Authorization: Bearer AbC123dEf456GhI789jKl012MnO345PqR
+export API_KEY=QwE987rTy654UiO321pAs098DfG765HjK
+'''
+
+OPAQUE_CONTEXT_NEGATIVE = '''
+# Authorization: Bearer AbC123dEf456GhI789jKl012MnO345PqR
+password_hash = AbC123dEf456GhI789jKl012MnO345PqR
+integrity = AbC123dEf456GhI789jKl012MnO345PqR
+checksum = AbC123dEf456GhI789jKl012MnO345PqR
+'''
+
 FORBIDDEN = (
     'OnlyForSyntheticTest!', 'admin123',
     'TokAbc1234567890SyntheticValue',
@@ -78,6 +90,9 @@ FORBIDDEN = (
     'Synthetic16ByteKey',
     'SyntheticJsonToken9876543210', 'SyntheticYamlPassword!',
     'dXNlcjpzeW50aGV0aWMtcGFzcw==',
+    'AbC123dEf456GhI789jKl012MnO345PqR',
+    'QwE987rTy654UiO321pAs098DfG765HjK',
+    'SyntheticEnvToken1234567890AbCd',
 )
 
 
@@ -100,6 +115,14 @@ def main():
             fh.write(MAP_AND_HEADER_POSITIVE)
         with open(os.path.join(td, 'map_and_header_negative.py'), 'w', encoding='utf-8') as fh:
             fh.write(MAP_AND_HEADER_NEGATIVE)
+        with open(os.path.join(td, 'opaque_context_positive.py'), 'w', encoding='utf-8') as fh:
+            fh.write(OPAQUE_CONTEXT_POSITIVE)
+        with open(os.path.join(td, 'opaque_context_negative.py'), 'w', encoding='utf-8') as fh:
+            fh.write(OPAQUE_CONTEXT_NEGATIVE)
+        with open(os.path.join(td, '.env'), 'w', encoding='utf-8') as fh:
+            fh.write('API_TOKEN="SyntheticEnvToken1234567890AbCd"\n')
+        with open(os.path.join(td, '.env.example'), 'w', encoding='utf-8') as fh:
+            fh.write('API_TOKEN="${TOKEN_FROM_ENV}"\n')
         first = credential_scan.scan(td)
         second = credential_scan.scan(td)
 
@@ -159,6 +182,15 @@ def main():
                for f in mapped), 'HTTP Basic 头的可逆凭据必须被检出'
     assert not any(f['file'] == 'map_and_header_negative.py' for f in first), \
         '占位符和运行时 Bearer 头被误报'
+    assert len([f for f in first if f['file'] == 'opaque_context_positive.py'
+                and f['rule_id'] == 'CRED-HIGH-ENTROPY-SECRET']) == 2, \
+        '未加引号的敏感赋值和静态 Bearer 值应产生高熵候选'
+    assert not any(f['file'] == 'opaque_context_negative.py' for f in first), \
+        '哈希/校验值或注释不应被高熵兜底误报'
+    assert any(f['file'] == '.env' and f['rule_id'] == 'CRED-HARDCODED-TOKEN'
+               for f in first), '真实 .env 文件应被扫描且仅输出遮蔽证据'
+    assert not any(f['file'] == '.env.example' for f in first), \
+        '.env.example 的运行时占位符不应误报'
 
     schema_path = os.path.join(ROOT, 'core', 'schema', 'finding.v0.1.json')
     with open(schema_path, encoding='utf-8') as fh:

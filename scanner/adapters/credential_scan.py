@@ -121,6 +121,19 @@ _RUNTIME_SOURCE_RE = re.compile(
 #: 只认 `.方法(` —— `[]byte("...")` / `bytes("...")` 是类型转换，字面量就是
 #: 密钥本身，不能跳过。见 _scan_line 的 `_ASSIGN_RE` 循环。
 _METHOD_CALL_RE = re.compile(r'\.[A-Za-z_]\w*\s*\(')
+# A secret may be embedded in a header/config assignment without a variable
+# named "token" (or without quotes). Require BOTH a sensitive line context and
+# a long mixed-case/digit candidate. The exclusion protects password hashes,
+# integrity digests and similar non-secret random-looking values. This is a
+# conservative fallback, never a global high-entropy scan.
+_OPAQUE_SECRET_RE = re.compile(
+    r'(?<![A-Za-z0-9_])[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_])')
+_OPAQUE_CONTEXT_RE = re.compile(
+    r'(?i)api[_-]?key|access[_-]?token|auth[_-]?token|secret|'
+    r'password|passwd|credential|bearer')
+_HASH_ARTIFACT_RE = re.compile(
+    r'(?i)hash|sha[0-9_-]*|bcrypt|scrypt|argon2|pbkdf2|digest|'
+    r'checksum|integrity')
 
 
 def scan(root):
@@ -153,7 +166,12 @@ def _walk(root):
         for name in sorted(filenames):
             path = os.path.join(dirpath, name)
             ext = os.path.splitext(name)[1].lower()
-            if ext not in _EXTS:
+            # splitext('.env') == '' and splitext('.env.local') == '.local'.
+            # These are credential configuration files, not extensionless
+            # binaries; the same masked/fingerprinted output policy applies.
+            env_name = name.lower()
+            if ext not in _EXTS and not (env_name == '.env' or
+                                          env_name.startswith('.env.')):
                 continue
             try:
                 if os.path.getsize(path) <= _MAX_FILE:
@@ -252,6 +270,25 @@ def _scan_line(rel, line_no, line, pepper, context=None):
         if rule:
             out.append(_finding(rel, line_no, m.start(), rule, value, pepper,
                                 kind='pattern'))
+    # Fallback for e.g. an unquoted API_KEY value or a static Bearer header.
+    # Existing specific rules win; this must not duplicate their evidence.
+    if (not out and ('=' in line or ':' in line) and
+            _OPAQUE_CONTEXT_RE.search(line) and
+            not _HASH_ARTIFACT_RE.search(line)):
+        boundary = min(i for i in (line.find('='), line.find(':')) if i >= 0)
+        for m in _OPAQUE_SECRET_RE.finditer(line):
+            if m.start() <= boundary:
+                continue
+            value = m.group()
+            if (any(ch.islower() for ch in value) and
+                    any(ch.isupper() for ch in value) and
+                    any(ch.isdigit() for ch in value) and
+                    not _PLACEHOLDER.match(value) and
+                    _entropy(value) >= 3.8):
+                out.append(_finding(rel, line_no, m.start(),
+                                    'CRED-HIGH-ENTROPY-SECRET', value,
+                                    pepper, kind='entropy'))
+                break
     return _dedup(out)
 
 
