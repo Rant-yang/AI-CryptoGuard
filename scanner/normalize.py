@@ -40,6 +40,10 @@ ALIASES = {
     # cbom-scan 'DES / 3DES'  ==  CryptoScan 'DES' / '3DES'（cbom 本来就归一个 asset）
     'DES3DES': 'DES',
     '3DES': 'DES',
+    # JCE 使用 ARCFOUR（亦称 ARC4）指代 RC4。CrySentry 会保留字面量，
+    # 归一后必须走现有 RC4 的经典不安全规则，不能落到 review。
+    'ARCFOUR': 'RC4',
+    'ARC4': 'RC4',
 }
 
 

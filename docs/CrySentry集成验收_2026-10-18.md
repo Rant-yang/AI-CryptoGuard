@@ -9,7 +9,7 @@ C 在 A 尚未交付 runner 的情况下完成兜底集成。当前正式流水�
   ->（可选）CrySentry Java 字节码深度分析
   -> pattern / taint 证据适配与保守融合
   -> 前置量子风险评估
-  -> AI（仍待 B 的 v0.2 实现）
+  -> 可选 v0.2 AI 用途解释与整改建议（当前已接通；本次验收未启用）
 ```
 
 CrySentry 是第三方 LGPL-3.0 工具。仓库只提交调用器与适配器，不提交
@@ -76,6 +76,9 @@ python core\pipeline.py D:\demo\project --mode deep-java ^
 ## 6. 尚未完成
 
 本次 smoke 证明的是“runner 和证据链真实可运行”，没有证明指标提升。
+另见[真实 Apache Java 模块验收](Java深度真实项目验收_2026-10-18.md)：
+第三方源码和编译 jar 已完成深度运行，并发现/修正 `ARCFOUR` 别名缺口；
+该验收同样不能证明 P/R 提升。
 后续 [25 例同题对照](Java深度同题对照_2026-10-18.md) 已完成：
 CrySentry 实际产出 23 条原始记录、16 条可挂载 pattern 证据，但快速/深度
 P/R 完全相同。普通 jar 零可达方法的问题也已修复。仍需 A/C：

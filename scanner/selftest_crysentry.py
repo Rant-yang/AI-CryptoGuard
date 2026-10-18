@@ -141,6 +141,14 @@ def main():
               normalized[0]["algorithm"] == "AES/ECB" and
               normalized[0]["evidence"]["raw"]["algorithm_constant"] ==
               "AES/ECB/PKCS5Padding")
+        arcfour = dict(data[1], constantValue="ARCFOUR")
+        arc_records, _ = adapt([arcfour], root)
+        arc_rows, arc_unresolved = fuse([], arc_records)
+        check("CrySentry 的 ARCFOUR 与 RC4 对齐并判为经典不安全",
+              not arc_unresolved and len(arc_rows) == 1 and
+              arc_rows[0]["algorithm_normalized"] == "RC4" and
+              arc_rows[0]["risk"] == "broken" and
+              arc_rows[0]["evidence"][0]["raw"]["algorithm_constant"] == "ARCFOUR")
         keygen = dict(data[1], constantValue="DES", calleeMethod=
                       "<javax.crypto.KeyGenerator: javax.crypto.KeyGenerator getInstance(java.lang.String)>")
         keygen_record, _ = adapt([keygen], root)
