@@ -37,9 +37,8 @@ def norm_algorithm(name):
 ALIASES = {
     # cbom-scan 'ECDSA / EC'  ==  CryptoScan 'ECC'（椭圆曲线一族）
     'ECDSAEC': 'ECC',
-    # cbom-scan 'DES / 3DES'  ==  CryptoScan 'DES' / '3DES'（cbom 本来就归一个 asset）
-    'DES3DES': 'DES',
-    '3DES': 'DES',
+    # DES 和 3DES 是不同算法，不能因上游把它们装进同一个 asset 就合并。
+    # cbom 的 "DES / 3DES" 在 split_combined_algorithm 中按 match 拆开。
     # JCE 使用 ARCFOUR（亦称 ARC4）指代 RC4。CrySentry 会保留字面量，
     # 归一后必须走现有 RC4 的经典不安全规则，不能落到 review。
     'ARCFOUR': 'RC4',
@@ -80,6 +79,10 @@ def split_combined_algorithm(name):
     name = str(name or '').strip()
     if not name:
         return ['']
+    # cbom-scan 实测把两种不同算法装在一个无括号 asset 里。
+    # 这是确定的并列名单，不是 AES/GCM/NoPadding 一类变换描述符。
+    if _re.fullmatch(r'DES\s*/\s*3DES', name, _re.I):
+        return ['DES', '3DES']
     m = _COMBINED_RE.match(name)
     if not m:
         return [name]

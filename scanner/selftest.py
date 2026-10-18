@@ -66,9 +66,11 @@ def test_normalize(check):
     # 别名：只收确定同义（粒度不同的刻意不并）
     check("canon('ECDSA / EC') 对齐 CryptoScan 的 'ECC'",
           canon_algorithm('ECDSA / EC'), canon_algorithm('ECC'))
-    check("canon('DES / 3DES') / '3DES' / 'DES' 三写法同归一处",
-          {canon_algorithm('DES / 3DES'), canon_algorithm('3DES'),
-           canon_algorithm('DES')}, {'DES'})
+    check('DES 与 3DES 归一后仍为不同算法',
+          (canon_algorithm('DES'), canon_algorithm('3DES')),
+          ('DES', '3DES'))
+    check('cbom 的 DES / 3DES asset 按两个算法拆开',
+          split_combined_algorithm('DES / 3DES'), ['DES', '3DES'])
     # --- usage 映射：分不出用途的如实 unknown，不许猜 ---
     from scanner.normalize import CBOM_PRIM_TO_USAGE, CRYPTOSCAN_PURPOSE_TO_USAGE
     check('cbom prim=pke -> unknown（公钥加密分不出签名还是加密）',
@@ -357,7 +359,7 @@ def test_split_combined_and_no_algorithm(check):
 
 
 def test_cryptoscan_usage_fuse(check):
-    """同 (file, alg) 的 purpose 摆动在 adapter 层合流成一组。
+    """非公钥的启发式摆动消噪；公钥迁移用途必须分开。
 
     llmcmt 实测 124 条 FP 全来自 cryptoscan 逐行 purpose 把同一处使用拆成
     authentication/encryption 两桶 —— 计数单位 (file, algorithm) 之下它
@@ -393,6 +395,51 @@ def test_cryptoscan_usage_fuse(check):
     g2 = cryptoscan.to_groups(data2, r'D:\p')
     check('全 unknown 时保持单桶 unknown（不猜用途）',
           [(g['usage'], g['lines']) for g in g2], [('unknown', [1, 2])])
+
+    ecc = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'ECC', 'file': r'D:\p\hybrid.js', 'line': 13,
+         'purpose': 'key-exchange'},
+        {'algorithm': 'ECC', 'file': r'D:\p\hybrid.js', 'line': 104,
+         'purpose': 'signing'},
+    ]}, r'D:\p')
+    check('ECC 签名与密钥交换行不合桶（迁移路线不同）',
+          sorted((g['usage'], g['lines']) for g in ecc),
+          [('key_exchange', [13]), ('signing', [104])])
+
+
+def test_family_asset_evidence_isolation(check):
+    """家族 asset 不能把曲线名冒充签名或把 3DES 冒充 DES。"""
+    groups = cbom_scan.to_groups({'assets': [
+        {'algo': 'ECDSA / EC', 'prim': 'signature', 'risk': 'shor',
+         'occurrences': [
+             {'file': 'hybrid.js', 'line': 13, 'match': 'prime256v1'},
+             {'file': 'hybrid.js', 'line': 104, 'match': 'ECDSA'}]},
+        {'algo': 'DES / 3DES', 'prim': 'block-cipher', 'risk': 'broken',
+         'occurrences': [
+             {'file': 'crypto.go', 'line': 151, 'match': 'DES'},
+             {'file': 'crypto.go', 'line': 159, 'match': 'Triple-DES'},
+             {'file': 'crypto.go', 'line': 162, 'match': 'TripleDES'}]},
+    ]}, 'unused-target')
+    check('曲线名只证明 ECC，ECDSA 命中才证明签名',
+          sorted((g['usage'], g['lines']) for g in groups if g['file']=='hybrid.js'),
+          [('signing', [104]), ('unknown', [13])])
+    check('DES / 3DES 的匹配行各归各的算法',
+          sorted((g['alg_norm'], g['lines']) for g in groups if g['file']=='crypto.go'),
+          [('3DES', [159, 162]), ('DES', [151])])
+    cs = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'ECC', 'file': r'D:\p\hybrid.js', 'line': 13,
+         'purpose': 'key-exchange'},
+        {'algorithm': 'ECC', 'file': r'D:\p\hybrid.js', 'line': 104,
+         'purpose': 'signing'},
+    ]}, r'D:\p')
+    merged = merge(groups + cs)
+    check('cbom unknown 同行吸收进 ECDH，签名证据不串入交换结论',
+          sorted((f['usage'], f['evidence'][0]['lines']) for f in merged
+                 if f['file']=='hybrid.js'),
+          [('key_exchange', [13]), ('signing', [104])])
+    check('交换用途不展示误导性的 ECDSA 家族名',
+          [f['algorithm'] for f in merged if f['file']=='hybrid.js'
+           and f['usage']=='key_exchange'], ['ECC'])
 
 
 def test_local_literal(check):
@@ -924,6 +971,7 @@ def main():
     for fn in (test_normalize, test_relative_path, test_merge_absorb_and_fuse,
                test_merge_risk_overrides_and_tags, test_ed25519_match_refinement,
                test_split_combined_and_no_algorithm, test_cryptoscan_usage_fuse,
+               test_family_asset_evidence_isolation,
                test_malformed_inputs,
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,

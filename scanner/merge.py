@@ -45,6 +45,7 @@ from scanner.normalize import (
     SEVERITY_FROM_RISK,
     max_severity,
     most_severe_risk,
+    norm_algorithm,
     usage_contradicts_algorithm,
 )
 
@@ -129,6 +130,11 @@ def merge(all_groups):
         if not algorithm:
             algorithm = next((g['algorithm'] for g in groups
                               if g.get('algorithm')), alg)
+        # cbom 的家族级 "ECDSA / EC" 不表示 ECDH 是签名算法。
+        # 交换用途只展示中性的曲线家族名；原始写法仍在 evidence.raw.algo。
+        if (alg == 'ECC' and usage == 'key_exchange' and
+                norm_algorithm(algorithm) == 'ECDSAEC'):
+            algorithm = 'ECC'
         if no_alg:
             algorithm = ''
 

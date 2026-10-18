@@ -177,17 +177,17 @@ def to_groups(data, target):
             g['quantum_as_seen'].append(qr)
         g['raw']['records'].append(rec)
 
-    # ---- 同 (file, alg) 的 usage 摆动合流 ----
-    # purpose 是逐行启发式: 同文件同算法的命中行常被拆成 authentication/
-    # encryption 两个桶（PBKDF2 实测高发）——那不是两种用途, 是同一处使用
-    # 的判定摆动。计数单位 (file, algorithm) 之下它只能是一条: 合到**行数
-    # 最多的具体用途**桶, 行号与上游记录全并, severity/confidence 照取 max。
-    # unknown 桶的行留给 merge 的行号吸收按精确行号细分 —— 不到那一步不猜。
+    # 公钥算法的用途决定 PQC 迁移路线，签名与交换绝不能合桶。
+    # 对 PBKDF2 等非公钥资产保留此前的逐行 purpose 摆动消噪：其启发式
+    # authentication/encryption 常把同一派生用途重复报两次。该折中只作用
+    # 于非公钥资产；unknown 的同行吸收仍由 merge 精确匹配。
+    purpose_sensitive = {'RSA', 'ECC', 'ECDSA', 'ECDH', 'DSA', 'DH',
+                         'ED25519', 'X25519', 'EDDSA'}
     by_falg = {}
     for g in buckets.values():
         by_falg.setdefault((g['file'], g['alg_norm']), []).append(g)
-    for same in by_falg.values():
-        if len(same) < 2:
+    for (file, alg), same in by_falg.items():
+        if alg in purpose_sensitive or len(same) < 2:
             continue
         specific = [g for g in same if g['usage'] != 'unknown']
         if not specific:
@@ -208,8 +208,7 @@ def to_groups(data, target):
             main['risk_types'] += g['risk_types']
             main['quantum_as_seen'] += g['quantum_as_seen']
             main['raw']['records'] += g['raw']['records']
-            g['lines'] = []          # 置空 = 后续过滤掉该组
-
+            g['lines'] = []
     groups = []
     for g in buckets.values():
         if not g['lines']:

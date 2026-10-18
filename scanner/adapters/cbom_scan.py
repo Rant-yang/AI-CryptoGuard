@@ -68,6 +68,16 @@ _MATCH_REFINED_USAGE = {'ED25519': 'signing', 'X25519': 'key_exchange'}
 
 
 def _refine_usage_by_match(alg_norm, usage, match):
+    # ECDSA / EC 是 cbom 的家族级 asset，prim=signature 不能覆盖曲线名命中。
+    # prime256v1 / secp256r1 只说明曲线；与 CryptoScan 的 createECDH
+    # 同行时留 unknown 给 merge 的精确行号吸收，不伪称签名证据。
+    if alg_norm == 'ECC' and usage == 'signing':
+        token = norm_algorithm(match)
+        if token == 'ECDSA':
+            return 'signing'
+        if token == 'ECDH':
+            return 'key_exchange'
+        return 'unknown'
     if alg_norm != _ED25519_ASSET_NORM:
         return usage
     token = ''.join(ch for ch in str(match or '').upper() if ch.isalnum())
@@ -158,6 +168,9 @@ def to_groups(data, target):
         tok_to_cands = {}
         for cand in candidates:
             tok_to_cands.setdefault(norm_algorithm(cand), []).append(cand)
+        if candidates == ['DES', '3DES']:
+            for spelling in ('TRIPLE-DES', 'TRIPLEDES', 'DESede'):
+                tok_to_cands[norm_algorithm(spelling)] = ['3DES']
 
         # cand -> (file, usage) -> lines
         by_cand = {cand: {} for cand in candidates}
