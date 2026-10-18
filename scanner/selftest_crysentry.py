@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from scanner.adapters.crysentry import adapt, fuse
 from scanner.runners.crysentry import build_options, stage_artifact, stage_classpath
 from core.quantum_assessment import assess_all
+from ai.enrich_v02 import enrich_one
 from core.schema.validate_v02 import errors
 
 
@@ -92,6 +93,39 @@ def main():
               flow_line["source"]["line"] == 18 and
               flow_line["completeness"] == "partial" and
               "sourceStmt" not in located_line[0]["evidence"]["raw"])
+        check("可定位的弱随机源到 SecretKeySpec 得到独立规则",
+              located_line[0]["deep_rule"] == "JAVA-WEAK-PRNG-KEY")
+        key_rows, key_unresolved = fuse([], located_line)
+        check("弱密钥证据生成配置 Finding，而非无算法线索",
+              len(key_rows) == 1 and not key_unresolved and
+              key_rows[0]["finding_kind"] == "configuration" and
+              key_rows[0]["risk"] == "not_applicable" and
+              key_rows[0]["usage"] == "unknown")
+        key_assessed = assess_all(key_rows)[0]
+        check("前置量子评估保留本地确定性修复建议且符合契约",
+              key_assessed["remediation"]["decided"] and not errors(key_assessed))
+        key_explained = enrich_one(key_assessed,
+                                   model_call=lambda *args: (_ for _ in ()).throw(
+                                       AssertionError("确定性规则不应调用模型")))
+        check("弱密钥问题本地解释引用真实证据并不声称已知业务用途",
+              key_explained["stage"] == "explained" and
+              key_explained["evidence_refs"] == ["E1"] and
+              key_explained["usage_assessment"]["usage"] == "unknown" and
+              not errors(key_explained))
+        fake_other_source = dict(with_line, sourceStmt=(
+            "<org.demo.Sample: void encrypt()>[3@L18] "
+            "invokevirtual $-v1.decode($-v2)"))
+        other_located, _ = adapt([fake_other_source], root)
+        check("非 nextBytes 来源不能升级为弱密钥规则",
+              other_located[0]["deep_rule"] is None)
+        missing_line, _ = adapt([data[0]], root)
+        check("无可定位来源行号不能升级为弱密钥规则",
+              missing_line[0]["deep_rule"] is None)
+        wrong_sink = dict(with_line, calleeMethod=(
+            "<javax.crypto.Cipher: javax.crypto.Cipher getInstance(java.lang.String)>"))
+        wrong_located, _ = adapt([wrong_sink], root)
+        check("非 SecretKeySpec 构造点不能升级为弱密钥规则",
+              wrong_located[0]["deep_rule"] is None)
         check("Predictable Source 的字符串不冒充算法",
               taints[0]["algorithm"] == "")
         check("raw 不保存 sourceStmt 原文",
@@ -99,6 +133,10 @@ def main():
 
         transform = dict(data[1], constantValue="AES/ECB/PKCS5Padding")
         normalized, _ = adapt([transform], root)
+        combined, _ = fuse([], located_line + normalized)
+        check("弱密钥与算法问题即使同文件也不互相误并",
+              len(combined) == 2 and
+              {r.get("rule_id") for r in combined} == {None, "JAVA-WEAK-PRNG-KEY"})
         check("JCE 变换串归一到 AES/ECB，原字面量留在证据",
               normalized[0]["algorithm"] == "AES/ECB" and
               normalized[0]["evidence"]["raw"]["algorithm_constant"] ==

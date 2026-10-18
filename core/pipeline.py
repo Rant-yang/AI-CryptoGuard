@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.quantum_assessment import assess_all, rule_version  # noqa: E402
+from core.quantum_assessment import assess_all, rule_version, LOCAL_CONFIG_RULE_IDS  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 from ai.enrich_v02 import enrich_file as enrich_ai_file  # noqa: E402
@@ -190,7 +190,7 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
         remote_rows = [f for f in result
                        if f.get("finding_kind") != "credential" and
                        "conditional-default" not in f.get("tags", []) and
-                       f.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"]
+                       f.get("rule_id") not in LOCAL_CONFIG_RULE_IDS]
         if remote_rows and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                             not os.environ.get("ANTHROPIC_MODEL")):
             task["stages"][3] = _stage(

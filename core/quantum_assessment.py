@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.rules.pqc_routing import route  # noqa: E402
+from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
 from core.quantum_timeline import assess as assess_timeline, make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 
@@ -30,6 +31,7 @@ RISK_RULE = {
 }
 AI_FIELDS = ("explanation", "evidence_refs", "usage_assessment",
              "remediation_steps", "analysis_provenance", "quantum_assessment")
+LOCAL_CONFIG_RULE_IDS = frozenset({"PY-WEAK-RANDOM-CRYPTO", PREDICTABLE_KEY_RULE})
 
 
 def _rules():
@@ -61,9 +63,9 @@ def prepare_scanned(finding):
             "action": ("该算法仅是配置读取的备用值。先核对实际部署配置；"
                        "若备用值仍可能生效，应消除该不安全默认值。"),
         }
-    elif out.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
-        # Deterministic AST configuration fact: preserve the scanner's local
-        # remediation instead of replacing it with an AI placeholder.
+    elif out.get("rule_id") in LOCAL_CONFIG_RULE_IDS:
+        # Deterministic AST/deep-Java configuration facts keep their local
+        # remediation instead of receiving an AI placeholder.
         out["remediation"] = copy.deepcopy(finding["remediation"])
     else:
         out["remediation"] = {

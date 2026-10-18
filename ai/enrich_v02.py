@@ -18,7 +18,8 @@ if str(ROOT) not in sys.path:
 
 from ai import enrich as legacy  # noqa: E402
 from ai.redact import redact_finding, scrub  # noqa: E402
-from core.quantum_assessment import assess_one  # noqa: E402
+from core.quantum_assessment import assess_one, LOCAL_CONFIG_RULE_IDS  # noqa: E402
+from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
@@ -279,6 +280,31 @@ def _local_weak_random(finding):
     return out
 
 
+def _local_java_predictable_key(finding):
+    """Explain a located CrySentry key flow without asserting business usage."""
+    out = copy.deepcopy(finding)
+    refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
+    out["usage_assessment"] = {
+        "usage": "unknown",
+        "reason": "Java 深度分析把可预测随机字节的来源定位到 SecretKeySpec 密钥构造点；尚未追踪该密钥的业务用途。",
+        "evidence_refs": refs,
+        "unknowns": ["来源到构造点之间的完整路径未给出；实际密钥消费场景需复核。"],
+    }
+    out["explanation"] = (
+        "CrySentry 报告可预测随机源产生的字节流入 SecretKeySpec 密钥构造。"
+        "这会削弱密钥不可预测性；当前证据只定位来源与构造点，未证明完整数据流路径或业务用途。"
+        "应在来源处改用密码学安全随机源，并复核下游调用。这不是量子算法迁移问题。")
+    out["evidence_refs"] = refs
+    out["remediation_steps"] = [_step(
+        out["remediation"]["action"], out, refs,
+        prerequisites=["核对来源行所用随机数类及实际密钥长度"],
+        verification=["重新编译并运行项目测试",
+                      "重新运行 Java 深度扫描，确认该弱随机源到密钥构造点的报告消失"])]
+    out["stage"] = "explained"
+    out["analysis_provenance"] = _provenance(out, "local-deep-java-rule", "local-no-cloud")
+    return out
+
+
 def enrich_one(finding, model_call=call_model, context="full",
                max_tokens=legacy.MAX_TOKENS, model_id=None):
     if finding.get("stage") != "assessed":
@@ -292,6 +318,8 @@ def enrich_one(finding, model_call=call_model, context="full",
         out = _local_conditional_default(finding)
     elif finding.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
         out = _local_weak_random(finding)
+    elif finding.get("rule_id") == PREDICTABLE_KEY_RULE:
+        out = _local_java_predictable_key(finding)
     else:
         raw = model_call(finding, context, max_tokens)
         if not isinstance(raw, dict):
@@ -395,6 +423,8 @@ def _reuse(prev, current, model_id, context, max_tokens):
         expected_model, expected_redaction = "local-config-rule", "local-no-cloud"
     elif current.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
         expected_model, expected_redaction = "local-ast-rule", "local-no-cloud"
+    elif current.get("rule_id") == PREDICTABLE_KEY_RULE:
+        expected_model, expected_redaction = "local-deep-java-rule", "local-no-cloud"
     else:
         expected_model = "%s|tokens=%d|context=%s" % (model_id, max_tokens, context)
         expected_redaction = REDACTION_VERSION + "-" + context
@@ -470,7 +500,7 @@ def enrich_file(input_path, output_path, context="full", max_tokens=legacy.MAX_T
                 last_error = None
                 local_only = (finding.get('finding_kind') == 'credential' or
                               'conditional-default' in finding.get('tags', []) or
-                              finding.get('rule_id') == 'PY-WEAK-RANDOM-CRYPTO')
+                              finding.get('rule_id') in LOCAL_CONFIG_RULE_IDS)
                 for attempt in range(1 if local_only else 2):
                     try:
                         budget = (max_tokens * 2 if attempt and last_error and
@@ -522,10 +552,11 @@ def main(argv=None):
         parser.error("max-tokens 必须为正；limit/checkpoint/sleep 不能为负")
     if args.dry_run:
         rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
+        rows = rows[:args.limit or None]
         cloud = [r for r in rows
                  if r.get("finding_kind") != "credential" and
                  "conditional-default" not in r.get("tags", []) and
-                 r.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"]
+                 r.get("rule_id") not in LOCAL_CONFIG_RULE_IDS]
         credentials = sum(r.get("finding_kind") == "credential" for r in rows)
         conditional = sum("conditional-default" in r.get("tags", []) for r in rows)
         print("本地凭据 %d 条，条件性备用值 %d 条，拟发送云端 %d 条，脱敏载荷总字符数 %d" %
@@ -536,7 +567,7 @@ def main(argv=None):
     rows = json.loads(Path(args.input).read_text(encoding="utf-8-sig"))
     needs_cloud = any(r.get("finding_kind") != "credential" and
                       "conditional-default" not in r.get("tags", []) and
-                      r.get("rule_id") != "PY-WEAK-RANDOM-CRYPTO"
+                      r.get("rule_id") not in LOCAL_CONFIG_RULE_IDS
                       for r in rows[:args.limit or None])
     if needs_cloud and (not os.environ.get("ANTHROPIC_AUTH_TOKEN") or
                         not os.environ.get("ANTHROPIC_MODEL")):

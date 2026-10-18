@@ -130,6 +130,14 @@ python core/rules/pqc_routing.py     # 退出码 0 = 全部断言通过
 
 ## 约定
 
+### Java 深度配置规则
+
+`deep_java.py` 保存可定位的弱随机密钥流规则编号、展示名称和确定性整改文本。
+`scanner/adapters/crysentry.py` 只在 CrySentry 的已核对来源模型与明确的
+`SecretKeySpec` 汇点同时成立时使用；`ai/enrich_v02.py` 在本地解释并引用证据。
+这条规则不是量子迁移规则，不允许因为有 `SecretKeySpec` 就猜测实际业务用途。
+
+
 - **确定性的东西放这里，不确定的放 `ai/`。** 判断标准：
   「这条结论换了谁来问，答案都一样吗？」—— 是，就放规则库。
 - **每条规则带标准依据**（FIPS / SP 800 / RFC），答辩时用得上。

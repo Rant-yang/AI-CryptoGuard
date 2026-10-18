@@ -5,6 +5,10 @@ import re
 from pathlib import Path
 
 from core.rules.algorithm_risk import risk_for
+from core.rules.deep_java import (PREDICTABLE_KEY_ACTION,
+                                  PREDICTABLE_KEY_NORMALIZED,
+                                  PREDICTABLE_KEY_RULE,
+                                  PREDICTABLE_KEY_SUBJECT)
 from scanner.normalize import canon_algorithm
 
 TOOL_NAME = "crysentry"
@@ -128,6 +132,24 @@ def _flow(record, sink, index):
     return {"source": source, "sink": sink, "path": [], "completeness": complete}
 
 
+def _deep_rule(record, flow):
+    """Promote only a traceable Random.nextBytes -> SecretKeySpec key flow.
+
+    CrySentry's cryptoSources config models java.util.Random.nextBytes, not
+    SecureRandom.nextBytes. Other Predictable Source results may be ambiguous
+    (for example a Base64 decoder); keep those as unresolved leads.
+    """
+    source, sink = flow["source"], flow["sink"]
+    if (record.get("judgeType") == "Predictable Source" and
+            record.get("calleeMethod") ==
+            "<javax.crypto.spec.SecretKeySpec: void <init>(byte[],java.lang.String)>" and
+            re.search(r"\.nextBytes\s*\(", record.get("sourceStmt") or "") and
+            source and source.get("file") and source.get("line") and
+            sink.get("file") and sink.get("line")):
+        return PREDICTABLE_KEY_RULE
+    return None
+
+
 def adapt(data, source_root):
     """返回 (located_records, unresolved_deep_evidence)。"""
     index = _source_index(source_root)
@@ -147,16 +169,45 @@ def adapt(data, source_root):
         evidence = {"tool": TOOL_NAME,
                     "kind": "taint" if is_taint else "pattern",
                     "lines": [sink["line"]], "raw": _raw(record)}
+        deep_rule = None
         if is_taint:
             evidence["flow"] = _flow(record, sink, index)
+            deep_rule = _deep_rule(record, evidence["flow"])
         located.append({"file": sink["file"], "line": sink["line"],
                         "algorithm": _algorithm(record), "usage": _usage(record),
-                        "evidence": evidence})
+                        "evidence": evidence, "deep_rule": deep_rule})
     return located, unresolved
 
 
 def _id(file, alg, usage):
     return hashlib.sha1((file + "|" + alg + "|" + usage).encode("utf-8")).hexdigest()[:12]
+
+
+def _attach_predictable_key(rows, rec):
+    """Own configuration issue: do not attach weak-key evidence to AES/ECB."""
+    evidence = rec["evidence"]
+    for row in rows:
+        if (row.get("file") == rec["file"] and
+                row.get("rule_id") == PREDICTABLE_KEY_RULE):
+            if evidence not in row["evidence"]:
+                row["evidence"].append(evidence)
+                row["line"] = min(row["line"], rec["line"])
+            return
+    rows.append({
+        "schema_version": "0.1",
+        "finding_id": _id(rec["file"], PREDICTABLE_KEY_NORMALIZED, "unknown"),
+        "finding_kind": "configuration", "rule_id": PREDICTABLE_KEY_RULE,
+        "file": rec["file"], "line": rec["line"],
+        "algorithm": PREDICTABLE_KEY_SUBJECT,
+        "algorithm_normalized": PREDICTABLE_KEY_NORMALIZED,
+        "usage": "unknown", "risk": "not_applicable",
+        "severity": "high", "confidence": 0.85,
+        "evidence": [evidence],
+        "remediation": {"decided": True, "reason": "decided",
+                        "action": PREDICTABLE_KEY_ACTION,
+                        "source": "rule-base"},
+        "tags": ["deep-java-new", "java-weak-prng-key", "partial-flow"],
+    })
 
 
 def fuse(fast_findings, deep_records):
@@ -168,6 +219,9 @@ def fuse(fast_findings, deep_records):
     # 否则结果会随 JSON 顺序变化并静默丢证据。
     ordered = sorted(deep_records, key=lambda r: 0 if r.get("algorithm") else 1)
     for rec in ordered:
+        if rec.get("deep_rule") == PREDICTABLE_KEY_RULE:
+            _attach_predictable_key(rows, rec)
+            continue
         alg = canon_algorithm(rec.get("algorithm") or "")
         candidates = []
         for row in rows:
