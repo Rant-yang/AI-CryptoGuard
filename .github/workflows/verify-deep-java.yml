@@ -39,14 +39,24 @@ jobs:
             "$RUNNER_TEMP/cryptoscan.tar.gz" | sha256sum --check --status
           tar -xzf "$RUNNER_TEMP/cryptoscan.tar.gz" -C "$tools/cryptoscan" cryptoscan
           chmod +x "$tools/cryptoscan/cryptoscan"
-          git clone --depth 1 https://github.com/thefinalmilkman/cbom-scan.git "$tools/cbom-scan"
+          git init --quiet "$tools/cbom-scan"
+          git -C "$tools/cbom-scan" remote add origin \
+            https://github.com/thefinalmilkman/cbom-scan.git
+          git -C "$tools/cbom-scan" fetch --depth 1 origin \
+            bcf71292816aa64d5890207466b5dff1f5ef9cf7
+          git -C "$tools/cbom-scan" checkout --detach --quiet FETCH_HEAD
           test "$(git -C "$tools/cbom-scan" rev-parse HEAD)" = \
             'bcf71292816aa64d5890207466b5dff1f5ef9cf7'
           printf 'ACG_TOOLS_DIR=%s\n' "$tools" >> "$GITHUB_ENV"
       - name: Build pinned external CrySentry without vendoring it
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/pascal-lab/CrySentry.git "$RUNNER_TEMP/CrySentry"
+          git init --quiet "$RUNNER_TEMP/CrySentry"
+          git -C "$RUNNER_TEMP/CrySentry" remote add origin \
+            https://github.com/pascal-lab/CrySentry.git
+          git -C "$RUNNER_TEMP/CrySentry" fetch --depth 1 origin \
+            dfe0b74f3b1583d0fced44dd7e166d38e1b59be7
+          git -C "$RUNNER_TEMP/CrySentry" checkout --detach --quiet FETCH_HEAD
           test "$(git -C "$RUNNER_TEMP/CrySentry" rev-parse HEAD)" = \
             'dfe0b74f3b1583d0fced44dd7e166d38e1b59be7'
           chmod +x "$RUNNER_TEMP/CrySentry/gradlew"
