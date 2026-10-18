@@ -45,12 +45,23 @@ String key = "SyntheticStorePassword";
 KeyStore ks = KeyStore.getInstance("JKS");
 '''
 
+JAVA_CONSTRUCTOR_NEGATIVE = '''
+byte[] keyBytes = generatedKey.getEncoded();
+SecretKeySpec secretKeySpec = new SecretKeySpec(keyBytes, "DES");
+SecretKeySpec nextSpec = new SecretKeySpec(keyBytes, "DESede");
+'''
+
+JAVA_CONSTRUCTOR_POSITIVE = '''
+SecretKeySpec spec = new SecretKeySpec("Synthetic16ByteKey", "AES");
+'''
+
 FORBIDDEN = (
     'OnlyForSyntheticTest!', 'admin123',
     'TokAbc1234567890SyntheticValue',
     'AbCDef0123456789SyntheticOpaqueValue',
     '00112233445566778899AABBCCDDEEFF',
     'syntheticpass', '0123456789abcdef', 'fedcba9876543210',
+    'Synthetic16ByteKey',
 )
 
 
@@ -65,6 +76,10 @@ def main():
             fh.write(IMPORT_CONTEXT)
         with open(os.path.join(td, 'password_context.java'), 'w', encoding='utf-8') as fh:
             fh.write(PASSWORD_CONTEXT)
+        with open(os.path.join(td, 'java_constructor_negative.java'), 'w', encoding='utf-8') as fh:
+            fh.write(JAVA_CONSTRUCTOR_NEGATIVE)
+        with open(os.path.join(td, 'java_constructor_positive.java'), 'w', encoding='utf-8') as fh:
+            fh.write(JAVA_CONSTRUCTOR_POSITIVE)
         first = credential_scan.scan(td)
         second = credential_scan.scan(td)
 
@@ -111,6 +126,11 @@ def main():
         'KeyStore/PBE 上下文里的通用 key 必须按口令裁决'
     assert not any(f['file'] == 'negative.py' for f in first), \
         '注释、环境变量、占位符或函数返回值被误报'
+    assert not any(f['file'] == 'java_constructor_negative.java' for f in first), \
+        'SecretKeySpec 的算法名参数被误报为硬编码 token'
+    assert any(f['file'] == 'java_constructor_positive.java' and
+               f['rule_id'] == 'CRED-HARDCODED-CRYPTO-KEY' for f in first), \
+        'SecretKeySpec 第一参数的合成硬编码密钥必须继续检出'
 
     schema_path = os.path.join(ROOT, 'core', 'schema', 'finding.v0.1.json')
     with open(schema_path, encoding='utf-8') as fh:

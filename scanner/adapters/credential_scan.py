@@ -190,6 +190,14 @@ def _scan_line(rel, line_no, line, pepper, context=None):
             continue
         if _PLACEHOLDER.match(value.strip()):
             continue
+        # In `spec = new SecretKeySpec(keyBytes, "DES")`, the quoted second
+        # argument names an algorithm; it is not credential material.  The
+        # first argument, when literal, is handled by _DIRECT_KEY_LITERAL_RE.
+        # Checking the constructor's argument boundary also works when the
+        # assigned variable is unfortunately named `secretKeySpec`.
+        if (re.search(r'\b(?:SecretKeySpec|PBEKeySpec)\s*\(', prefix)
+                and prefix.rstrip().endswith(',')):
+            continue
         # 字面量落在「方法调用实参」或「下标」位置时不是赋值右值：
         # `key.getBytes("UTF-8")` 的 "UTF-8" 是编码、`record['Secret']` 的
         # 'Secret' 是键。只认 `.方法(` 与未配平 `[`；`[]byte("…")` / `bytes("…")`
