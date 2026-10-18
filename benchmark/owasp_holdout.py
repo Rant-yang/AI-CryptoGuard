@@ -49,11 +49,18 @@ def prepare(repo, dest):
     if missing:
         raise FileNotFoundError('%d labeled Java files missing; first: %s' %
                                 (len(missing), missing[0]))
+    properties = repo / 'src/main/resources/benchmark.properties'
+    if not properties.is_file():
+        raise FileNotFoundError('Missing runtime configuration: ' + str(properties))
     dest.mkdir(parents=True)
     for name in sorted(labels):
         shutil.copy2(source / name, dest / name)
+    # Java code loads this classpath resource at runtime. Omitting it would turn
+    # getProperty(key, fallback) into a different program and bias the test.
+    shutil.copy2(properties, dest / 'benchmark.properties')
     print('Staged %d numbered Java files from both official categories.' % len(labels))
-    print('Labels and category directory names were not copied to the scan tree.')
+    print('Runtime benchmark.properties included; official labels and category '
+          'directory names were not copied to the scan tree.')
 
 
 def _counts(labels, found, category):
@@ -74,14 +81,26 @@ def score(repo, source, findings_path):
         raise ValueError('Scan tree does not exactly match the fixed official cohort: '
                          'missing=%d extra=%d' %
                          (len(set(labels) - staged), len(staged - set(labels))))
+    staged_properties = source / 'benchmark.properties'
+    official_properties = repo / 'src/main/resources/benchmark.properties'
+    if not staged_properties.is_file():
+        raise ValueError('Runtime benchmark.properties absent from scan tree')
+    if staged_properties.read_bytes() != official_properties.read_bytes():
+        raise ValueError('Runtime benchmark.properties differs from official checkout')
     with findings_path.open(encoding='utf-8') as stream:
         findings = json.load(stream)
     if not isinstance(findings, list):
         raise ValueError('Expected a findings JSON array')
     found = set()
     by_name = collections.Counter()
+    unlabeled_resource_findings = 0
     for item in findings:
         name = Path(str(item['file']).replace('\\', '/')).name
+        if name == 'benchmark.properties':
+            # This config is real input and can contain risks, but the official
+            # CSV has no label for the resource file. Never silently score it.
+            unlabeled_resource_findings += 1
+            continue
         if name not in labels:
             raise ValueError('Finding outside fixed cohort: ' + name)
         found.add(name)
@@ -90,6 +109,7 @@ def score(repo, source, findings_path):
               for category in ('crypto', 'hash')}
     totals['all'] = _counts(labels, found, None)
     print(json.dumps({'cohort_size': len(labels), 'finding_count': len(findings),
+                      'unlabeled_resource_findings': unlabeled_resource_findings,
                       'files_with_finding': len(found), 'by_category': totals},
                      ensure_ascii=False, indent=2))
     print('Caution: official truth is per test file and executed-program misuse; '
