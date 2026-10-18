@@ -30,7 +30,8 @@ python core/schema/validate.py out\findings.json     # 必须退出码 0
 
 两条命令都跑通，A 的任务就算完成。
 
-**第一版不接 CrySentry。** 原因见下。
+**快速模式不强制 CrySentry；`core/pipeline.py --mode deep-java` 已支持可选深度阶段。**
+目标项目必须由用户先编译，工具本体保持在仓库外。
 
 ---
 
@@ -42,13 +43,27 @@ python core/schema/validate.py out\findings.json     # 必须退出码 0
 | **CryptoScan** | 源码目录 | ✅ 能 | 算法正则是语言无关的 |
 | **CrySentry** | **编译后的 jar** | ❌ **不能** | 只有 Java |
 
-### 为什么 CrySentry 不进第一版
+### 为什么 CrySentry 是可选第二阶段
 
 它要 **JDK 17 + 目标项目先编译成功 + 一个 options.yml 配置**。
 对一个 Maven/Gradle 项目，**构建失败就没结果** —— 这是流水线里很脆的一环。
 
-所以它是**第二阶段的独立任务**，不是第一版的第三个平级模块。
-先把 cbom-scan + CryptoScan 这条线跑通，再来啃它。
+所以它是**第二阶段的独立任务**，不是第三个平级正则扫描器。快速模式始终可用；
+深度模式只在用户提供编译产物时运行，失败/超时会保留快速结果并写入任务状态。
+
+正式入口（工具路径按本机修改）：
+
+```cmd
+python core\pipeline.py D:\demo\project --mode deep-java ^
+  --java-artifact D:\demo\project\target\app.jar ^
+  --crysentry-home D:\code_competition\_smoke\CrySentry ^
+  --crysentry-java D:\code_competition\_smoke\jdk17\jdk-17.0.20.1+1\bin\java.exe ^
+  -o out\deep-demo
+```
+
+runner 不会替用户运行 Maven/Gradle；依赖 jar 用可重复的 `--java-classpath` 传入。
+可定位结果进入 `evidence`，无法可靠映射源码的 taint 进入
+`task.json.unresolved_deep_evidence`，绝不拿第 1 行兜底。
 
 ### 两个工具的定位
 
@@ -133,7 +148,8 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 
 ## 后续（第一版之后）
 
-- **接 CrySentry**：单独排期，先解决"目标项目怎么编译"
+- **CrySentry 指标对照**：runner 已接通；仍需在固定 Java 样本上比较 fast 与 deep-java
+  的 P/R/F1、完成率、耗时和失败清单。
 - **Python AST 检测**：现有工具对 Python 只有一条 import 正则，**完全不理解 Python 的 crypto API 语义**。
   用 Python 自带的 `ast` 模块写轻量局部数据流，**能追踪"这个密钥从哪来"就够**。
   ⚠️ 不要试图"照着 CrySentry 重写一个 Python 版" —— 它背后是一整套研究级程序分析引擎，
@@ -152,6 +168,9 @@ scanner/
 ├── scan.py            主入口（CLI：目标目录 -> findings.json + _leads.json）
 ├── selftest.py        自检（外部行为断言，退出码 0 = 通过；合并前跑）
 ├── credential_selftest.py  8 类凭据 + Schema + 零明文泄露断言
+├── selftest_crysentry.py   CrySentry 配置、顺序无关融合与 v0.2 契约自检
+├── runners/crysentry.py    仓库外工具调用（JDK 17、隔离配置、超时/失败状态）
+├── adapters/crysentry.py   JSON→pattern/taint flow，源码定位与保守融合
 ├── normalize.py       归一化与裁决表（算法别名 / usage / severity / risk，口径只改这一处）
 ├── merge.py           多源证据融合（分桶 + 行号吸收 + 字段合并裁决）
 ├── coverage.py        覆盖差异审计（一家报一家没报 -> 漏报复核线索）

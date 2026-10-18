@@ -302,11 +302,12 @@ C 定期把两条分支合回 `main`，合并前跑一遍 `core/schema/validate.
 
 | 人员 | 本轮任务 | 交付 |
 |---|---|---|
-| A | Java CrySentry 深度调用、证据适配、同题对照 | **仍未交付**：runner、失败状态、Java P/R 与耗时报告 |
+| A/C | Java CrySentry 深度调用、证据适配、同题对照 | **runner 与 v0.2 适配已由 C 兜底接通**；仍缺固定 Java 样本的 P/R、完成率与耗时报告 |
 | B | 结合前置量子评估解释实际用途、生成具体整改 | **本轮无新提交**：结构化步骤、有效引用、30 条语义抽样 |
 | C | 先发布契约，再做量子评估、统一调度、Web | 扫描 → 评估 → AI → 报告完整闭环 |
 
-先由 C 发布 Schema 和夹具；A/B 并行实现，C 验收后合并。凭据留出集、真实
+共享 Schema、CrySentry runner 和前置量子评估已经接通；B 继续实现 v0.2 AI，
+C 验收后合并。凭据留出集、真实
 Repair→Verify、部署及比赛材料继续保留在后续计划中。
 
 ### 五、怎么自己验一遍
@@ -319,5 +320,6 @@ python benchmark/anonymize.py        # 匿名化自检（泄漏清零 + 字面�
 python benchmark/eval.py out/verify/_all3.json --scanned cryptoapi-bench,cambench-cap,llmcmt
 python benchmark/eval.py --selftest             # 口径回归
 python scanner/credential_selftest.py            # 8 类凭据 + 零明文泄露
+python scanner/selftest_crysentry.py              # CrySentry 配置/适配/契约（离线）
 python repair/selftest.py                        # 3 类临时修复 + 重新验证
 ```

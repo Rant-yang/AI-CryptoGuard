@@ -1,11 +1,13 @@
 """AI-CryptoGuard 统一入口（C 线）。
 
-当前接通：快速扫描 -> v0.2 前置量子风险评估 -> 任务状态。
-CrySentry 与 v0.2 AI 由 A/B 合入后接入这里；未接通阶段明确标 skipped。
+当前接通：快速扫描 -> 可选 CrySentry Java 深度证据 -> 前置量子评估。
+v0.2 AI 尚未接通时明确标 skipped。
 """
 import argparse
 import hashlib
 import json
+import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -14,10 +16,13 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.quantum_assessment import assess_file, rule_version  # noqa: E402
+from core.quantum_assessment import assess_all, rule_version  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 from scanner.scan import main as scanner_main  # noqa: E402
+from scanner.adapters.crysentry import adapt as adapt_crysentry  # noqa: E402
+from scanner.adapters.crysentry import fuse as fuse_crysentry  # noqa: E402
+from scanner.runners.crysentry import run as run_crysentry  # noqa: E402
 
 
 def _stage(name, status="pending", reason=None, seconds=0, tool_version=None):
@@ -57,7 +62,10 @@ def _task_id(seed):
 
 def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
         tool="both", timeout=300, keep_raw=False, cbom=False,
-        timeline_profile=None):
+        timeline_profile=None, mode="fast", java_artifact=None,
+        java_classpath=None, source_root=None, crysentry_home=None,
+        crysentry_java=None, crysentry_jar=None, deep_timeout=900,
+        deep_memory_mb=4096, java_target_version=8):
     out_dir = Path(output_dir).resolve()
     scan_path = out_dir / "findings.json"
     assessed_path = out_dir / "findings_assessed.json"
@@ -66,11 +74,11 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
     task = {
         "schema_version": "0.2",
         "task_id": _task_id(target or findings_path),
-        "mode": "fast",
+        "mode": mode,
         "languages": ["unknown"],
         "stages": [
             _stage("scan"),
-            _stage("deep_java", "skipped", "CrySentry runner 尚未由 A 合入统一入口。"),
+            _stage("deep_java", "skipped", "未请求 Java 深度扫描。"),
             _stage("quantum_assessment"),
             _stage("ai", "skipped", "B 的 v0.2 AI 输出尚未合入统一入口。"),
         ],
@@ -110,11 +118,58 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
         task["stages"][0] = _stage("scan", "completed", seconds=elapsed,
                                     tool_version="scanner-v0.1")
 
-    task["languages"] = _languages(target, rows)
+    task["languages"] = _languages(target or source_root, rows)
     _write(task_path, task)
+
+    # ---- 可选 Java 深度证据。失败/超时保留快速扫描结果，不把 skipped 当零问题。
+    if mode == "deep-java":
+        root = source_root or target
+        if "java" not in task["languages"]:
+            task["stages"][1] = _stage(
+                "deep_java", "skipped", "目标中未发现 Java 源文件。")
+        elif not java_artifact:
+            task["stages"][1] = _stage(
+                "deep_java", "skipped", "未提供 --java-artifact；未自动执行 Maven/Gradle。")
+        elif not root or not Path(root).is_dir():
+            task["stages"][1] = _stage(
+                "deep_java", "skipped", "缺少源码根目录，无法把字节码调用点映射回源码。")
+        elif not crysentry_home:
+            task["stages"][1] = _stage(
+                "deep_java", "skipped", "未提供 --crysentry-home 或 CRYSENTRY_HOME。")
+        else:
+            task["stages"][1] = _stage("deep_java", "running")
+            _write(task_path, task)
+            deep = run_crysentry(
+                java_artifact, out_dir / "deep-java", crysentry_home,
+                java_classpath or [], crysentry_java, crysentry_jar,
+                deep_timeout, deep_memory_mb, java_target_version)
+            if deep["status"] == "completed":
+                try:
+                    located, unresolved = adapt_crysentry(deep["data"], root)
+                    rows, fuse_unresolved = fuse_crysentry(rows, located)
+                    unresolved += fuse_unresolved
+                    task["unresolved_deep_evidence"] = unresolved
+                    reason = "定位 %d 条深度记录；未定位 %d 条。" % (
+                        len(located), len(unresolved))
+                    task["stages"][1] = _stage(
+                        "deep_java", "completed", reason, deep["seconds"],
+                        deep["tool_version"])
+                    if not keep_raw:
+                        shutil.rmtree(out_dir / "deep-java", ignore_errors=True)
+                except Exception as exc:  # 深度适配失败也不得抹掉 fast 结果
+                    task["stages"][1] = _stage(
+                        "deep_java", "failed", "深度结果适配失败: %s" % exc,
+                        deep["seconds"], deep["tool_version"])
+            else:
+                task["stages"][1] = _stage(
+                    "deep_java", deep["status"], deep["reason"], deep["seconds"],
+                    deep["tool_version"])
+        _write(task_path, task)
+
     started = time.time()
     try:
-        result = assess_file(source, assessed_path, timeline_profile)
+        result = assess_all(rows, timeline_profile)
+        _write(assessed_path, result)
     except Exception:
         task["stages"][2] = _stage(
             "quantum_assessment", "failed",
@@ -133,7 +188,8 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="扫描 -> 前置量子评估统一入口")
+    parser = argparse.ArgumentParser(
+        description="快速扫描 -> 可选 Java 深度证据 -> 前置量子评估")
     parser.add_argument("target", nargs="?", help="要扫描的项目目录")
     parser.add_argument("--findings", help="跳过扫描，使用已有 v0.1 findings.json")
     parser.add_argument("-o", "--output-dir", default="out/run")
@@ -143,6 +199,20 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--keep-raw", action="store_true")
     parser.add_argument("--cbom", action="store_true")
+    parser.add_argument("--mode", choices=["fast", "deep-java"], default="fast")
+    parser.add_argument("--java-artifact", help="已编译的 Java jar 或 classes 目录")
+    parser.add_argument("--java-classpath", action="append", default=[],
+                        help="依赖 jar/目录；可重复传入。不会自动执行构建脚本")
+    parser.add_argument("--source-root",
+                        help="使用 --findings 时用于深度结果源码映射的项目根目录")
+    parser.add_argument("--crysentry-home", default=os.environ.get("CRYSENTRY_HOME"),
+                        help="仓库外的 CrySentry 目录（也可设 CRYSENTRY_HOME）")
+    parser.add_argument("--crysentry-java", help="JDK 17 java.exe")
+    parser.add_argument("--crysentry-jar", help="已构建的 tai-e-all jar")
+    parser.add_argument("--deep-timeout", type=int, default=900)
+    parser.add_argument("--deep-memory-mb", type=int, default=4096)
+    parser.add_argument("--java-target-version", type=int, default=8,
+                        help="目标字节码 Java 版本（默认 8）")
     parser.add_argument("--data-lifetime-years", type=float,
                         help="X：数据/安全有效期（年）")
     parser.add_argument("--migration-lead-years", type=float,
@@ -163,14 +233,21 @@ def main(argv=None):
         result, task, assessed, task_path = run(
             args.target, args.findings, args.output_dir, args.tools_dir,
             args.tool, args.timeout, args.keep_raw, args.cbom,
-            timeline_profile)
+            timeline_profile, args.mode, args.java_artifact,
+            args.java_classpath, args.source_root, args.crysentry_home,
+            args.crysentry_java, args.crysentry_jar, args.deep_timeout,
+            args.deep_memory_mb, args.java_target_version)
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print("[错误] 流水线失败: %s" % exc)
         return 2
     print("\n====== C 线统一入口完成 ======")
     print("assessed findings : %d 条" % len(result))
-    print("AI 阶段           : skipped（等待 B 的 v0.2 交付）")
-    print("深度 Java         : skipped（等待 A 的 runner 交付）")
+    by_name = {stage["name"]: stage for stage in task["stages"]}
+    print("AI 阶段           : %s" % by_name["ai"]["status"])
+    print("深度 Java         : %s%s" % (
+        by_name["deep_java"]["status"],
+        ("（%s）" % by_name["deep_java"]["reason"])
+        if by_name["deep_java"]["reason"] else ""))
     print("评估输出          : %s" % assessed)
     print("任务状态          : %s" % task_path)
     return 0
