@@ -23,15 +23,17 @@ FROZEN_INPUT_SHA256 = '4675eca5c270422d8be26fc58cc0a4e39e0c20b17bb5913a9661746e5
 COHORT = 'public-crypto-samples-current-pipeline-20261018-v1'
 TLS_REVIEW_INPUT_SHA256 = '429d80ffd2ebe2e00ca03b3297ffa7cec7a3e733c62ce42b0714b5cd28526257'
 TLS_REVIEW_COHORT = 'public-crypto-samples-tls-rule-review-20261018-v2'
+TLS_REF5_COHORT = 'public-crypto-samples-tls-rule-review-20261018-ref5-v3'
 
 
 def evaluate(assessed_path, explained_path, score_path, packet_path,
              cohort='original'):
-    if cohort not in ('original', 'tls-review'):
+    if cohort not in ('original', 'tls-review', 'tls-ref5'):
         raise ValueError('未知的公开 AI 复验批次')
     expected_sha = (FROZEN_INPUT_SHA256 if cohort == 'original'
                     else TLS_REVIEW_INPUT_SHA256)
-    cohort_id = COHORT if cohort == 'original' else TLS_REVIEW_COHORT
+    cohort_id = (COHORT if cohort == 'original' else
+                 TLS_REF5_COHORT if cohort == 'tls-ref5' else TLS_REVIEW_COHORT)
     assessed_path, explained_path = Path(assessed_path), Path(explained_path)
     score_path, packet_path = Path(score_path), Path(packet_path)
     if score_path == packet_path or score_path.exists() or packet_path.exists():
@@ -59,6 +61,10 @@ def evaluate(assessed_path, explained_path, score_path, packet_path,
         raise ValueError('凭据必须由本地规则处理，不能进入云 AI')
 
     algo_out = [f for f in explained if f.get('finding_kind') == 'algorithm']
+    if cohort == 'tls-ref5' and any(
+            (f.get('analysis_provenance') or {}).get('prompt_version') !=
+            'ai-v02-2026-10-18.5' for f in algo_out):
+        raise ValueError('新盲审批次混入旧提示词版本')
     with tempfile.TemporaryDirectory(prefix='acg-current-ai-') as temporary:
         tmp = Path(temporary)
         old_path, new_path, result_path = (tmp / n for n in
@@ -96,7 +102,7 @@ def main():
     parser.add_argument('explained')
     parser.add_argument('--score', required=True)
     parser.add_argument('--packet', required=True)
-    parser.add_argument('--cohort', choices=('original', 'tls-review'),
+    parser.add_argument('--cohort', choices=('original', 'tls-review', 'tls-ref5'),
                         default='original', help='选择预登记的输入 SHA；默认旧批次')
     args = parser.parse_args()
     print(json.dumps(evaluate(args.assessed, args.explained,

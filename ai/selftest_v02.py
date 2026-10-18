@@ -62,6 +62,60 @@ def main():
               for step in got["remediation_steps"]) and
           all(step["execution_status"] == "not_run" for step in got["remediation_steps"]))
 
+    two_sources = copy.deepcopy(rsa)
+    call_evidence = two_sources["evidence"][0]
+    two_sources["evidence"] = [
+        {"tool": "cbom-scan", "kind": "pattern", "lines": [21],
+         "raw": {"algo": "RSA", "prim": "asymmetric"}},
+        call_evidence,
+    ]
+    two_sources = assess_one(two_sources)
+    try:
+        enrich_one(two_sources, lambda *_: model(refs=["E1"]),
+                   model_id="offline-test")
+    except ValueError as exc:
+        check("资产 E1 不能冒充 E2 的签名调用证据",
+              str(exc) == "模型用途引用缺少实际调用证据")
+    else:
+        raise AssertionError("uncited call evidence accepted")
+    cited = enrich_one(two_sources, lambda *_: model(refs=["E2"]),
+                       model_id="offline-test")
+    check("引用真正调用证据 E2 后可形成签名结论",
+          cited["usage"] == "signing" and cited["evidence_refs"] == ["E2"])
+    unrelated_call = copy.deepcopy(two_sources)
+    unrelated_call["evidence"][0]["tool"] = "cryptoscan"
+    unrelated_call["evidence"][0]["raw"] = {
+        "records": [{"context": "cipher.encrypt(data)"}]}
+    unrelated_call = assess_one(unrelated_call)
+    wrong_primitive = enrich_one(
+        unrelated_call, lambda *_: model(refs=["E1"]),
+        model_id="offline-test")
+    check("引用了调用点但调用属于另一原语时不得认定 RSA 签名",
+          wrong_primitive["usage"] == "unknown" and
+          wrong_primitive["remediation"]["reason"] == "usage-undetermined")
+
+    primitive = copy.deepcopy(bare)
+    primitive["evidence"] = [{
+        "tool": "cryptoscan", "kind": "pattern", "lines": [9],
+        "raw": {"records": [{"context": 'MessageDigest.getInstance("MD5")'}]},
+    }]
+    primitive["algorithm"] = primitive["algorithm_normalized"] = "MD5"
+    check("只创建 MessageDigest 对象不能判为已执行 hashing",
+          not _has_direct_usage_evidence(primitive, "hashing", ["E1"]))
+    primitive["evidence"][0]["raw"]["records"][0]["context"] = \
+        "return hashlib.md5(data).digest()"
+    check("真实 digest 调用仍可判为 hashing",
+          _has_direct_usage_evidence(primitive, "hashing", ["E1"]))
+    primitive["algorithm"] = primitive["algorithm_normalized"] = "3DES"
+    primitive["evidence"][0]["raw"]["records"][0]["context"] = \
+        "cipher = Cipher(algorithms.TripleDES(key), modes.CBC(iv))"
+    check("只创建对称 Cipher 对象不能判为已执行 encryption",
+          not _has_direct_usage_evidence(primitive, "encryption", ["E1"]))
+    primitive["evidence"][0]["raw"]["records"][0]["context"] = \
+        "cipher.encrypt(data)"
+    check("明确的加密调用仍可判为 encryption",
+          _has_direct_usage_evidence(primitive, "encryption", ["E1"]))
+
     undecided = enrich_one(rsa, lambda *_: model("unknown"), model_id="offline-test")
     check("用途未知时不选定 PQC 路线", not errors(undecided) and
           not undecided["remediation"]["decided"] and
@@ -119,6 +173,9 @@ def main():
     check("默认载荷不发送源码、凭据和绝对路径",
           "Aaa1Bbb2" not in safe and "private_key =" not in safe and
           "D:\\" not in safe)
+    check("模型载荷逐条显式标出 E 编号，减少资产与调用证据错位",
+          [e["ref"] for e in _model_payload(two_sources, "shape")["evidence"]]
+          == ["E1", "E2"])
 
     with tempfile.TemporaryDirectory() as tmp:
         src, dst = Path(tmp) / "assessed.json", Path(tmp) / "explained.json"

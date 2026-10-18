@@ -55,6 +55,10 @@ def _keep_table_rows_together(table):
         props.append(OxmlElement('w:cantSplit'))
         if idx == 0:
             props.append(OxmlElement('w:tblHeader'))
+            # Do not strand only the column headings at the bottom of a page.
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.paragraph_format.keep_with_next = True
 
 
 def _fill_cover(doc, number):
@@ -139,12 +143,14 @@ def _append_report(doc, source):
             continue
         if line.startswith('## '):
             flush_paragraph()
-            doc.add_heading(clean(line[3:]), level=1)
+            heading = doc.add_heading(clean(line[3:]), level=1)
+            heading.paragraph_format.keep_with_next = True
             i += 1
             continue
         if line.startswith('### '):
             flush_paragraph()
-            doc.add_heading(clean(line[4:]), level=2)
+            heading = doc.add_heading(clean(line[4:]), level=2)
+            heading.paragraph_format.keep_with_next = True
             i += 1
             continue
         if line.startswith('|'):
