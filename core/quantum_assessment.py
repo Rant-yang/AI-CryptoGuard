@@ -6,6 +6,7 @@ import argparse
 import copy
 import json
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +35,9 @@ AI_FIELDS = ("explanation", "evidence_refs", "usage_assessment",
 LOCAL_CONFIG_RULE_IDS = frozenset({"PY-WEAK-RANDOM-CRYPTO", PREDICTABLE_KEY_RULE})
 
 
+@lru_cache(maxsize=1)
 def _rules():
+    """Quantum facts are frozen for one run; avoid reading JSON per finding."""
     return json.loads(RULES_PATH.read_text(encoding="utf-8"))
 
 

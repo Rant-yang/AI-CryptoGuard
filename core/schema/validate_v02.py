@@ -3,19 +3,35 @@ import hashlib
 import json
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from jsonschema import Draft7Validator
 HERE = Path(__file__).resolve().parent
 DIGEST_FIELDS = ('schema_version','finding_id','finding_kind','rule_id','file','line',
                  'algorithm','algorithm_normalized','risk','severity','confidence','evidence','quantum_assessment')
+
+
+@lru_cache(maxsize=2)
+def _validator(task):
+    """Load and check each frozen v0.2 schema once per process.
+
+    A scan can contain hundreds of findings. Re-parsing and checking the same
+    schema for every row is expensive, while the schema is immutable during a
+    running scan. Restart the process after changing the contract files.
+    """
+    path = HERE / ('task.v0.2.json' if task else 'finding.v0.2.json')
+    schema = json.loads(path.read_text(encoding='utf-8'))
+    Draft7Validator.check_schema(schema)
+    return Draft7Validator(schema)
+
+
 def input_digest(f):
     payload = {k:f[k] for k in DIGEST_FIELDS if k in f}
     return hashlib.sha256(json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode('utf-8')).hexdigest()
 def errors(f):
     task = isinstance(f,dict) and 'task_id' in f
-    schema = json.loads((HERE/('task.v0.2.json' if task else 'finding.v0.2.json')).read_text(encoding='utf-8'))
-    Draft7Validator.check_schema(schema)
-    issues = ['%s: %s' % ('/'.join(map(str,e.path)) or 'root',e.validator) for e in Draft7Validator(schema).iter_errors(f)]
+    issues = ['%s: %s' % ('/'.join(map(str,e.path)) or 'root',e.validator)
+              for e in _validator(task).iter_errors(f)]
     if issues: return issues
     def flowcheck(flow):
         if flow['completeness']=='complete' and flow['source'] is None: issues.append('complete flow requires source')
