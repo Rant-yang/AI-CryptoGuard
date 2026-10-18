@@ -38,7 +38,10 @@ ANONYMOUS_DOCS = frozenset({
 })
 ANONYMOUS_ROOT = frozenset({'.dockerignore', '.gitignore', 'compose.yaml'})
 ANONYMOUS_README = 'setup/submission_readme.md'
-ANONYMOUS_EXCLUDE = frozenset({'setup/package.py', 'setup/package_selftest.py'})
+ANONYMOUS_EXCLUDE = frozenset({
+    'setup/package.py', 'setup/package_selftest.py',
+    'setup/submission_audit_selftest.py',
+})
 # Strong, reviewable tripwires for this repository's known team and local
 # account identifiers. These are not a substitute for a human anonymity check.
 IDENTITY_PATTERNS = (
