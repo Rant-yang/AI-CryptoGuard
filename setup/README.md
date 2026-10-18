@@ -13,7 +13,24 @@
 | **cbom-scan** | Node | ⭐ 零依赖 | 见仓库 |
 | **CrySentry** | **JDK 17** + Gradle | ⭐⭐⭐ 坑多 | **LGPL-3.0** |
 
-**第一版只需要前两个。** CrySentry 是独立的第二阶段任务。
+当前统一入口默认只运行前两个快速工具；指定 `--mode deep-java` 时才调用仓库外的 CrySentry。第三方准确来源、版本和分发边界见[第三方说明](../docs/第三方来源与分发边界.md)。
+
+## 新环境先做只读预检
+
+以下命令不会扫描代码、调用模型或输出 API key。`--tools-dir` 指向外部工具目录；示例路径是本机 smoke 环境，队友机器应替换为自己的路径。
+
+```cmd
+cd /d D:\code_competition\AI-CryptoGuard
+python setup\preflight.py --tools-dir D:\code_competition\_smoke --target D:\path\to\project --mode fast
+```
+
+若要演示 Java 深度证据，先自行构建目标项目，确保 **jar/classes 来自同一份源码**：
+
+```cmd
+python setup\preflight.py --tools-dir D:\code_competition\_smoke --target D:\path\to\project --mode deep-java --java-artifact D:\path\to\project\build\app.jar --crysentry-home D:\path\to\CrySentry --crysentry-java D:\path\to\jdk-17\bin\java.exe
+```
+
+启用 DeepSeek 等兼容端点的 AI 时，末尾加 `--ai --compatible-api`；仅检查环境变量**是否存在**，不显示值。退出码 0 表示静态前置条件齐全，2 表示缺项。它只能防止明显的路径/版本错误，**实际新环境部署还必须跑一次完整扫描、必要时再跑真实模型调用**。深度模式额外检查源码与字节码至少有同名类，但这不证明 classpath 完整或 CrySentry 一定能分析成功。
 
 ---
 
