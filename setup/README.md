@@ -15,7 +15,7 @@
 
 当前统一入口默认只运行前两个快速工具；指定 `--mode deep-java` 时才调用仓库外的 CrySentry。第三方准确来源、版本和分发边界见[第三方说明](../docs/第三方来源与分发边界.md)。
 
-## Docker Compose（快速扫描 Web，尚待容器运行验收）
+## Docker Compose（快速扫描 Web，本机容器已验收）
 
 仓库根的 `compose.yaml` 与 `setup/Dockerfile` 构建**我们的 Python/Web 程序**，
 镜像内安装 Python 依赖与 Node.js；**不下载、不复制 CryptoScan、cbom-scan、
@@ -52,9 +52,20 @@ docker compose up --build
 `ANTHROPIC_MODEL`，兼容端点另设 `ANTHROPIC_BASE_URL`，不写入仓库或命令输出。
 
 **容器模式目前仅支持快速扫描。** Java 深度模式仍按下面的本机 JDK 17 +
-外部 CrySentry 步骤运行。2026-10-18 本机 `docker compose config --quiet`
-已通过；Docker Desktop daemon 当时未运行，**镜像构建、容器内扫描和异机部署
-尚未验证**，不能把静态配置通过冒充部署完成。
+外部 CrySentry 步骤运行。2026-10-18 已在 Windows Docker Desktop 上完成镜像
+构建、容器健康检查、Linux 版 CryptoScan/cbom-scan 预检，以及 Web API 上传公开
+`examples/repair_demo/app.py` 后的真实扫描（4 条 Finding；扫描与量子评估完成，
+AI 按预期跳过）。上传任务删除也已验证。可用独立的宿主机命令复验：
+
+```cmd
+python setup\compose_smoke.py --base http://127.0.0.1:8000
+```
+
+该自检要求 Compose 服务已运行，只上传仓库自带公开样例，不调用云端 AI，结束后
+删除任务。**另一台机器的完整部署仍未验证**。`setup/Dockerfile` 固定了基础镜像
+digest，`setup/requirements-deploy.txt` 固定了本机验收镜像的完整 Python 应用
+依赖版本，`pip check` 无冲突；系统 apt 包仍随 Debian 仓库更新，因此不是全系统
+按字节复现。不能把本机通过当作异机通过。
 
 ## 新环境先做只读预检
 
