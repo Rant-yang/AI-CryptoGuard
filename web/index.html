@@ -1179,7 +1179,7 @@ async function pollTask(taskId){
       setScanState('正在装载统一风险视图',`${task.findings_count||0} 条发现`,94);
       const rows=await api(`/api/tasks/${taskId}/result`);
       phase('report','done'); scanBusy=false; stopCipher();
-      setScanState(task.message||'本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
+      setScanState('本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
       boot(rows,`本地任务 ${taskId}`);
       setTimeout(()=>document.querySelector('#stats').scrollIntoView({behavior:'smooth'}),500);
       return;
