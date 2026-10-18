@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/Rant-yang/AI-CryptoGuard/core/schema/finding.v0.1.json",
+  "$id": "urn:ai-cryptoguard:schema:finding:v0.1",
   "title": "AI-CryptoGuard 统一 Finding 格式 v0.1",
   "description": "三个扫描工具的输出统一到本格式。计数单位=(file, algorithm_normalized, usage)，即同一文件里同一算法的同一用途算一条，多处命中收进 evidence[].lines。",
   "type": "object",

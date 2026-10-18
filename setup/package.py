@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -27,6 +28,43 @@ FORBIDDEN_SUFFIXES = ('.jar', '.exe', '.dll', '.class', '.pyc', '.zip',
 REQUIRED = frozenset({'README.md', 'core/pipeline.py', 'core/report.py',
                       'web/index.html', 'setup/README.md',
                       'docs/第三方来源与分发边界.md'})
+ANONYMOUS_DIRS = frozenset({
+    'ai', 'benchmark', 'core', 'examples', 'repair', 'scanner', 'setup', 'web',
+})
+ANONYMOUS_DOCS = frozenset({
+    'docs/用户手册.md', 'docs/性能与评测口径.md',
+    'docs/第三方来源与分发边界.md',
+})
+ANONYMOUS_ROOT = frozenset({'.dockerignore', '.gitignore', 'compose.yaml'})
+ANONYMOUS_README = 'setup/submission_readme.md'
+ANONYMOUS_EXCLUDE = frozenset({'setup/package.py', 'setup/package_selftest.py'})
+# Strong, reviewable tripwires for this repository's known team and local
+# account identifiers. These are not a substitute for a human anonymity check.
+IDENTITY_PATTERNS = (
+    re.compile(r'Rant[-_ ]?yang|Alanxbr|BQ[-_]?park', re.I),
+    re.compile(r'C:[\\/]Users[\\/][^\\/\s"\x27<>]+', re.I),
+)
+
+
+def _anonymous_member(name):
+    if name in ANONYMOUS_EXCLUDE:
+        return False
+    if name in ANONYMOUS_ROOT or name in ANONYMOUS_DOCS:
+        return True
+    return name.split('/', 1)[0] in ANONYMOUS_DIRS
+
+
+def _anonymous_audit(entries):
+    hits = []
+    for name, data in entries.items():
+        if name.lower().endswith(('.pptx', '.pdf', '.png', '.jpg', '.jpeg')):
+            continue  # binary artifacts require separate metadata/pixel review
+        content = data.decode('utf-8', errors='ignore')
+        if any(pattern.search(content) for pattern in IDENTITY_PATTERNS):
+            hits.append(name)
+    if hits:
+        raise ValueError('Anonymous archive contains identity/local-account '
+                         'markers in: ' + ', '.join(sorted(hits)))
 
 
 def _check_member(name, info):
@@ -51,7 +89,7 @@ def _git(*args):
     return result.stdout
 
 
-def build(output):
+def build(output, anonymous=False):
     output = Path(output).resolve()
     if output.exists():
         raise FileExistsError('Refusing to overwrite existing release: %s' % output)
@@ -63,11 +101,18 @@ def build(output):
             if info.is_dir():
                 continue
             _check_member(info.filename, info)
+            if anonymous and not _anonymous_member(info.filename):
+                continue
             if info.filename in entries:
                 raise ValueError('Duplicate release member: ' + info.filename)
             if info.file_size > 5 * 1024 * 1024:
                 raise ValueError('Release member exceeds 5 MiB: ' + info.filename)
             entries[info.filename] = archive.read(info)
+    if anonymous:
+        if ANONYMOUS_README not in entries:
+            raise ValueError('Missing anonymous submission README')
+        entries['README.md'] = entries[ANONYMOUS_README]
+        _anonymous_audit(entries)
     if sum(len(data) for data in entries.values()) > 30 * 1024 * 1024:
         raise ValueError('Source release exceeds 30 MiB')
     if not REQUIRED.issubset(entries):
@@ -76,7 +121,8 @@ def build(output):
     if 'RELEASE_MANIFEST.json' in entries:
         raise ValueError('Committed RELEASE_MANIFEST.json conflicts with generated manifest')
     manifest = {
-        'format': 'AI-CryptoGuard-source-release-v1',
+        'format': ('AI-CryptoGuard-anonymous-source-v1' if anonymous
+                   else 'AI-CryptoGuard-source-release-v1'),
         'commit': commit,
         'distribution': 'our source only; scanners and benchmarks are external',
         'files': {name: hashlib.sha256(data).hexdigest()
@@ -108,8 +154,11 @@ def build(output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-o', '--output', required=True)
+    parser.add_argument('--anonymous', action='store_true',
+                        help='Build an identity-audited, curated source package for anonymous review')
     args = parser.parse_args(argv)
-    print(json.dumps(build(args.output), ensure_ascii=False, indent=2))
+    print(json.dumps(build(args.output, anonymous=args.anonymous),
+                     ensure_ascii=False, indent=2))
     return 0
 
 

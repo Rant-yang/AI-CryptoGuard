@@ -9,6 +9,7 @@
 
 ```cmd
 python setup\package.py -o D:\code_competition\AI-CryptoGuard-source.zip
+python setup\package.py --anonymous -o D:\code_competition\AI-CryptoGuard-anonymous-source.zip
 python -m setup.package_selftest
 ```
 
@@ -17,6 +18,11 @@ python -m setup.package_selftest
 缺少 README、统一入口、Web 或第三方来源说明时拒绝打包；路径、符号链接、
 `.env*`、`workspace/`、`out/`、benchmark 派生数据和第三方二进制被拒绝。
 这是**源码候选包**，不含 CryptoScan、cbom-scan、CrySentry、JDK、测试数据或真实凭据。
+`--anonymous` 另生成网络评审候选包：只纳入运行源码、三个选定的技术说明，
+将根 README 换成无团队身份的 `setup/submission_readme.md`；对已知成员账号和
+`C:\Users\<账号>` 路径执行拒绝检查。它不包含历史会议文档或当前内部进度材料。
+**自动检查不能替代人工逐文件、截图及元数据复核**，也不等于报告已按官方模板排版；
+提交前按[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)检查。
 评委机需按本页单独准备第三方工具；不要把候选包说成免安装独立产品。
 正式提交前仍需核对比赛要求、异机部署、最终材料与许可证边界。
 
