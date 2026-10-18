@@ -394,6 +394,17 @@ def test_split_combined_and_no_algorithm(check):
         {'algorithm': 'RSA', 'type': 'RSA Algorithm', 'file': r'D:\p\b.py',
          'line': 3, 'purpose': 'signing', 'severity': 3}]}, r'D:\p')
     check('有 algorithm 的 finding 照常归一', r3[0]['alg_norm'], 'RSA')
+    des_rows = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'DES', 'type': 'DES Algorithm',
+         'match': 'DESede', 'file': r'D:\p\c.java', 'line': 121,
+         'purpose': 'encryption', 'severity': 3},
+        {'algorithm': 'DES', 'type': 'DES Algorithm',
+         'match': 'des.NewCipher(', 'file': r'D:\p\c.java', 'line': 151,
+         'purpose': 'encryption', 'severity': 3},
+    ]}, r'D:\p')
+    check('CryptoScan 的 DESede 命中纠正为 3DES，真正的 DES 不受影响',
+          sorted((g['alg_norm'], g['lines']) for g in des_rows),
+          [('3DES', [121]), ('DES', [151])])
 
 
 def test_cryptoscan_usage_fuse(check):

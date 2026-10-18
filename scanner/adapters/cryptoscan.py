@@ -126,6 +126,15 @@ def to_groups(data, target):
         findings = []
     for f in findings:
         algo_raw = f.get('algorithm') or ''
+        # CryptoScan 1.4.0 reports the exact match "DESede" as algorithm
+        # "DES" (observed at CryptoSamples.java:121).  DESede is 3DES;
+        # carrying the upstream label through creates a false DES finding
+        # and can make the AI discuss the wrong algorithm.  Only override
+        # when the match itself unambiguously names a Triple-DES variant.
+        if (canon_algorithm(algo_raw) == 'DES' and
+                norm_algorithm(f.get('match') or '') in
+                {'DESEDE', 'TRIPLEDES', '3DES'}):
+            algo_raw = '3DES'
         if algo_raw:
             alg_norm = canon_algorithm(algo_raw)
         else:
