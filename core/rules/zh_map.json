@@ -47,6 +47,7 @@
       "shor": "受 Shor 算法威胁 —— 公钥密码，量子计算机成熟后可被完全攻破",
       "grover": "受 Grover 算法削弱 —— 对称密码，量子下强度大致减半",
       "classical_broken": "与量子无关 —— 已被经典攻击攻破，须立即替换",
+      "review": "待确认 —— 协议或配置名称不能证明实际使用的密码算法",
       "safe": "量子安全"
     },
     "by_type": {
@@ -61,7 +62,7 @@
       "RSA Algorithm": "shor",
       "RSA-1024 Key Size": "classical_broken",
       "Elliptic Curve Cryptography": "shor",
-      "TLS Configuration": "shor",
+      "TLS Configuration": "review",
       "DSA Algorithm": "shor",
       "Diffie-Hellman Key Exchange": "shor",
       "AES-GCM Authenticated Encryption": "safe",
@@ -231,8 +232,8 @@
     },
     "TLS Configuration": {
       "zh": "TLS 配置",
-      "desc": "检测到 TLS 1.2/1.3。使用 ECDHE 的 TLS 1.3 密码套件在密钥交换环节量子脆弱。",
-      "rem": "关注支持 ML-KEM 的混合 TLS 实现，可用后及时切换。"
+      "desc": "检测到 TLS 协议配置；仅凭版本号无法确认实际协商的密钥交换或签名算法。",
+      "rem": "先核对实际启用的密码套件与证书算法；若确认使用量子脆弱的公钥算法，再按用途评估混合 TLS 迁移。"
     }
   },
 

@@ -342,6 +342,21 @@ def test_split_combined_and_no_algorithm(check):
     check('risk 兜底照常工作: 表内 type 按 RISK_BY_TYPE 裁决',
           f_hk['risk'], 'grover')
 
+    # TLS 版本或协议名称只证明配置存在，不证明协商了 ECDHE/RSA 等公钥算法。
+    # 这条真实公开样例曾被直接判成 shor，进而让 AI 把未确认的前提写成事实。
+    tls = merge(cryptoscan.to_groups({'findings': [
+        {'algorithm': 'TLS', 'type': 'TLS Configuration',
+         'file': r'D:\p\tls.java', 'line': 8,
+         'purpose': 'tls-configuration', 'severity': 0},
+    ]}, r'D:\p'))[0]
+    check('只有 TLS 配置线索时风险为 review', tls['risk'], 'review')
+    from core.quantum_assessment import assess_one
+    assessed = assess_one(tls)
+    check('没有握手算法证据时不声称 Shor 已确认',
+          (assessed['quantum_assessment']['status'],
+           assessed['quantum_assessment']['migration_candidates']),
+          ('insufficient_evidence', []))
+
     # ---- 任务 2: finding_id 不撞（同文件同用途、不同 type）----
     r2 = merge(cryptoscan.to_groups({'findings': [
         {'type': 'Hardcoded Key Size', 'file': r'D:\p\a.py', 'line': 1},
