@@ -206,10 +206,14 @@ def _run_task(task_id):
         _set_task(task_id, state="failed", message="扫描结果无法解析。")
         return
     ai_failed = _snapshot(task_id).get("ai_enabled") and scan_status.get("ai") != "completed"
+    scan_reason = next((s.get("reason") for s in pipeline["stages"]
+                        if s.get("name") == "scan"), None)
+    partial_warning = ("；注意：" + scan_reason) if scan_reason else ""
     _set_task(task_id, state="completed", return_code=proc.returncode,
               findings_count=len(rows),
-              message=("本地扫描完成；AI 解释未完成，请查看任务阶段状态。"
-                       if ai_failed else "扫描完成，正在生成风险视图"))
+              message=(("本地扫描完成；AI 解释未完成，请查看任务阶段状态。"
+                        if ai_failed else "扫描完成，正在生成风险视图") +
+                       partial_warning))
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):

@@ -122,8 +122,24 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
             _write(task_path, task)
             raise RuntimeError("扫描失败，退出码 %d" % code)
         rows = json.loads(scan_path.read_text(encoding="utf-8-sig"))
-        task["stages"][0] = _stage("scan", "completed", seconds=elapsed,
-                                    tool_version="scanner-v0.1")
+        scan_reason = None
+        meta_path = scan_path.with_suffix('.meta.json')
+        try:
+            scan_meta = json.loads(meta_path.read_text(encoding='utf-8'))
+            coverage = (scan_meta.get('tools', {}).get('python-ast', {})
+                        .get('summary', {}).get('parse_coverage', {}))
+            partial = int(coverage.get('partial_parse_files', 0))
+            if partial:
+                recovered = int(coverage.get('token_recovery_findings', 0))
+                scan_reason = ('%d 个 Python 文件无法做完整 AST 解析；'
+                               '仅对受限语法形态做词法恢复，得到 %d 条证据。'
+                               '其他规则未覆盖的代码可能漏检。' %
+                               (partial, recovered))
+        except (OSError, ValueError, TypeError, AttributeError):
+            # Missing or malformed diagnostics never rewrite scan results.
+            scan_reason = '扫描元数据不可读；无法确认 Python AST 解析覆盖率。'
+        task["stages"][0] = _stage("scan", "completed", scan_reason,
+                                    seconds=elapsed, tool_version="scanner-v0.1")
 
     task["languages"] = _languages(target or source_root, rows)
     _write(task_path, task)
