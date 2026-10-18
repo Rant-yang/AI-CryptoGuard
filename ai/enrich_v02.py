@@ -499,6 +499,21 @@ def _write(path, rows):
     temp.replace(path)
 
 
+def _checkpoint_rows(rows, result, done, model_id, context, max_tokens):
+    """Keep unvisited, still-valid successes when a resumed run checkpoints.
+
+    A resumed pass may retry an early failure while later rows were already
+    explained in the prior pass. Writing only the visited prefix would erase
+    those later successes if this pass were interrupted.
+    """
+    tail = []
+    for finding in rows[len(result):]:
+        previous = done.get(finding['finding_id'])
+        tail.append(previous if previous and _reuse(
+            previous, finding, model_id, context, max_tokens) else finding)
+    return result + tail
+
+
 def _failure_label(exc):
     """Classify failures without persisting model text, source, or API errors."""
     name = type(exc).__name__
@@ -573,7 +588,8 @@ def enrich_file(input_path, output_path, context="full", max_tokens=legacy.MAX_T
                            "category": _failure_label(exc)})
             result.append(finding)
         if checkpoint > 0 and index % checkpoint == 0:
-            _write(output_path, result)
+            _write(output_path, _checkpoint_rows(
+                rows, result, done, model_id, context, max_tokens))
             _write(str(output_path) + '.failures.json', failed)
             _write(str(output_path) + '.attempts.json', attempts)
         if sleep > 0 and index < len(rows):

@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ai.enrich_v02 import (_has_direct_usage_evidence, _model_payload,
+from ai.enrich_v02 import (_checkpoint_rows, _has_direct_usage_evidence, _model_payload,
                            enrich_file, enrich_one)
 from core.quantum_assessment import assess_one
 from core.schema.validate_v02 import errors
@@ -188,6 +188,18 @@ def main():
                                           model_id="offline-test", checkpoint=1)
         check("文件处理可混合云端与本地凭据", len(rows) == 2 and
               not failed and len(calls) == 1 and dst.is_file())
+        retained = _checkpoint_rows(
+            [rsa, credential], [rsa], {credential['finding_id']: rows[1]},
+            'offline-test', 'full', 4000)
+        check("续跑 checkpoint 保留尚未遍历的已完成尾部结果",
+              len(retained) == 2 and retained[1]['stage'] == 'explained')
+        changed_credential = copy.deepcopy(credential)
+        changed_credential['evidence'][0]['lines'].append(876)
+        stale = _checkpoint_rows(
+            [rsa, changed_credential], [rsa], {credential['finding_id']: rows[1]},
+            'offline-test', 'full', 4000)
+        check("证据变化时 checkpoint 不保留陈旧尾部结果",
+              stale[1]['stage'] == 'assessed')
         rows, failed, reused = enrich_file(src, dst, model_call=stub,
                                           model_id="offline-test", resume=True)
         check("相同输入复用已校验结果", reused == 2 and len(calls) == 1)
