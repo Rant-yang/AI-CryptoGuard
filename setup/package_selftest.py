@@ -57,6 +57,7 @@ def main():
             assert PREFIX + 'docs/第三方来源与分发边界.md' in names
             assert PREFIX + 'setup/submission_readme.md' not in names
             assert PREFIX + 'setup/submission_audit_selftest.py' not in names
+            assert PREFIX + 'setup/submission_audit.py' not in names
             readme = archive.read(PREFIX + 'README.md').decode('utf-8')
             assert 'Rant-yang' not in readme
             assert '第三方' in readme
