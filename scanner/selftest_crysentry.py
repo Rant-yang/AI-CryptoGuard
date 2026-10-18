@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from scanner.adapters.crysentry import adapt, fuse
 from scanner.runners.crysentry import build_options, stage_artifact, stage_classpath
 from core.quantum_assessment import assess_all
-from ai.enrich_v02 import enrich_one
+from ai.enrich_v02 import enrich_one, _reuse
 from core.schema.validate_v02 import errors
 
 
@@ -130,7 +130,14 @@ def main():
               key_explained["stage"] == "explained" and
               key_explained["evidence_refs"] == ["E1"] and
               key_explained["usage_assessment"]["usage"] == "unknown" and
+              "分支可达性" in key_explained["explanation"] and
+              "实际调用中是否可达" in key_explained["remediation_steps"][0]["prerequisites"][0] and
               not errors(key_explained))
+        previous_wording = json.loads(json.dumps(key_explained))
+        previous_wording["analysis_provenance"]["model_id"] = "local-deep-java-rule"
+        check("旧版未核对可达性的本地解释不得被断点复用",
+              not _reuse(previous_wording, key_assessed, "unused", "shape", 4000) and
+              _reuse(key_explained, key_assessed, "unused", "shape", 4000))
         fake_other_source = dict(with_line, sourceStmt=(
             "<org.demo.Sample: void encrypt()>[3@L18] "
             "invokevirtual $-v1.decode($-v2)"))

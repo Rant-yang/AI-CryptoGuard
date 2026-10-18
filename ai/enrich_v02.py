@@ -281,27 +281,31 @@ def _local_weak_random(finding):
 
 
 def _local_java_predictable_key(finding):
-    """Explain a located CrySentry key flow without asserting business usage."""
+    """Explain a located static key-flow candidate without assuming reachability."""
     out = copy.deepcopy(finding)
     refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
     out["usage_assessment"] = {
         "usage": "unknown",
-        "reason": "Java 深度分析把可预测随机字节的来源定位到 SecretKeySpec 密钥构造点；尚未追踪该密钥的业务用途。",
+        "reason": "Java 深度分析把可预测随机字节的来源定位到 SecretKeySpec 密钥构造点；尚未验证来源分支在实际调用中可达，也未追踪密钥的业务用途。",
         "evidence_refs": refs,
-        "unknowns": ["来源到构造点之间的完整路径未给出；实际密钥消费场景需复核。"],
+        "unknowns": ["来源到构造点之间的完整路径未给出；来源分支可达性及实际密钥消费场景需复核。"],
     }
     out["explanation"] = (
-        "CrySentry 报告可预测随机源产生的字节流入 SecretKeySpec 密钥构造。"
-        "这会削弱密钥不可预测性；当前证据只定位来源与构造点，未证明完整数据流路径或业务用途。"
-        "应在来源处改用密码学安全随机源，并复核下游调用。这不是量子算法迁移问题。")
+        "CrySentry 静态报告可预测随机源的字节流入 SecretKeySpec 密钥构造。"
+        "若该来源分支在实际调用中可达并用于生成密钥，密钥不可预测性会受损。"
+        "当前证据只定位来源与构造点，未证明完整传播路径、分支可达性或业务用途。"
+        "应先复核调用条件，再在确认可达时改用密码学安全随机源；这不是量子算法迁移问题。")
     out["evidence_refs"] = refs
     out["remediation_steps"] = [_step(
         out["remediation"]["action"], out, refs,
-        prerequisites=["核对来源行所用随机数类及实际密钥长度"],
+        prerequisites=["核对来源分支在实际调用中是否可达，以及该字节流是否构成实际密钥",
+                       "核对来源行所用随机数类及实际密钥长度"],
         verification=["重新编译并运行项目测试",
                       "重新运行 Java 深度扫描，确认该弱随机源到密钥构造点的报告消失"])]
     out["stage"] = "explained"
-    out["analysis_provenance"] = _provenance(out, "local-deep-java-rule", "local-no-cloud")
+    # Version the deterministic explanation: --resume must not reuse older
+    # wording that asserted a risk without checking branch reachability.
+    out["analysis_provenance"] = _provenance(out, "local-deep-java-rule-v2", "local-no-cloud")
     return out
 
 
@@ -424,7 +428,7 @@ def _reuse(prev, current, model_id, context, max_tokens):
     elif current.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
         expected_model, expected_redaction = "local-ast-rule", "local-no-cloud"
     elif current.get("rule_id") == PREDICTABLE_KEY_RULE:
-        expected_model, expected_redaction = "local-deep-java-rule", "local-no-cloud"
+        expected_model, expected_redaction = "local-deep-java-rule-v2", "local-no-cloud"
     else:
         expected_model = "%s|tokens=%d|context=%s" % (model_id, max_tokens, context)
         expected_redaction = REDACTION_VERSION + "-" + context
