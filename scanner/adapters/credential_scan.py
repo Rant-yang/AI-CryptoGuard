@@ -278,7 +278,10 @@ def _finding(file, line, column, rule_id, material, pepper, kind,
     fingerprint = hmac.new(pepper, material.encode('utf-8', 'replace'),
                            hashlib.sha256).hexdigest()
     length = len(material) if value_length is None else value_length
-    basis = '%s|%s|%s|%s' % (file, rule_id, line, column)
+    # Two distinct literals can be detected at the same source coordinate by
+    # separate patterns. _dedup intentionally keeps different fingerprints;
+    # the ID must distinguish them too, without exposing the secret itself.
+    basis = '%s|%s|%s|%s|%s' % (file, rule_id, line, column, fingerprint)
     finding_id = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:12]
     raw = {
         'rule_id': rule_id,

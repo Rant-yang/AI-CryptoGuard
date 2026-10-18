@@ -34,7 +34,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from scanner.adapters import (cbom_scan, credential_scan, cryptoscan,
-                              local_literal)   # noqa: E402
+                              java_properties, local_literal)   # noqa: E402
 from scanner.cbom_report import render_cbom          # noqa: E402
 from scanner.coverage import coverage_diff           # noqa: E402
 from scanner.merge import merge                       # noqa: E402
@@ -167,13 +167,15 @@ def main(argv=None):
     # 与工具重叠的分组在 merge 侧让位 —— 见 local_literal.py docstring
     t0 = time.time()
     lit_groups = local_literal.scan(target)
+    property_groups = java_properties.scan(target)
+    lit_groups.extend(property_groups)
     all_groups.extend(lit_groups)
     meta_tools[local_literal.TOOL_NAME] = {
         'ok': True,
         'seconds': round(time.time() - t0, 2),
         'groups': len(lit_groups),
         'raw': None,
-        'summary': None,
+        'summary': {'java_properties_flows': len(property_groups)},
     }
     _print_safe('[ok] %s 完成（%.2fs，产出 %d 个工具分组）'
                 % (local_literal.TOOL_NAME,

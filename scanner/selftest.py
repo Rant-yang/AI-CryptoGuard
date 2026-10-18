@@ -12,13 +12,16 @@ coverage 的差异计数、cbom_report 的结构与确定性。
 import os
 import re
 import sys
+import tempfile
+from pathlib import Path
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from scanner.adapters import cbom_scan, cryptoscan, local_literal, source_filter  # noqa: E402
+from scanner.adapters import (cbom_scan, credential_scan, cryptoscan, java_properties,
+                              local_literal, source_filter)  # noqa: E402
 from scanner.cbom_report import render_cbom                  # noqa: E402
 from scanner.coverage import coverage_diff                   # noqa: E402
 from scanner.merge import merge                              # noqa: E402
@@ -722,6 +725,61 @@ def test_cbom_report(check):
     check('serialNumber 确定性可复现', bom1['serialNumber'], bom2['serialNumber'])
 
 
+def test_java_properties(check):
+    """JCE 实际算法来自资源文件时，应定位到 Java 汇点，不发配置原文。"""
+    with tempfile.TemporaryDirectory(prefix='acg-properties-') as root:
+        folder = Path(root)
+        (folder / 'choice.properties').write_text(
+            'hashAlgorithm=MD5\nsafeAlgorithm=AES/GCM/NoPadding\n',
+            encoding='ascii')
+        (folder / 'Resolved.java').write_text(
+            'Properties p = new Properties();\n'
+            'p.load(getResourceAsStream("choice.properties"));\n'
+            'String algorithm = p.getProperty("hashAlgorithm", "SHA512");\n'
+            'MessageDigest.getInstance(algorithm);\n', encoding='utf-8')
+        (folder / 'Safe.java').write_text(
+            'Properties p = new Properties();\n'
+            'p.load(getResourceAsStream("choice.properties"));\n'
+            'String algorithm = p.getProperty("safeAlgorithm", "AES/ECB/PKCS5Padding");\n'
+            'Cipher.getInstance(algorithm);\n', encoding='utf-8')
+        (folder / 'Reassigned.java').write_text(
+            'Properties p = new Properties();\n'
+            'p.load(getResourceAsStream("choice.properties"));\n'
+            'String algorithm = p.getProperty("hashAlgorithm", "SHA512");\n'
+            'algorithm = "SHA256";\n'
+            'MessageDigest.getInstance(algorithm);\n', encoding='utf-8')
+        (folder / 'Commented.java').write_text(
+            '/* Properties p = new Properties();\n'
+            'p.load(getResourceAsStream("choice.properties"));\n'
+            'String algorithm = p.getProperty("hashAlgorithm", "SHA512");\n'
+            'MessageDigest.getInstance(algorithm); */\n', encoding='utf-8')
+        (folder / 'LateLoad.java').write_text(
+            'String algorithm = p.getProperty("hashAlgorithm", "SHA512");\n'
+            'MessageDigest.getInstance(algorithm);\n'
+            'p.load(getResourceAsStream("choice.properties"));\n', encoding='utf-8')
+        groups = java_properties.scan(root)
+        check('配置 MD5 被关联到调用 Java 文件与汇点行',
+              [(g['file'], g['algorithm'], g['lines']) for g in groups],
+              [('Resolved.java', 'MD5', [4])])
+        check('配置证据只给算法与引用，不泄露配置全文',
+              set(groups[0]['raw']),
+              {'kind', 'resource_file', 'property_key', 'resource_line',
+               'resolved_algorithm'})
+        check('配置来源可以定位到资源文件行号',
+              groups[0]['raw']['resource_line'], 1)
+
+
+def test_credential_identity(check):
+    """同一位置两份不同凭据保留为两条时，引用 ID 也必须不同。"""
+    args = ('example.py', 7, 2, 'CRED-HARDCODED-PASSWORD')
+    a = credential_scan._finding(*args, 'synthetic-alpha', b'test-pepper', 'pattern')
+    b = credential_scan._finding(*args, 'synthetic-beta', b'test-pepper', 'pattern')
+    check('不同指纹的凭据 Finding 不复用同一个 ID',
+          a['finding_id'] != b['finding_id'], True)
+    check('凭据证据只存 HMAC 指纹，不含测试字面量',
+          'synthetic-alpha' not in repr(a), True)
+
+
 def main():
     fails = []
     _checks = [0]
@@ -737,7 +795,7 @@ def main():
                test_malformed_inputs,
                test_local_literal, test_source_filter, test_split_output,
                test_coverage,
-               test_cbom_report):
+               test_cbom_report, test_java_properties, test_credential_identity):
         fn(check)
 
     if fails:
