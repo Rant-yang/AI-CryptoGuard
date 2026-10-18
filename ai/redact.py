@@ -189,6 +189,18 @@ def redact_evidence(evidence, context='shape'):
             # 「发原文」不等于「发路径和密钥」—— 后者对判用途毫无帮助。
             out['call_context'] = [scrub(c)[:_MAX_CONTEXT_LEN] for c in ctx_lines]
 
+    elif tool == 'local-literal' and raw.get('kind') == 'java-jca-consumer':
+        # A bounded, source-free JCA consumer fact produced locally. Do not
+        # forward any other local-literal raw fields or arbitrary API strings.
+        api = raw.get('api')
+        if api in ('Signature.getInstance', 'Signature.sign',
+                   'KeyAgreement.getInstance', 'KeyAgreement.generateSecret'):
+            out['call_shape'].append(api)
+            algorithm = raw.get('algorithm')
+            if algorithm in ('RSA', 'ECDSA', 'ED25519', 'DSA',
+                             'ECDH', 'DH', 'X25519'):
+                out['upstream'] = {'algorithm_literal': algorithm}
+
     # 其它工具（含将来新增的）：默认不发 raw。
     # 少一条线索远好过漏一次源码 —— 见模块 docstring 的 allowlist 说明。
     seen, shapes = set(), []

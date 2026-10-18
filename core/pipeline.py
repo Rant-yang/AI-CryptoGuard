@@ -24,6 +24,7 @@ from scanner.scan import main as scanner_main  # noqa: E402
 from scanner.adapters.crysentry import adapt as adapt_crysentry  # noqa: E402
 from scanner.adapters.crysentry import fuse as fuse_crysentry  # noqa: E402
 from scanner.runners.crysentry import run as run_crysentry  # noqa: E402
+from core.usage_evidence import attach_java_consumers  # noqa: E402
 
 
 def _stage(name, status="pending", reason=None, seconds=0, tool_version=None):
@@ -172,6 +173,9 @@ def run(target=None, findings_path=None, output_dir="out/run", tools_dir=None,
                     deep["tool_version"])
         _write(task_path, task)
 
+    # Consumer calls provide purpose evidence for the AI; source text remains
+    # local and this bridge never creates a finding or changes scanner IDs.
+    attach_java_consumers(rows, source_root or target)
     started = time.time()
     try:
         result = assess_all(rows, timeline_profile)

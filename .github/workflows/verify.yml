@@ -30,6 +30,7 @@ jobs:
           python core/schema/selftest_v02.py
           python core/rules/algorithm_risk.py
           python core/rules/pqc_routing.py
+          python -m core.usage_evidence_selftest
           python scanner/selftest.py
           python scanner/credential_selftest.py
           python scanner/selftest_crysentry.py
