@@ -20,6 +20,7 @@ from ai import enrich as legacy  # noqa: E402
 from ai.redact import redact_finding, scrub  # noqa: E402
 from core.quantum_assessment import assess_one, LOCAL_CONFIG_RULE_IDS  # noqa: E402
 from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
+from core.rules.key_size import RSA_WEAK_KEY_SIZE_RULE  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route, usage_compatible  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
@@ -358,6 +359,34 @@ def _local_weak_random(finding):
     return out
 
 
+def _local_rsa_weak_key_size(finding):
+    """Explain the direct literal key-size fact without inventing RSA usage."""
+    out = copy.deepcopy(finding)
+    refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
+    out["usage_assessment"] = {
+        "usage": "unknown",
+        "reason": "AST 已定位 RSA 新密钥生成调用的 key_size 整数字面量；业务用途未给出。",
+        "evidence_refs": refs,
+        "unknowns": ["需确认密钥是否实际生成，以及用于签名还是加密/密钥运输。"],
+    }
+    out["explanation"] = (
+        "源码中的 RSA 密钥生成调用显式给出低于 2048 位的长度；"
+        "这属于经典安全强度不足，不是 Shor 攻击的唯一成因。"
+        "仅凭该构造调用不能确认实际业务用途或分支可达性；"
+        "若密钥确实生成并使用，应按适用标准轮换并验证兼容性。"
+    )
+    out["evidence_refs"] = refs
+    out["remediation_steps"] = [_step(
+        out["remediation"]["action"], out, refs,
+        prerequisites=["确认调用分支可达、密钥用途及受影响的现有密钥"],
+        verification=["对临时副本复扫，确认弱密钥长度规则不再命中",
+                      "运行相关签名或加解密测试，并核查旧密钥轮换状态"])]
+    out["stage"] = "explained"
+    out["analysis_provenance"] = _provenance(
+        out, "local-rsa-key-size-rule-v1", "local-no-cloud")
+    return out
+
+
 def _local_java_predictable_key(finding):
     """Explain a located static key-flow candidate without assuming reachability."""
     out = copy.deepcopy(finding)
@@ -400,6 +429,8 @@ def enrich_one(finding, model_call=call_model, context="full",
         out = _local_conditional_default(finding)
     elif finding.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
         out = _local_weak_random(finding)
+    elif finding.get("rule_id") == RSA_WEAK_KEY_SIZE_RULE:
+        out = _local_rsa_weak_key_size(finding)
     elif finding.get("rule_id") == PREDICTABLE_KEY_RULE:
         out = _local_java_predictable_key(finding)
     else:
@@ -510,6 +541,8 @@ def _reuse(prev, current, model_id, context, max_tokens):
         expected_model, expected_redaction = "local-config-rule", "local-no-cloud"
     elif current.get("rule_id") == "PY-WEAK-RANDOM-CRYPTO":
         expected_model, expected_redaction = "local-ast-rule", "local-no-cloud"
+    elif current.get("rule_id") == RSA_WEAK_KEY_SIZE_RULE:
+        expected_model, expected_redaction = "local-rsa-key-size-rule-v1", "local-no-cloud"
     elif current.get("rule_id") == PREDICTABLE_KEY_RULE:
         expected_model, expected_redaction = "local-deep-java-rule-v2", "local-no-cloud"
     else:

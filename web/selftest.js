@@ -247,6 +247,18 @@ setTimeout(() => {
         explainedHtml.includes('运行集成测试') &&
         explainedHtml.includes('QR-SHOR-PUBLIC-KEY'));
 
+  const weakKey = JSON.parse(JSON.stringify(cited));
+  weakKey.finding_id = 'weak-rsa-key-size';
+  weakKey.rule_id = 'PY-RSA-KEYSIZE-LT2048';
+  weakKey.risk = 'not_applicable';
+  weakKey.finding_kind = 'configuration';
+  weakKey.evidence[0].raw = {key_size_bits: 1024};
+  x.S.sel = weakKey; x.S.view = [weakKey];
+  x.renderDetail(); x.renderList();
+  check('弱 RSA 密钥长度与公钥量子风险在网页中分别命名',
+        htmlOf('#detail').includes('RSA 密钥长度不足') &&
+        htmlOf('#list').includes('RSA 密钥长度不足'));
+
   const credential = JSON.parse(JSON.stringify(explained));
   credential.finding_kind = 'credential';
   credential.evidence[0].raw = {secret:'LEAK-ME-SECRET'};

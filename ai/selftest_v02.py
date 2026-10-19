@@ -14,6 +14,7 @@ from ai.enrich_v02 import (_checkpoint_rows, _has_direct_usage_evidence, _model_
                            enrich_file, enrich_one)
 from core.quantum_assessment import assess_one
 from core.schema.validate_v02 import errors
+from scanner.adapters import python_ast
 
 
 def sample(name):
@@ -39,6 +40,23 @@ def model(usage="signing", refs=None):
 
 
 def main():
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / 'weak_rsa.py').write_text(
+            'from cryptography.hazmat.primitives.asymmetric import rsa\n'
+            'key = rsa.generate_private_key(public_exponent=65537, key_size=1024)\n',
+            encoding='utf-8')
+        local = python_ast.scan(td)
+        check('弱 RSA 密钥长度独立成为一条配置 Finding',
+              len(local) == 1 and local[0]['rule_id'] == 'PY-RSA-KEYSIZE-LT2048')
+        assessed = assess_one(local[0])
+        explained = enrich_one(assessed, lambda *_: (_ for _ in ()).throw(
+            AssertionError('local key-size fact must not reach cloud')))
+        check('弱密钥长度由本地解释且引用有效，不猜 RSA 业务用途',
+              not errors(explained) and explained['stage'] == 'explained' and
+              explained['usage'] == 'unknown' and
+              explained['evidence_refs'] == ['E1'] and
+              explained['analysis_provenance']['model_id'] ==
+              'local-rsa-key-size-rule-v1')
     bare = assess_one(sample("java_complete"))
     unsupported = enrich_one(bare, lambda *_: model(), model_id="offline-test")
     check("仅凭算法名和无关污点汇点不能认定 RSA 签名用途",
@@ -267,7 +285,6 @@ def main():
           fallback_local["remediation"]["reason"] == "conditional-default" and
           "不能断言" in fallback_local["usage_assessment"]["reason"])
 
-    from scanner.adapters import python_ast
     with tempfile.TemporaryDirectory() as td:
         Path(td, 'case.py').write_text(
             'import random\nnonce = random.Random().randbytes(12)\n',

@@ -15,6 +15,8 @@ import re
 import token
 import tokenize
 
+from core.rules.key_size import (RSA_WEAK_KEY_SIZE_RULE, RSA_MIN_CLASSICAL_BITS,
+                                 RSA_WEAK_KEY_ACTION, RSA_KEY_SIZE_REFERENCE)
 
 TOOL_NAME = 'python-ast'
 RULE_ID = 'PY-WEAK-RANDOM-CRYPTO'
@@ -127,6 +129,11 @@ def _hash_lines(tree):
 
         blocked = {n.id for n in _scope_nodes(scope)
                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        # A def/class statement binds its name without an ast.Name(Store).
+        # Such a declaration can replace an imported alias in this scope.
+        blocked.update(stmt.name for stmt in scope.body
+                       if isinstance(stmt, (ast.FunctionDef,
+                                            ast.AsyncFunctionDef, ast.ClassDef)))
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
             args = scope.args
             blocked.update(a.arg for a in (args.posonlyargs + args.args +
@@ -167,6 +174,64 @@ def _hash_lines(tree):
 
     visit_scope(tree)
     return {alg: sorted(lines) for alg, lines in hits.items()}
+
+
+def _weak_rsa_key_sizes(tree):
+    """Return literal key sizes from proven cryptography RSA generation calls.
+
+    This deliberately excludes variable-derived sizes and aliases rebound in
+    the lexical scope. We do not infer a key's business use or execution path.
+    """
+    hits = set()
+
+    def visit_scope(scope, inherited=frozenset()):
+        modules = set(inherited)
+        for stmt in scope.body:
+            if (isinstance(stmt, ast.ImportFrom) and
+                    stmt.module == 'cryptography.hazmat.primitives.asymmetric'):
+                modules.update(a.asname or a.name for a in stmt.names
+                               if a.name == 'rsa')
+        blocked = {n.id for n in _scope_nodes(scope)
+                   if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        blocked.update(stmt.name for stmt in scope.body
+                       if isinstance(stmt, (ast.FunctionDef,
+                                            ast.AsyncFunctionDef, ast.ClassDef)))
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = scope.args
+            blocked.update(a.arg for a in (args.posonlyargs + args.args +
+                                            args.kwonlyargs))
+            if args.vararg:
+                blocked.add(args.vararg.arg)
+            if args.kwarg:
+                blocked.add(args.kwarg.arg)
+        modules.difference_update(blocked)
+
+        for node in _scope_nodes(scope):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and
+                    func.attr == 'generate_private_key' and
+                    isinstance(func.value, ast.Name) and
+                    func.value.id in modules):
+                continue
+            key_size = next((k.value for k in node.keywords
+                             if k.arg == 'key_size'), None)
+            if (isinstance(key_size, ast.Constant) and
+                    type(key_size.value) is int and
+                    0 < key_size.value < RSA_MIN_CLASSICAL_BITS):
+                hits.add((key_size.lineno, key_size.value))
+
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit_scope(stmt, frozenset(modules))
+            elif isinstance(stmt, ast.ClassDef):
+                for child in stmt.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        visit_scope(child, frozenset(modules))
+
+    visit_scope(tree)
+    return sorted(hits)
 
 
 def _hash_tokens(source):
@@ -268,11 +333,12 @@ def scan(root, diagnostics=None):
                 # do not pretend that the entire AST was analyzed.
                 partial = True
                 coverage['partial_parse_files'] += 1
-                lines, hash_hits = [], _hash_tokens(source)
+                lines, hash_hits, rsa_sizes = [], _hash_tokens(source), []
             else:
                 coverage['full_ast_files'] += 1
                 lines, hash_hits = _lines(tree), _hash_lines(tree)
-            if not lines and not hash_hits:
+                rsa_sizes = _weak_rsa_key_sizes(tree)
+            if not lines and not hash_hits and not rsa_sizes:
                 continue
             rel = os.path.relpath(path, root).replace('\\', '/')
             if lines:
@@ -349,6 +415,37 @@ def scan(root, diagnostics=None):
                 })
                 if partial:
                     coverage['token_recovery_findings'] += 1
+            for line, bits in rsa_sizes:
+                finding_id = hashlib.sha1(
+                    ('%s|%s|%d' % (rel, RSA_WEAK_KEY_SIZE_RULE, line))
+                    .encode('utf-8')).hexdigest()[:12]
+                findings.append({
+                    'schema_version': '0.1',
+                    'finding_id': finding_id,
+                    'finding_kind': 'configuration',
+                    'rule_id': RSA_WEAK_KEY_SIZE_RULE,
+                    'file': rel,
+                    'line': line,
+                    'algorithm': 'RSA',
+                    'algorithm_normalized': 'RSA',
+                    'usage': 'unknown',
+                    'risk': 'not_applicable',
+                    'severity': 'high',
+                    'confidence': 0.95,
+                    'evidence': [{
+                        'tool': TOOL_NAME, 'kind': 'ast', 'lines': [line],
+                        'raw': {'rule_id': RSA_WEAK_KEY_SIZE_RULE,
+                                'api': 'rsa.generate_private_key',
+                                'key_size_bits': bits},
+                    }],
+                    'evidence_refs': ['E1'],
+                    'remediation': {
+                        'decided': True, 'reason': 'decided',
+                        'source': 'rule-base', 'action': RSA_WEAK_KEY_ACTION,
+                        'references': [RSA_KEY_SIZE_REFERENCE],
+                    },
+                    'tags': ['python-ast', 'weak-rsa-key-size'],
+                })
     if diagnostics is not None:
         diagnostics.update(coverage)
     return findings

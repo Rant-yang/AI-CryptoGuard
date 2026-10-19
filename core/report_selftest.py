@@ -36,6 +36,11 @@ def main():
     assert ranked.index('HIGH-EXAMPLE') < ranked.index('BACKUP-EXAMPLE')
     assert ranked.index('BACKUP-EXAMPLE') < ranked.index('LOW-EXAMPLE')
     assert '仅备用值（当前是否生效待核实）' in ranked
+    weak_key = dict(other, algorithm='RSA', rule_id='PY-RSA-KEYSIZE-LT2048',
+                    finding_kind='configuration', risk='not_applicable')
+    weak_key_report = render_report([weak_key])
+    assert 'RSA 密钥长度不足' in weak_key_report
+    assert '非算法问题' in weak_key_report
     try:
         render_report({'not': 'a list'})
         raise AssertionError('non-array input accepted')

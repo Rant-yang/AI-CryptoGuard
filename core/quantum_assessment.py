@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from core.rules.pqc_routing import route  # noqa: E402
 from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
+from core.rules.key_size import RSA_WEAK_KEY_SIZE_RULE  # noqa: E402
 from core.quantum_timeline import assess as assess_timeline, make_profile  # noqa: E402
 from core.schema.validate_v02 import errors as contract_errors  # noqa: E402
 
@@ -32,7 +33,8 @@ RISK_RULE = {
 }
 AI_FIELDS = ("explanation", "evidence_refs", "usage_assessment",
              "remediation_steps", "analysis_provenance", "quantum_assessment")
-LOCAL_CONFIG_RULE_IDS = frozenset({"PY-WEAK-RANDOM-CRYPTO", PREDICTABLE_KEY_RULE})
+LOCAL_CONFIG_RULE_IDS = frozenset({"PY-WEAK-RANDOM-CRYPTO", PREDICTABLE_KEY_RULE,
+                                   RSA_WEAK_KEY_SIZE_RULE})
 
 
 @lru_cache(maxsize=1)
@@ -133,7 +135,9 @@ def assess_one(finding, timeline_profile=None):
             "status": "not_applicable",
             "quantum_effect": "not_applicable",
             "classical_issues": (["该发现属于凭据问题，按凭据规则整改。"]
-                                 if kind == "credential" else []),
+                                 if kind == "credential" else
+                                 ["新生成的 RSA 密钥长度不足，属于经典安全强度问题。"]
+                                 if out.get("rule_id") == RSA_WEAK_KEY_SIZE_RULE else []),
             "rule_version": version,
             "rule_refs": [],
             "evidence_refs": refs,

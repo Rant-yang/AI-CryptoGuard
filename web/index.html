@@ -556,6 +556,7 @@ function riskRank(r){ return RISKS.indexOf(r) < 0 ? 99 : RISKS.indexOf(r); }
 function sevRank(s){ return SEVS.indexOf(s) < 0 ? 99 : SEVS.indexOf(s); }
 function riskCls(r){ return RISKS.indexOf(r) < 0 ? 'review' : r; }
 function subjectOf(f){
+  if(f.rule_id === 'PY-RSA-KEYSIZE-LT2048') return 'RSA 密钥长度不足';
   return f.finding_kind === 'credential' ? (f.rule_id || '凭据问题')
                                          : (f.algorithm || '—');
 }

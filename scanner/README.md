@@ -164,12 +164,19 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
 - **Python AST 检测**：`adapters/python_ast.py` 已加入一个高置信规则：
   `random.Random().randbytes(...)` 直接赋给 nonce/IV/salt/key 等安全变量时，
   产出 `kind=ast` 的结构证据；普通模拟用途和 `SystemRandom` 不报。
+  同文件另有 `hashlib.new` 弱哈希规则，以及只针对 Python `cryptography`
+  `rsa.generate_private_key(key_size=<整数字面量>)` 且位数低于 2048 的
+  `PY-RSA-KEYSIZE-LT2048` 配置规则；后者的经典强度问题与 RSA 的量子风险
+  分开报告，变量长度和未证明的调用不猜。范围见
+  [缺陷类别覆盖核查](../docs/缺陷类别覆盖核查_2026-10-19.md)。
   尚未具备通用 Python 跨函数数据流分析或“密钥从哪来”的追踪能力。
   ⚠️ 不要试图"照着 CrySentry 重写一个 Python 版" —— 它背后是一整套研究级程序分析引擎，
   不是可以照抄的扫描逻辑。
-- **凭据检测（2026-10-14 已接入第一版）**：`adapters/credential_scan.py` 实现 8 类
-  管理缺陷，含模式、文件上下文与熵证据。输出只存遮蔽长度和进程内随机 HMAC
-  指纹，不保存明文；专项公开语料 P=47.9%、R=45.9%，仍需提质。
+- **凭据检测（2026-10-14 已接入第一版）**：`adapters/credential_scan.py` 实现 8 个规则，
+  规则之间可能覆盖同一类实际缺陷；还不能宣称八类互斥管理缺陷均已外部验收。
+  检测使用模式、文件上下文与熵证据。输出只存遮蔽长度和进程内随机 HMAC
+  指纹，不保存明文。不同版本的专项指标和限制见
+  [凭据检测记录](../docs/凭据检测_2026-10-14.md)。
 
 ---
 

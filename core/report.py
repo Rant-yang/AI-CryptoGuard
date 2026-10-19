@@ -29,6 +29,12 @@ STATUS = {'completed': '已完成', 'skipped': '已跳过', 'failed': '失败',
           'timeout': '超时', 'pending': '等待中', 'running': '运行中'}
 
 
+def _subject(finding):
+    if finding.get('rule_id') == 'PY-RSA-KEYSIZE-LT2048':
+        return 'RSA 密钥长度不足'
+    return finding.get('algorithm') or finding.get('rule_id') or finding.get('finding_kind', '')
+
+
 def _text(value, limit=600):
     """Escape every variable value after conservative secret/path scrubbing."""
     value = '' if value is None else str(value)
@@ -98,7 +104,7 @@ def render_report(findings, task=None):
           <p><b>证据：</b></p><ol>%s</ol>
           %s
         </section>''' %
-                      (i, _text(finding.get('algorithm') or finding.get('rule_id') or kind, 150),
+                      (i, _text(_subject(finding), 150),
                        _text(SEVERITY.get(finding.get('severity'), '未分级'), 20),
                        _file(finding.get('file')), _text(finding.get('line'), 20),
                        _text(kind, 30), _text(finding.get('usage', 'unknown'), 35),
@@ -122,7 +128,7 @@ def render_report(findings, task=None):
     top = []
     for row in ordered[:5]:
         kind = row.get('finding_kind', 'algorithm')
-        label = row.get('rule_id') if kind == 'credential' else row.get('algorithm')
+        label = _subject(row)
         conditional = 'conditional-default' in (row.get('tags') or [])
         top.append('<li>%s · %s · %s:%s%s</li>' %
                    (_text(SEVERITY.get(row.get('severity'), '未分级'), 20),

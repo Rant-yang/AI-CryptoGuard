@@ -1039,6 +1039,43 @@ def test_python_ast_hashlib_new(check):
                diagnostics['token_recovery_findings']), (0, 1, 1))
 
 
+def test_python_ast_rsa_key_size(check):
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, 'rsa_keys.py')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('from cryptography.hazmat.primitives.asymmetric import rsa\n'
+                     'def weak():\n'
+                     '    return rsa.generate_private_key(\n'
+                     '        public_exponent=65537, key_size=1024)\n'
+                     'def strong():\n'
+                     '    return rsa.generate_private_key(\n'
+                     '        public_exponent=65537, key_size=2048)\n'
+                     'def unknown(bits):\n'
+                     '    return rsa.generate_private_key(key_size=bits)\n'
+                     'def shadowed(rsa):\n'
+                     '    return rsa.generate_private_key(key_size=512)\n'
+                     'text = "rsa.generate_private_key(key_size=512)"\n'
+                     '# rsa.generate_private_key(key_size=512)\n')
+        rows = python_ast.scan(td)
+        check('只报告真实导入的 RSA 1024 位新密钥生成，排除 2048/动态/重绑定/文本',
+              [(r['rule_id'], r['line']) for r in rows],
+              [('PY-RSA-KEYSIZE-LT2048', 4)])
+        check('密钥长度是独立配置问题，不冒充已知签名或 PQC 用途',
+              (rows[0]['finding_kind'], rows[0]['risk'], rows[0]['usage'],
+               rows[0]['evidence'][0]['raw']['key_size_bits']),
+              ('configuration', 'not_applicable', 'unknown', 1024))
+        check('证据只保存结构和值，不保存源码行',
+              'sourceStmt' in rows[0]['evidence'][0]['raw'], False)
+        collision = os.path.join(td, 'rsa_rebound.py')
+        with open(collision, 'w', encoding='utf-8') as fh:
+            fh.write('from cryptography.hazmat.primitives.asymmetric import rsa\n'
+                     'def rsa():\n'
+                     '    return object()\n'
+                     'rsa.generate_private_key(key_size=512)\n')
+        check('同一作用域中函数声明覆盖导入别名时不误报',
+              [r for r in python_ast.scan(td) if r['file'] == 'rsa_rebound.py'], [])
+
+
 def test_cryptoscan_os_binary(check):
     with tempfile.TemporaryDirectory() as td:
         folder = os.path.join(td, 'cryptoscan')
@@ -1071,7 +1108,7 @@ def main():
                test_coverage,
                test_cbom_report, test_java_properties, test_credential_identity,
                test_conditional_default, test_python_ast_weak_random,
-               test_python_ast_hashlib_new,
+               test_python_ast_hashlib_new, test_python_ast_rsa_key_size,
                test_cryptoscan_os_binary):
         fn(check)
 
