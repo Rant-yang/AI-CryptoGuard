@@ -1076,6 +1076,87 @@ def test_python_ast_rsa_key_size(check):
               [r for r in python_ast.scan(td) if r['file'] == 'rsa_rebound.py'], [])
 
 
+def test_python_ast_direct_iv_nonce(check):
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, 'direct_iv.py')
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n'
+                     'from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n'
+                     'bad_cbc = Cipher(algorithms.AES(key), modes.CBC(b"0" * 16)).encryptor()\n'
+                     'good_decrypt = Cipher(algorithms.AES(key), modes.CBC(b"0" * 16)).decryptor()\n'
+                     'good_dynamic = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()\n'
+                     'bad_gcm = AESGCM(key).encrypt(b"1" * 12, data, None)\n'
+                     'good_gcm_decrypt = AESGCM(key).decrypt(b"1" * 12, data, None)\n'
+                     'good_gcm_dynamic = AESGCM(key).encrypt(nonce, data, None)\n'
+                     'note = "AESGCM(key).encrypt(b\\\"1\\\" * 12, data, None)"\n')
+        rows = python_ast.scan(td)
+        check('只报直接 CBC 加密固定 IV 与 GCM 加密固定 Nonce',
+              [(r['rule_id'], r['line']) for r in rows],
+              [('PY-CBC-FIXED-IV-DIRECT', 3),
+               ('PY-GCM-FIXED-NONCE-DIRECT', 6)])
+        check('IV/Nonce 证据只存长度，不存字节值',
+              [(r['finding_kind'], r['risk'],
+                r['evidence'][0]['raw']['literal_bytes']) for r in rows],
+              [('configuration', 'not_applicable', 16),
+               ('configuration', 'not_applicable', 12)])
+        check('直接调用的证据 API 与真实库调用一致',
+              [r['evidence'][0]['raw']['api'] for r in rows],
+              ['Cipher.encryptor', 'AESGCM.encrypt'])
+        with open(os.path.join(td, 'shadow.py'), 'w', encoding='utf-8') as fh:
+            fh.write('from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n'
+                     'from unrelated_library import AESGCM\n'
+                     'AESGCM(key).encrypt(b"1" * 12, data, None)\n')
+        check('其他导入遮蔽 AESGCM 名称时不误报',
+              [r for r in python_ast.scan(td) if r['file'] == 'shadow.py'], [])
+        with open(os.path.join(td, 'local_flow.py'), 'w', encoding='utf-8') as fh:
+            fh.write('from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n'
+                     'from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n'
+                     'def stable(key, data):\n'
+                     '    iv = b"0" * 16\n'
+                     '    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))\n'
+                     '    cipher.encryptor()\n'
+                     '    nonce = b"1" * 12\n'
+                     '    aead = AESGCM(key)\n'
+                     '    aead.encrypt(nonce, data, None)\n'
+                     'def reassigned(key, data, dynamic):\n'
+                     '    iv = b"0" * 16\n'
+                     '    if data: iv = dynamic\n'
+                     '    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))\n'
+                     '    cipher.encryptor()\n'
+                     '    cipher = Cipher(algorithms.AES(key), modes.CBC(b"0" * 16))\n'
+                     '    cipher = Cipher(algorithms.AES(key), modes.CBC(dynamic))\n'
+                     '    cipher.encryptor()\n'
+                     '    nonce = b"1" * 12\n'
+                     '    aead = AESGCM(key)\n'
+                     '    aead = dynamic\n'
+                     '    aead.encrypt(nonce, data, None)\n')
+        check('同作用域字面量和构造器传播可检出；分支/重赋值后不猜',
+              [(r['rule_id'], r['line']) for r in python_ast.scan(td)
+               if r['file'] == 'local_flow.py'],
+              [('PY-CBC-FIXED-IV-DIRECT', 4),
+               ('PY-GCM-FIXED-NONCE-DIRECT', 7)])
+        with open(os.path.join(td, 'pycrypto.py'), 'w', encoding='utf-8') as fh:
+            fh.write('from Crypto.Cipher import AES\n'
+                     'def encrypt_fixed(key, data):\n'
+                     '    iv = b"0" * 16\n'
+                     '    cipher = AES.new(key, AES.MODE_CBC, iv)\n'
+                     '    return cipher.encrypt(data)\n'
+                     'def decrypt_only(key, data):\n'
+                     '    cipher = AES.new(key, AES.MODE_CBC, b"0" * 16)\n'
+                     '    return cipher.decrypt(data)\n'
+                     'def dynamic_iv(key, iv, data):\n'
+                     '    cipher = AES.new(key, AES.MODE_CBC, iv)\n'
+                     '    return cipher.encrypt(data)\n')
+        check('PyCryptodome 同作用域静态 IV 加密可检出，解密和动态 IV 不报',
+              [(r['rule_id'], r['line']) for r in python_ast.scan(td)
+               if r['file'] == 'pycrypto.py'],
+              [('PY-CBC-FIXED-IV-DIRECT', 3)])
+        check('PyCryptodome 证据不冒称 cryptography API',
+              [r['evidence'][0]['raw']['api'] for r in python_ast.scan(td)
+               if r['file'] == 'pycrypto.py'],
+              ['AES.new.encrypt'])
+
+
 def test_cryptoscan_os_binary(check):
     with tempfile.TemporaryDirectory() as td:
         folder = os.path.join(td, 'cryptoscan')
@@ -1109,6 +1190,7 @@ def main():
                test_cbom_report, test_java_properties, test_credential_identity,
                test_conditional_default, test_python_ast_weak_random,
                test_python_ast_hashlib_new, test_python_ast_rsa_key_size,
+               test_python_ast_direct_iv_nonce,
                test_cryptoscan_os_binary):
         fn(check)
 

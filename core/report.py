@@ -32,6 +32,10 @@ STATUS = {'completed': '已完成', 'skipped': '已跳过', 'failed': '失败',
 def _subject(finding):
     if finding.get('rule_id') == 'PY-RSA-KEYSIZE-LT2048':
         return 'RSA 密钥长度不足'
+    if finding.get('rule_id') == 'PY-CBC-FIXED-IV-DIRECT':
+        return 'CBC 加密使用固定 IV'
+    if finding.get('rule_id') == 'PY-GCM-FIXED-NONCE-DIRECT':
+        return 'GCM 加密使用固定 Nonce'
     return finding.get('algorithm') or finding.get('rule_id') or finding.get('finding_kind', '')
 
 

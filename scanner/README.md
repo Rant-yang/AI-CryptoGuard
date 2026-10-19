@@ -169,6 +169,9 @@ CryptoScan 把 MD5 / SHA-1 / DES / 3DES / RSA-1024 全标成 `VULNERABLE`。
   `PY-RSA-KEYSIZE-LT2048` 配置规则；后者的经典强度问题与 RSA 的量子风险
   分开报告，变量长度和未证明的调用不猜。范围见
   [缺陷类别覆盖核查](../docs/缺陷类别覆盖核查_2026-10-19.md)。
+  对 `cryptography` 的直接 CBC `encryptor()` 固定 IV、AESGCM `encrypt()` 固定
+  Nonce 也分别生成配置 Finding。仅能证明调用点的固定字面量，不能声称
+  同一密钥在运行时已经重复使用 Nonce。
   尚未具备通用 Python 跨函数数据流分析或“密钥从哪来”的追踪能力。
   ⚠️ 不要试图"照着 CrySentry 重写一个 Python 版" —— 它背后是一整套研究级程序分析引擎，
   不是可以照抄的扫描逻辑。

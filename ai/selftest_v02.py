@@ -57,6 +57,27 @@ def main():
               explained['evidence_refs'] == ['E1'] and
               explained['analysis_provenance']['model_id'] ==
               'local-rsa-key-size-rule-v1')
+        (Path(td) / 'direct_nonce.py').write_text(
+            'from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n'
+            'from cryptography.hazmat.primitives.ciphers.aead import AESGCM\n'
+            'Cipher(algorithms.AES(key), modes.CBC(b"0" * 16)).encryptor()\n'
+            'AESGCM(key).encrypt(b"1" * 12, data, None)\n',
+            encoding='utf-8')
+        direct = [r for r in python_ast.scan(td) if r['file'] == 'direct_nonce.py']
+        check('固定 IV 与固定 Nonce 分成两个本地配置 Finding',
+              {r['rule_id'] for r in direct} ==
+              {'PY-CBC-FIXED-IV-DIRECT', 'PY-GCM-FIXED-NONCE-DIRECT'})
+        for finding in direct:
+            explained = enrich_one(assess_one(finding),
+                                   lambda *_: (_ for _ in ()).throw(
+                                       AssertionError('literal IV/Nonce must stay local')))
+            check('固定参数本地解释有 E1 且没有云请求: ' + finding['rule_id'],
+                  not errors(explained) and explained['evidence_refs'] == ['E1'] and
+                  explained['analysis_provenance']['redaction_version'] ==
+                  'local-no-cloud')
+            if finding['rule_id'] == 'PY-GCM-FIXED-NONCE-DIRECT':
+                check('单个 GCM 调用不冒充已证明运行时重用',
+                      '不能证明实际重用' in explained['explanation'])
     bare = assess_one(sample("java_complete"))
     unsupported = enrich_one(bare, lambda *_: model(), model_id="offline-test")
     check("仅凭算法名和无关污点汇点不能认定 RSA 签名用途",

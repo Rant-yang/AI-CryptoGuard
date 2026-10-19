@@ -21,6 +21,7 @@ from ai.redact import redact_finding, scrub  # noqa: E402
 from core.quantum_assessment import assess_one, LOCAL_CONFIG_RULE_IDS  # noqa: E402
 from core.rules.deep_java import PREDICTABLE_KEY_RULE  # noqa: E402
 from core.rules.key_size import RSA_WEAK_KEY_SIZE_RULE  # noqa: E402
+from core.rules.iv_nonce import FIXED_CBC_IV_RULE, FIXED_GCM_NONCE_RULE  # noqa: E402
 from core.quantum_timeline import make_profile  # noqa: E402
 from core.rules.pqc_routing import route, usage_compatible  # noqa: E402
 from core.schema.validate_v02 import errors, input_digest  # noqa: E402
@@ -387,6 +388,36 @@ def _local_rsa_weak_key_size(finding):
     return out
 
 
+def _local_fixed_iv_nonce(finding):
+    """Explain a direct encryption call without claiming runtime reuse."""
+    out = copy.deepcopy(finding)
+    refs = ["E%d" % (i + 1) for i in range(len(out["evidence"]))]
+    is_cbc = out["rule_id"] == FIXED_CBC_IV_RULE
+    kind = "CBC IV" if is_cbc else "GCM Nonce"
+    out["usage_assessment"] = {
+        "usage": "encryption",
+        "reason": "AST 定位到加密 API 调用，并看到 %s 参数是直接字节常量。" % kind,
+        "evidence_refs": refs,
+        "unknowns": ["该调用在运行时是否执行及是否被重复调用仍需确认。"],
+    }
+    out["explanation"] = (
+        "加密 API 的 %s 参数在源码中是固定字节常量。" % kind +
+        ("CBC 加密的 IV 应在每次加密时不可预测；当前证据不能证明该分支已执行。"
+         if is_cbc else
+         "GCM 要求同一密钥下 Nonce 不重复；仅凭单个静态调用点不能证明实际重用。")
+    )
+    out["evidence_refs"] = refs
+    out["remediation_steps"] = [_step(
+        out["remediation"]["action"], out, refs,
+        prerequisites=["确认调用分支可达、密钥生命周期及协议兼容性"],
+        verification=["对临时副本复扫，确认固定参数规则不再命中",
+                      "运行加密/解密兼容性测试，并检查逐次 IV/Nonce 生成约束"])]
+    out["stage"] = "explained"
+    out["analysis_provenance"] = _provenance(
+        out, "local-direct-iv-nonce-rule-v1", "local-no-cloud")
+    return out
+
+
 def _local_java_predictable_key(finding):
     """Explain a located static key-flow candidate without assuming reachability."""
     out = copy.deepcopy(finding)
@@ -431,6 +462,8 @@ def enrich_one(finding, model_call=call_model, context="full",
         out = _local_weak_random(finding)
     elif finding.get("rule_id") == RSA_WEAK_KEY_SIZE_RULE:
         out = _local_rsa_weak_key_size(finding)
+    elif finding.get("rule_id") in (FIXED_CBC_IV_RULE, FIXED_GCM_NONCE_RULE):
+        out = _local_fixed_iv_nonce(finding)
     elif finding.get("rule_id") == PREDICTABLE_KEY_RULE:
         out = _local_java_predictable_key(finding)
     else:
@@ -543,6 +576,8 @@ def _reuse(prev, current, model_id, context, max_tokens):
         expected_model, expected_redaction = "local-ast-rule", "local-no-cloud"
     elif current.get("rule_id") == RSA_WEAK_KEY_SIZE_RULE:
         expected_model, expected_redaction = "local-rsa-key-size-rule-v1", "local-no-cloud"
+    elif current.get("rule_id") in (FIXED_CBC_IV_RULE, FIXED_GCM_NONCE_RULE):
+        expected_model, expected_redaction = "local-direct-iv-nonce-rule-v1", "local-no-cloud"
     elif current.get("rule_id") == PREDICTABLE_KEY_RULE:
         expected_model, expected_redaction = "local-deep-java-rule-v2", "local-no-cloud"
     else:

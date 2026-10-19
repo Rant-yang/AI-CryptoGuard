@@ -41,6 +41,15 @@ def main():
     weak_key_report = render_report([weak_key])
     assert 'RSA 密钥长度不足' in weak_key_report
     assert '非算法问题' in weak_key_report
+    fixed_iv = dict(other, algorithm='AES-CBC',
+                    rule_id='PY-CBC-FIXED-IV-DIRECT',
+                    finding_kind='configuration', risk='not_applicable')
+    fixed_nonce = dict(other, algorithm='AES-GCM',
+                       rule_id='PY-GCM-FIXED-NONCE-DIRECT',
+                       finding_kind='configuration', risk='not_applicable')
+    fixed_report = render_report([fixed_iv, fixed_nonce])
+    assert 'CBC 加密使用固定 IV' in fixed_report
+    assert 'GCM 加密使用固定 Nonce' in fixed_report
     try:
         render_report({'not': 'a list'})
         raise AssertionError('non-array input accepted')

@@ -258,6 +258,17 @@ setTimeout(() => {
   check('弱 RSA 密钥长度与公钥量子风险在网页中分别命名',
         htmlOf('#detail').includes('RSA 密钥长度不足') &&
         htmlOf('#list').includes('RSA 密钥长度不足'));
+  for (const [rule, label, algorithm] of [
+    ['PY-CBC-FIXED-IV-DIRECT', 'CBC 加密使用固定 IV', 'AES-CBC'],
+    ['PY-GCM-FIXED-NONCE-DIRECT', 'GCM 加密使用固定 Nonce', 'AES-GCM'],
+  ]) {
+    const fixed = JSON.parse(JSON.stringify(weakKey));
+    fixed.rule_id = rule; fixed.algorithm = algorithm;
+    x.S.sel = fixed; x.S.view = [fixed];
+    x.renderDetail(); x.renderList();
+    check('固定 IV/Nonce 配置在网页中有独立名称: ' + rule,
+          htmlOf('#detail').includes(label) && htmlOf('#list').includes(label));
+  }
 
   const credential = JSON.parse(JSON.stringify(explained));
   credential.finding_kind = 'credential';

@@ -17,6 +17,9 @@ import tokenize
 
 from core.rules.key_size import (RSA_WEAK_KEY_SIZE_RULE, RSA_MIN_CLASSICAL_BITS,
                                  RSA_WEAK_KEY_ACTION, RSA_KEY_SIZE_REFERENCE)
+from core.rules.iv_nonce import (FIXED_CBC_IV_RULE, FIXED_GCM_NONCE_RULE,
+                                 CBC_ACTION, GCM_ACTION, CBC_REFERENCE,
+                                 GCM_REFERENCE)
 
 TOOL_NAME = 'python-ast'
 RULE_ID = 'PY-WEAK-RANDOM-CRYPTO'
@@ -234,6 +237,243 @@ def _weak_rsa_key_sizes(tree):
     return sorted(hits)
 
 
+def _literal_byte_length(expr):
+    """Only direct byte literals and literal repetition; never inspect values."""
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, bytes):
+        return len(expr.value) or None
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Mult):
+        for value, count in ((expr.left, expr.right), (expr.right, expr.left)):
+            if (isinstance(value, ast.Constant) and isinstance(value.value, bytes)
+                    and isinstance(count, ast.Constant) and type(count.value) is int
+                    and 0 < count.value <= 32):
+                length = len(value.value) * count.value
+                return length if 0 < length <= 32 else None
+    return None
+
+
+def _direct_fixed_iv_nonce(tree):
+    """Recognize direct encryption API calls with a fixed bytes argument.
+
+    CBC requires an actual ``encryptor()`` call on a proved Cipher value;
+    AESGCM requires ``encrypt()`` on a proved AESGCM value. Simple same-scope
+    literal/constructor assignments are followed in statement order. Branches,
+    unknown calls and decryption-only use do not establish this finding.
+    """
+    hits = set()
+
+    def attr_call(node, owner, name):
+        return (isinstance(node, ast.Call) and
+                isinstance(node.func, ast.Attribute) and node.func.attr == name and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id in owner)
+
+    def visit_scope(scope, inherited=(frozenset(), frozenset(), frozenset(),
+                                     frozenset(), frozenset())):
+        ciphers, modes, algorithms, gcm, py_aes = map(set, inherited)
+        other_imports = set()
+        for stmt in scope.body:
+            if isinstance(stmt, ast.Import):
+                other_imports.update(a.asname or a.name.split('.')[0]
+                                     for a in stmt.names)
+            elif isinstance(stmt, ast.ImportFrom):
+                if stmt.module == 'cryptography.hazmat.primitives.ciphers':
+                    for alias in stmt.names:
+                        name = alias.asname or alias.name
+                        target = {'Cipher': ciphers, 'modes': modes,
+                                  'algorithms': algorithms}.get(alias.name)
+                        if target is not None:
+                            target.add(name)
+                        else:
+                            other_imports.add(name)
+                elif stmt.module == 'cryptography.hazmat.primitives.ciphers.aead':
+                    for alias in stmt.names:
+                        name = alias.asname or alias.name
+                        if alias.name == 'AESGCM':
+                            gcm.add(name)
+                        else:
+                            other_imports.add(name)
+                elif stmt.module in ('Crypto.Cipher', 'Cryptodome.Cipher'):
+                    for alias in stmt.names:
+                        name = alias.asname or alias.name
+                        if alias.name == 'AES':
+                            py_aes.add(name)
+                        else:
+                            other_imports.add(name)
+                else:
+                    other_imports.update(a.asname or a.name for a in stmt.names)
+        blocked = {n.id for n in _scope_nodes(scope)
+                   if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+        blocked.update(other_imports)
+        blocked.update(stmt.name for stmt in scope.body
+                       if isinstance(stmt, (ast.FunctionDef,
+                                            ast.AsyncFunctionDef, ast.ClassDef)))
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = scope.args
+            blocked.update(a.arg for a in (args.posonlyargs + args.args +
+                                            args.kwonlyargs))
+            if args.vararg:
+                blocked.add(args.vararg.arg)
+            if args.kwarg:
+                blocked.add(args.kwarg.arg)
+        for names in (ciphers, modes, algorithms, gcm, py_aes):
+            names.difference_update(blocked)
+
+        def pycrypto_cbc_iv(expr, resolve):
+            if not attr_call(expr, py_aes, 'new') or len(expr.args) < 2:
+                return None
+            mode = expr.args[1]
+            if not (isinstance(mode, ast.Attribute) and mode.attr == 'MODE_CBC'
+                    and isinstance(mode.value, ast.Name) and mode.value.id in py_aes):
+                return None
+            iv = expr.args[2] if len(expr.args) >= 3 else next(
+                (k.value for k in expr.keywords if k.arg == 'iv'), None)
+            info = resolve(iv)
+            return info if info and info[0] == 16 else None
+
+        for node in _scope_nodes(scope):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            # Cipher(algorithms.AES(key), modes.CBC(b'...')).encryptor()
+            if node.func.attr == 'encryptor' and not node.args and not node.keywords:
+                cipher = node.func.value
+                if (isinstance(cipher, ast.Call) and isinstance(cipher.func, ast.Name)
+                        and cipher.func.id in ciphers and len(cipher.args) >= 2
+                        and attr_call(cipher.args[0], algorithms, 'AES')
+                        and attr_call(cipher.args[1], modes, 'CBC')):
+                    mode = cipher.args[1]
+                    iv = mode.args[0] if mode.args else next(
+                        (k.value for k in mode.keywords
+                         if k.arg == 'initialization_vector'), None)
+                    nbytes = _literal_byte_length(iv)
+                    if nbytes == 16:
+                        hits.add((FIXED_CBC_IV_RULE, iv.lineno, nbytes,
+                                  'Cipher.encryptor'))
+            # AESGCM(key).encrypt(b'...', plaintext, associated_data)
+            if node.func.attr == 'encrypt' and isinstance(node.func.value, ast.Call):
+                ctor = node.func.value
+                py_iv = pycrypto_cbc_iv(ctor, lambda value: (
+                    (_literal_byte_length(value), value.lineno)
+                    if _literal_byte_length(value) is not None else None))
+                if py_iv:
+                    hits.add((FIXED_CBC_IV_RULE, py_iv[1], py_iv[0],
+                              'AES.new.encrypt'))
+                if (isinstance(ctor.func, ast.Name) and ctor.func.id in gcm
+                        and (ctor.args or any(k.arg == 'key' for k in ctor.keywords))):
+                    nonce = node.args[0] if node.args else next(
+                        (k.value for k in node.keywords if k.arg == 'nonce'), None)
+                    nbytes = _literal_byte_length(nonce)
+                    if nbytes == 12:
+                        hits.add((FIXED_GCM_NONCE_RULE, nonce.lineno, nbytes,
+                                  'AESGCM.encrypt'))
+
+        # Straight-line local propagation covers the common library idiom:
+        # iv = b'...'; cipher = Cipher(AES(key), CBC(iv)); cipher.encryptor().
+        # Never borrow a value across branches or assume a constructor is used
+        # for encryption merely because it exists.
+        literals, cipher_vars, pycrypto_vars, aead_vars = {}, {}, {}, set()
+
+        def byte_info(expr):
+            size = _literal_byte_length(expr)
+            if size is not None:
+                return size, expr.lineno
+            if isinstance(expr, ast.Name):
+                return literals.get(expr.id)
+            return None
+
+        def cipher_iv(expr):
+            if not (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
+                    and expr.func.id in ciphers and len(expr.args) >= 2
+                    and attr_call(expr.args[0], algorithms, 'AES')
+                    and attr_call(expr.args[1], modes, 'CBC')):
+                return None
+            mode = expr.args[1]
+            iv = mode.args[0] if mode.args else next(
+                (k.value for k in mode.keywords
+                 if k.arg == 'initialization_vector'), None)
+            info = byte_info(iv)
+            return info if info and info[0] == 16 else None
+
+        def is_aead_ctor(expr):
+            return (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
+                    and expr.func.id in gcm and
+                    (expr.args or any(k.arg == 'key' for k in expr.keywords)))
+
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef, ast.Import, ast.ImportFrom)):
+                continue
+            if isinstance(stmt, ast.Assign):
+                expr = stmt.value
+                targets = [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+            elif isinstance(stmt, ast.AnnAssign):
+                expr = stmt.value
+                targets = [stmt.target.id] if isinstance(stmt.target, ast.Name) else []
+            elif isinstance(stmt, (ast.Expr, ast.Return)):
+                expr = stmt.value
+                targets = []
+            else:
+                # Control flow might rebind any local name on one path.
+                stores = {n.id for n in ast.walk(stmt)
+                          if isinstance(n, ast.Name) and
+                          isinstance(n.ctx, (ast.Store, ast.Del))}
+                for name in stores:
+                    literals.pop(name, None)
+                    cipher_vars.pop(name, None)
+                    pycrypto_vars.pop(name, None)
+                    aead_vars.discard(name)
+                continue
+
+            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+                receiver = expr.func.value
+                if isinstance(receiver, ast.Name):
+                    if (expr.func.attr == 'encryptor' and not expr.args and
+                            not expr.keywords and receiver.id in cipher_vars):
+                        size, source_line = cipher_vars[receiver.id]
+                        hits.add((FIXED_CBC_IV_RULE, source_line, size,
+                                  'Cipher.encryptor'))
+                    elif expr.func.attr == 'encrypt' and receiver.id in aead_vars:
+                        nonce = expr.args[0] if expr.args else next(
+                            (k.value for k in expr.keywords if k.arg == 'nonce'), None)
+                        info = byte_info(nonce)
+                        if info and info[0] == 12:
+                            hits.add((FIXED_GCM_NONCE_RULE, info[1], info[0],
+                                      'AESGCM.encrypt'))
+                    elif expr.func.attr == 'encrypt' and receiver.id in pycrypto_vars:
+                        size, source_line = pycrypto_vars[receiver.id]
+                        hits.add((FIXED_CBC_IV_RULE, source_line, size,
+                                  'AES.new.encrypt'))
+
+            info = byte_info(expr)
+            cipher_info = cipher_iv(expr)
+            pycrypto_info = pycrypto_cbc_iv(expr, byte_info)
+            aead_ctor = is_aead_ctor(expr)
+            for name in targets:
+                literals.pop(name, None)
+                cipher_vars.pop(name, None)
+                pycrypto_vars.pop(name, None)
+                aead_vars.discard(name)
+                if info:
+                    literals[name] = info
+                elif cipher_info:
+                    cipher_vars[name] = cipher_info
+                elif pycrypto_info:
+                    pycrypto_vars[name] = pycrypto_info
+                elif aead_ctor:
+                    aead_vars.add(name)
+
+        children = (ciphers, modes, algorithms, gcm, py_aes)
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit_scope(stmt, tuple(frozenset(s) for s in children))
+            elif isinstance(stmt, ast.ClassDef):
+                for child in stmt.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        visit_scope(child, tuple(frozenset(s) for s in children))
+
+    visit_scope(tree)
+    return sorted(hits)
+
+
 def _hash_tokens(source):
     """Limited recovery for a newer-Python file that Python 3.11 cannot parse.
 
@@ -333,12 +573,13 @@ def scan(root, diagnostics=None):
                 # do not pretend that the entire AST was analyzed.
                 partial = True
                 coverage['partial_parse_files'] += 1
-                lines, hash_hits, rsa_sizes = [], _hash_tokens(source), []
+                lines, hash_hits, rsa_sizes, direct_iv = [], _hash_tokens(source), [], []
             else:
                 coverage['full_ast_files'] += 1
                 lines, hash_hits = _lines(tree), _hash_lines(tree)
                 rsa_sizes = _weak_rsa_key_sizes(tree)
-            if not lines and not hash_hits and not rsa_sizes:
+                direct_iv = _direct_fixed_iv_nonce(tree)
+            if not lines and not hash_hits and not rsa_sizes and not direct_iv:
                 continue
             rel = os.path.relpath(path, root).replace('\\', '/')
             if lines:
@@ -445,6 +686,34 @@ def scan(root, diagnostics=None):
                         'references': [RSA_KEY_SIZE_REFERENCE],
                     },
                     'tags': ['python-ast', 'weak-rsa-key-size'],
+                })
+            for rule_id, line, nbytes, api in direct_iv:
+                is_cbc = rule_id == FIXED_CBC_IV_RULE
+                finding_id = hashlib.sha1(
+                    ('%s|%s|%d' % (rel, rule_id, line)).encode('utf-8')).hexdigest()[:12]
+                findings.append({
+                    'schema_version': '0.1', 'finding_id': finding_id,
+                    'finding_kind': 'configuration', 'rule_id': rule_id,
+                    'file': rel, 'line': line,
+                    'algorithm': 'AES-CBC' if is_cbc else 'AES-GCM',
+                    'algorithm_normalized': 'AESCBC' if is_cbc else 'AESGCM',
+                    'usage': 'encryption', 'risk': 'not_applicable',
+                    'severity': 'high' if is_cbc else 'medium',
+                    'confidence': 0.95 if is_cbc else 0.85,
+                    'evidence': [{
+                        'tool': TOOL_NAME, 'kind': 'ast', 'lines': [line],
+                        'raw': {'rule_id': rule_id,
+                                'api': api,
+                                'literal_bytes': nbytes},
+                    }],
+                    'evidence_refs': ['E1'],
+                    'remediation': {
+                        'decided': True, 'reason': 'decided', 'source': 'rule-base',
+                        'action': CBC_ACTION if is_cbc else GCM_ACTION,
+                        'references': [CBC_REFERENCE if is_cbc else GCM_REFERENCE],
+                    },
+                    'tags': ['python-ast', 'fixed-iv' if is_cbc else 'fixed-nonce',
+                             'runtime-reuse-unverified'],
                 })
     if diagnostics is not None:
         diagnostics.update(coverage)

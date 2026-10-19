@@ -557,6 +557,8 @@ function sevRank(s){ return SEVS.indexOf(s) < 0 ? 99 : SEVS.indexOf(s); }
 function riskCls(r){ return RISKS.indexOf(r) < 0 ? 'review' : r; }
 function subjectOf(f){
   if(f.rule_id === 'PY-RSA-KEYSIZE-LT2048') return 'RSA 密钥长度不足';
+  if(f.rule_id === 'PY-CBC-FIXED-IV-DIRECT') return 'CBC 加密使用固定 IV';
+  if(f.rule_id === 'PY-GCM-FIXED-NONCE-DIRECT') return 'GCM 加密使用固定 Nonce';
   return f.finding_kind === 'credential' ? (f.rule_id || '凭据问题')
                                          : (f.algorithm || '—');
 }
