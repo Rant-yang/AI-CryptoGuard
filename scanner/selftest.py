@@ -405,6 +405,23 @@ def test_split_combined_and_no_algorithm(check):
     check('CryptoScan 的 DESede 命中纠正为 3DES，真正的 DES 不受影响',
           sorted((g['alg_norm'], g['lines']) for g in des_rows),
           [('3DES', [121]), ('DES', [151])])
+    ec_rows = cryptoscan.to_groups({'findings': [
+        {'algorithm': 'ECC', 'match': 'ECDH', 'file': r'D:\p\ec.java',
+         'line': 16, 'purpose': 'general', 'severity': 3},
+        {'algorithm': 'ECDH', 'match': 'ECDH', 'file': r'D:\p\ec.java',
+         'line': 16, 'purpose': 'key-exchange', 'severity': 3},
+        {'algorithm': 'ECC', 'match': 'secp256r1', 'file': r'D:\p\ec.java',
+         'line': 10, 'purpose': 'general', 'severity': 3},
+        {'algorithm': 'ECDSA', 'match': 'ECDSA', 'file': r'D:\p\ec.java',
+         'line': 16, 'purpose': 'signing', 'severity': 3},
+    ]}, r'D:\p')
+    ec_merged = merge(ec_rows)
+    check('精确 ECDH 命中融合；曲线家族与同一行签名保持独立',
+          sorted(f['algorithm_normalized'] for f in ec_merged), ['ECC', 'ECDH', 'ECDSA'])
+    dh = next(f for f in ec_merged if f['algorithm_normalized'] == 'ECDH')
+    check('ECDH 保留上游泛称原始证据',
+          any(r.get('algorithm') == 'ECC' for e in dh['evidence']
+              for r in e.get('raw', {}).get('records', [])), True)
 
 
 def test_cryptoscan_usage_fuse(check):

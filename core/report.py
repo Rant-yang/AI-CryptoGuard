@@ -53,9 +53,11 @@ def _file(value):
 
 
 def render_report(findings, task=None):
+    from core.project_overview import build_overview
     if not isinstance(findings, list) or not all(isinstance(f, dict) for f in findings):
         raise ValueError('Report input must be a findings array')
     task = task if isinstance(task, dict) else {}
+    overview = build_overview(findings, task)
     counts = collections.Counter(f.get('severity') for f in findings)
     explained = sum(f.get('stage') == 'explained' for f in findings)
     severity_rank = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
@@ -130,14 +132,12 @@ def render_report(findings, task=None):
                            _text(STATUS.get(stage.get('status'), stage.get('status', '未知')), 30),
                            ('（%s）' % _text(stage.get('reason'), 120)) if stage.get('reason') else ''))
     top = []
-    for row in ordered[:5]:
-        kind = row.get('finding_kind', 'algorithm')
-        label = _subject(row)
-        conditional = 'conditional-default' in (row.get('tags') or [])
-        top.append('<li>%s · %s · %s:%s%s</li>' %
-                   (_text(SEVERITY.get(row.get('severity'), '未分级'), 20),
-                    _text(label or kind, 120), _file(row.get('file')),
-                    _text(row.get('line'), 20), ' · 仅备用值' if conditional else ''))
+    for action in overview['actions']:
+        top.append('<li><b>%s · %s</b><p>%s</p><small>%s · %s · %s:%s · %s / %s</small></li>' %
+                   (_text(action['severity']), _text(action['title']), _text(action['action']),
+                    _text(action['why']), _text(action['status']), _file(action['file']),
+                    _text(action['line']), _text(action['finding_id']),
+                    _text(', '.join(action['evidence_refs']) or '无可引用证据')))
     return '''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <title>AI-CryptoGuard 审计报告</title><style>
@@ -150,7 +150,8 @@ ol{margin:4px 0 8px;padding-left:28px}li{padding:2px 0}small{font-size:12px}
 </style></head><body><header><h1>AI-CryptoGuard 审计报告</h1>
 <p class="muted">本报告是扫描线索与规则/AI 辅助解释，不是已验证的整改或正式密码测评结论。</p>
 <p>发现 <b>%d</b> 条 · 严重 %d · 高 %d · AI 已解释 %d · AI 未解释 %d</p>
-<h2>优先复核（前 5 条）</h2><ol>%s</ol>
+<p>%s</p>
+<h2>项目行动清单（按优先顺序）</h2><ol>%s</ol>
 <p class="muted">仅按严重程度、条件性标记和置信度初排；实际整改顺序需结合业务影响与项目测试人工确认。</p>
 <h2>执行阶段</h2><ol>%s</ol>
 <p class="muted">证据编号 E1、E2 … 仅指向同一发现中的证据项。未运行/跳过的阶段不能视为阴性结论。
@@ -158,6 +159,7 @@ ol{margin:4px 0 8px;padding-left:28px}li{padding:2px 0}small{font-size:12px}
 %s</body></html>''' % (
          len(findings), counts['critical'], counts['high'], explained,
          len(findings) - explained,
+         _text(overview['timeline_summary']),
          ''.join(top) or '<li>无待复核发现</li>',
          ''.join(stages) or '<li>未提供任务状态；不能确认各阶段是否运行</li>',
          ''.join(blocks) or '<section class="finding">本次没有发现条目；请核对扫描阶段状态。</section>')

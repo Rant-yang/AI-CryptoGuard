@@ -126,6 +126,11 @@ def to_groups(data, target):
         findings = []
     for f in findings:
         algo_raw = f.get('algorithm') or ''
+        # Use the actual matched API algorithm, never alias the whole ECC family.
+        # Keeping the original raw record lets reviewers inspect this correction.
+        if (canon_algorithm(algo_raw) == 'ECC' and
+                norm_algorithm(f.get('match') or '') == 'ECDH'):
+            algo_raw = 'ECDH'
         # CryptoScan 1.4.0 reports the exact match "DESede" as algorithm
         # "DES" (observed at CryptoSamples.java:121).  DESede is 3DES;
         # carrying the upstream label through creates a false DES finding

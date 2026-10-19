@@ -242,6 +242,16 @@ def _absorb_unknown_lines(by_key):
                     tg['lines'] = []
                     tg['usage'] = u       # 归属已迁到具体用途桶，usage 随之更正
                     usage_map[u].append(tg)
+                elif g.get('raw', {}).get('records'):
+                    # Absorbing a line must not discard the record that proves
+                    # why a generic upstream label was resolved to this bucket.
+                    raw = dict(tg.get('raw') or {})
+                    records = list(raw.get('records') or [])
+                    for record in g['raw']['records']:
+                        if record.get('line') in lns and record not in records:
+                            records.append(record)
+                    raw['records'] = records
+                    tg['raw'] = raw
                 tg['lines'] = tg['lines'] + lns
             if stay:
                 g['lines'] = stay

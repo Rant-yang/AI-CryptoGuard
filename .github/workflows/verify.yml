@@ -45,11 +45,13 @@ jobs:
           python -m setup.submission_audit_selftest
           python -m setup.prepare_submission_selftest
           python web/server_selftest.py
+          python web/product_selftest.py
       - name: Render committed public fixture in the Web viewer
         run: |
           mkdir -p out
           cp core/samples/example_finding.json out/ci-fixture.json
           node web/selftest.js ci-fixture.json
+          node web/product_selftest.js
       - name: Prepare pinned external Linux scanners outside the checkout
         run: |
           set -euo pipefail

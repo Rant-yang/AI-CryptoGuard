@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 from core.quantum_timeline import make_profile  # noqa: E402
 from ai.redact import scrub  # noqa: E402
 from core.report import render_report  # noqa: E402
+from core.project_overview import build_overview  # noqa: E402
 
 TASK_BASE = ROOT / "workspace" / "web_tasks"
 PORT = int(os.environ.get("ACG_WEB_PORT", "8000"))
@@ -80,9 +81,11 @@ def _task_dir(task_id):
 
 def _remove_task(task_id):
     path = _task_dir(task_id)
-    if path.exists():
-        shutil.rmtree(path)
     with LOCK:
+        if (TASKS.get(task_id) or {}).get('state') in ('queued', 'running'):
+            raise ValueError('任务仍在运行，不能删除')
+        if path.exists():
+            shutil.rmtree(path)
         TASKS.pop(task_id, None)
 
 
@@ -156,7 +159,107 @@ def _snapshot(task_id):
             task["pipeline"] = json.loads(task_json.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             task["pipeline"] = None
+    task['ai_feedback'] = _ai_feedback(task_id, task)
     return task
+
+
+def _ai_feedback(task_id, task):
+    stages = ((task.get('pipeline') or {}).get('stages') or [])
+    status = next((s.get('status') for s in stages if s.get('name') == 'ai'), None)
+    failed = task.get('ai_enabled') and status == 'failed'
+    feedback = {'retry_available': bool(failed and task.get('state') == 'completed'),
+                'message': '', 'categories': []}
+    if not failed:
+        return feedback
+    labels = {
+        'APIConnectionError': '模型服务连接失败：检查网络及服务地址后重试',
+        'APITimeoutError': '模型服务响应超时，可稍后重试',
+        'AuthenticationError': '模型认证失败：请在本机检查密钥配置',
+        'PermissionDeniedError': '模型访问被拒绝：请检查模型权限',
+        'RateLimitError': '模型服务限流或额度不足，请检查额度后重试',
+        'max_tokens': '模型输出达到长度上限',
+    }
+    path = _task_dir(task_id) / 'out' / 'findings_explained.json.failures.json'
+    try:
+        failures = json.loads(path.read_text(encoding='utf-8'))
+        categories = {f.get('category') for f in failures if isinstance(f, dict)}
+    except (OSError, ValueError, TypeError):
+        categories = set()
+    if not os.environ.get('ANTHROPIC_AUTH_TOKEN') or not os.environ.get('ANTHROPIC_MODEL'):
+        feedback['message'] = '本机模型配置不完整；请配置后重启服务。扫描结果已保留。'
+        feedback['retry_available'] = False
+    else:
+        messages = sorted({labels.get(c, '部分模型输出未通过校验或服务发生异常') for c in categories})
+        feedback['message'] = '；'.join(messages or ['AI 解释未完成，可仅重试 AI']) + '。扫描与规则结果已保留。'
+    feedback['categories'] = sorted(c for c in categories if c in labels)
+    return feedback
+
+
+def _retry_ai_command(task_id):
+    out = _task_dir(task_id) / 'out'
+    return [sys.executable, str(ROOT / 'ai' / 'enrich_v02.py'),
+            str(out / 'findings_assessed.json'), '-o', str(out / 'findings_explained.json'),
+            '--resume', '--checkpoint', '1', '--context', _snapshot(task_id)['ai_context']]
+
+
+def _run_ai_retry(task_id):
+    """Run enrichment only; checkpoint/reuse semantics belong to enrich_v02."""
+    from core.pipeline import _write, _stage
+    out = _task_dir(task_id) / 'out'
+    started = time.time()
+    pipeline = json.loads((out / 'task.json').read_text(encoding='utf-8'))
+    def save(status, reason=None):
+        pipeline['stages'] = [(_stage('ai', status, reason, time.time() - started, 'ai-v0.2')
+                               if s['name'] == 'ai' else s) for s in pipeline['stages']]
+        _write(out / 'task.json', pipeline)
+    _set_task(task_id, state='running', message='仅重试 AI；保留扫描及规则评估结果')
+    save('running')
+    try:
+        with (_task_dir(task_id) / 'ai-retry.log').open('wb') as log:
+            proc = subprocess.run(_retry_ai_command(task_id), cwd=str(ROOT), stdout=log,
+                                  stderr=subprocess.STDOUT, timeout=900)
+        save('completed' if proc.returncode == 0 else 'failed',
+             'AI 重试完成；复用通过一致性校验的已有解释。' if proc.returncode == 0 else
+             'AI 仍有未完成项；本地扫描结果及有效解释已保留。')
+    except (OSError, subprocess.TimeoutExpired):
+        save('failed', 'AI 重试启动失败或超时；已保留阶段结果。')
+    _set_task(task_id, state='completed', message='AI 重试结束；扫描与规则结果未重新执行')
+
+
+def _run_ai_retry_safe(task_id):
+    try:
+        _run_ai_retry(task_id)
+    except Exception:
+        try:
+            from core.pipeline import _write, _stage
+            path = _task_dir(task_id) / 'out' / 'task.json'
+            pipeline = json.loads(path.read_text(encoding='utf-8'))
+            pipeline['stages'] = [(_stage('ai', 'failed', 'AI 重试内部异常；扫描结果已保留')
+                                   if s['name'] == 'ai' else s) for s in pipeline['stages']]
+            _write(path, pipeline)
+        except (OSError, ValueError, KeyError):
+            pass
+        _set_task(task_id, state='completed', message='AI 重试异常；扫描结果已保留')
+
+
+def _queue_ai_retry(task_id):
+    out = _task_dir(task_id) / 'out'
+    with LOCK:
+        task = TASKS.get(task_id)
+        if not task or task['state'] != 'completed' or not task.get('ai_enabled'):
+            raise ValueError('只有已结束且启用 AI 的任务可以重试')
+        try:
+            pipeline = json.loads((out / 'task.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            raise ValueError('任务状态无法读取，不能重试 AI')
+        stages = {s['name']: s['status'] for s in pipeline['stages']}
+        if (stages.get('ai') != 'failed' or stages.get('quantum_assessment') != 'completed'
+                or not (out / 'findings_assessed.json').is_file()):
+            raise ValueError('没有可重试的 AI 阶段')
+        if not os.environ.get('ANTHROPIC_AUTH_TOKEN') or not os.environ.get('ANTHROPIC_MODEL'):
+            raise ValueError('请先配置本机模型并重启服务')
+        task.update(state='queued', message='准备仅重试 AI，不重新扫描')
+    threading.Thread(target=_run_ai_retry_safe, args=(task_id,), daemon=True).start()
 
 
 def _set_task(task_id, **values):
@@ -309,6 +412,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed, parts = self._api_parts()
         try:
+            if len(parts) == 4 and parts[:2] == ['api', 'tasks'] and parts[3] == 'retry-ai':
+                _queue_ai_retry(parts[2])
+                return self._send_json(202, _snapshot(parts[2]))
             if parsed.path == "/api/tasks":
                 meta = json.loads(self._body().decode("utf-8"))
                 if int(meta.get("file_count") or 0) > MAX_FILES:
@@ -388,7 +494,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             if len(parts) == 3 and parts[:2] == ["api", "tasks"]:
                 return self._send_json(200, _snapshot(parts[2]))
-            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] in ("result", "report"):
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] and parts[3] in ("result", "report", "summary"):
                 out = _task_dir(parts[2]) / "out"
                 result = out / "findings_explained.json"
                 if not result.is_file():
@@ -397,6 +503,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     return self._send_json(409, {"error": "result not ready"})
                 rows = json.loads(result.read_text(encoding="utf-8-sig"))
                 safe_rows = _safe_result_rows(rows)
+                if parts[3] == 'summary':
+                    task_file = out / 'task.json'
+                    task = json.loads(task_file.read_text(encoding='utf-8-sig')) if task_file.is_file() else None
+                    return self._send_json(200, build_overview(safe_rows, task))
                 if parts[3] == "report":
                     task_file = out / "task.json"
                     task = json.loads(task_file.read_text(encoding="utf-8-sig")) if task_file.is_file() else None

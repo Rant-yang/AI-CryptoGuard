@@ -49,6 +49,14 @@
   }
   .m{font-family:var(--mono)}
   .num{font-variant-numeric:tabular-nums}
+  #projectOverview{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:22px;margin:16px 22px}
+  #projectOverview h2{margin:0;font-size:20px}
+  #projectOverview>p{margin:7px 0}
+  .project-actions{padding:0;list-style:none;counter-reset:action;display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}
+  .project-actions li{counter-increment:action;border:1px solid var(--rule);border-left:3px solid var(--info);border-radius:5px;padding:14px;overflow-wrap:anywhere}
+  .project-actions li::before{content:counter(action,decimal-leading-zero);font:600 13px var(--mono);color:var(--info);margin-right:8px}
+  .project-actions p{margin:9px 0 0}.project-actions .btn{white-space:normal;text-align:left}
+  #projectOverview summary{cursor:pointer;color:var(--ink2)}
 
   /* ============================ 本地扫描入口 ============================ */
   .scan-gate{
@@ -397,7 +405,7 @@
       </div>
       <details class="timeline-config" open>
         <summary>量子危机时间窗口（可选，不填则不下结论）</summary>
-        <p class="timeline-help">X + Y ≥ Z 时立即迁移。三个数字必须同时填写，系统不会预测 Q-Day。</p>
+        <p class="timeline-help">X 是数据还需保密多久，Y 是预计完成迁移需要多久，Z 是组织采用的量子威胁情景假设。三项都由你填写；不确定可留空。系统不会预测 Q-Day，X + Y ≥ Z 表示该情景下应尽快启动迁移准备，具体仍需结合用途与暴露情况。</p>
         <div class="timeline-grid">
           <label class="timeline-field">保密有效期 X（年）<input id="qtX" type="number" min="0" max="200" step="0.5" placeholder="例如 10"></label>
           <label class="timeline-field">迁移准备期 Y（年）<input id="qtY" type="number" min="0" max="200" step="0.5" placeholder="例如 3"></label>
@@ -449,6 +457,7 @@
           <div class="scan-phase" data-phase="report"><i></i>生成风险视图</div>
         </div>
         <button class="scan-action" id="scanReset" type="button">扫描另一个项目</button>
+        <button class="scan-action" id="retryAi" type="button" hidden>仅重试 AI（保留扫描结果）</button>
       </div>
     </div>
   </div>
@@ -456,6 +465,7 @@
 
 <div class="hero" id="stats"></div>
 <div class="figs" id="figs"></div>
+<section class="hero" id="projectOverview" hidden aria-label="项目总览与行动清单"></section>
 <div class="filters" id="filters"></div>
 
 <main>
@@ -959,6 +969,8 @@ function boot(rows, from){
   const live = /^本地任务 (web-[a-z0-9]+)$/.exec(from);
   $('#reportDownload').hidden = !live;
   if(live) $('#reportDownload').href = `/api/tasks/${live[1]}/report`;
+  $('#projectOverview').hidden = true;
+  if(live) loadOverview(live[1], from);
   const files = new Set(S.rows.map(f => f.file)).size;
   $('#hmeta').innerHTML =
     `<span><b>${S.rows.length}</b> 条发现</span>` +
@@ -975,6 +987,36 @@ async function start(){
   $('#reportDownload').hidden = true;
   $('#hmeta').innerHTML = '<span>尚无报告</span><span>请扫描项目或导入已有 JSON</span>';
   $('#list').innerHTML = '<div class="empty">尚无扫描结果。请使用上方入口选择项目文件夹。</div>';
+}
+
+async function loadOverview(taskId, from){
+  try{
+    const overview = await api(`/api/tasks/${taskId}/summary`);
+    if(S.src !== from) return;
+    const items = overview.actions || [];
+    $('#projectOverview').innerHTML = `<h2>项目总览 · 下一步做什么</h2>
+      <p>${esc(overview.summary)}</p><p class="loc">${esc(overview.timeline_summary||'')}</p><p class="loc">${esc(overview.basis)}</p>
+      <ol class="project-actions">${items.slice(0,5).map(a=>`<li>
+        <button type="button" class="btn" data-finding="${esc(a.finding_id)}">${esc(a.severity)} · ${esc(a.title)}</button>
+        <p>${esc(a.action)}</p><p class="loc">${esc(a.why)} · ${esc(a.source)} · ${esc(a.status)}</p>
+        <p class="loc">${esc(a.file)}:${esc(a.line)} · ${esc(a.finding_id)} / ${esc(a.evidence_refs.join('、')||'无可引用证据')}</p>
+      </li>`).join('') || '<li>当前没有发现条目；请结合执行阶段确认扫描范围。</li>'}</ol>
+      ${items.length>5?`<p class="loc">优先展示前 5 项；全部 ${items.length} 项请下载报告或逐项查看下方列表。</p>`:''}
+      <details><summary>覆盖范围与待确认事项</summary><ul>${overview.gaps.map(g=>`<li>${esc(g)}</li>`).join('')||'<li>各阶段已执行；仍需人工确认业务影响并验证整改。</li>'}</ul></details>`;
+    $('#projectOverview').hidden = false;
+    $('#projectOverview').querySelectorAll('[data-finding]').forEach(button=>{
+      button.onclick=()=>{
+        const row=S.rows.find(f=>f.finding_id===button.dataset.finding);
+        if(!row)return;
+        S.sel=row; renderList(); renderDetail();
+        $('#detail').scrollIntoView({behavior:'smooth'});
+      };
+    });
+  }catch(error){
+    if(S.src!==from)return;
+    $('#projectOverview').hidden=false;
+    $('#projectOverview').textContent='项目总览暂未加载；下方单项扫描结果仍可查看。';
+  }
 }
 
 function readFile(file){
@@ -1141,6 +1183,7 @@ async function uploadProject(rawItems){
   if(total>64*1024*1024) throw new Error('项目超过 64 MiB，请先排除依赖和构建产物。');
 
   scanBusy=true;
+  $('#retryAi').hidden=true;
   $('#projectDrop').hidden=true; $('#scanState').hidden=false;
   ['upload','scan','deep','quantum','ai','report'].forEach(x=>phase(x,''));
   phase('upload','active'); startCipher();
@@ -1191,7 +1234,9 @@ async function pollTask(taskId){
       setScanState('正在装载统一风险视图',`${task.findings_count||0} 条发现`,94);
       const rows=await api(`/api/tasks/${taskId}/result`);
       phase('report','done'); scanBusy=false; stopCipher();
-      setScanState('本地审计完成',`${rows.length} 条发现 · 点击下方条目查看证据`,100);
+      const feedback=task.ai_feedback||{};
+      $('#retryAi').hidden=!feedback.retry_available;
+      setScanState(task.message||'本地审计完成',feedback.message||`${rows.length} 条发现 · 点击下方条目查看证据`,100);
       boot(rows,`本地任务 ${taskId}`);
       setTimeout(()=>document.querySelector('#stats').scrollIntoView({behavior:'smooth'}),500);
       return;
@@ -1199,7 +1244,9 @@ async function pollTask(taskId){
     const stages=((task.pipeline||{}).stages||[]);
     const deep=stages.find(s=>s.name==='deep_java');
     const q=stages.find(s=>s.name==='quantum_assessment');
-    if(deep && deep.status==='running') setScanState('正在分析 Java 字节码与调用关系','CrySentry 深度证据，结果会与快速扫描融合',58);
+    const ai=stages.find(s=>s.name==='ai');
+    if(ai && ai.status==='running') setScanState('正在生成有证据依据的 AI 解释','扫描与规则评估已完成；模型逐条处理，结果会保留',86);
+    else if(deep && deep.status==='running') setScanState('正在分析 Java 字节码与调用关系','CrySentry 深度证据，结果会与快速扫描融合',58);
     else if(q && q.status==='running') setScanState('正在按规则库评估量子风险','确定性判断不交给大模型',76);
     else setScanState(task.message||'正在执行本地扫描','多源证据正在归并',45);
     await sleep(650);
@@ -1225,6 +1272,19 @@ $('#scanReset').onclick=async()=>{
   if(currentTask) await fetch(`/api/tasks/${currentTask}`,{method:'DELETE'}).catch(()=>{});
   currentTask=null; $('#scanState').hidden=true; $('#projectDrop').hidden=false;
   $('#projectPicker').value='';
+};
+
+$('#retryAi').onclick=async()=>{
+  if(scanBusy||!currentTask)return;
+  scanBusy=true; $('#retryAi').hidden=true; startCipher();
+  try{
+    setScanState('准备仅重试 AI','复用通过校验的已有解释，不重新扫描项目',82);
+    await api(`/api/tasks/${currentTask}/retry-ai`,{method:'POST'});
+    await pollTask(currentTask);
+  }catch(error){
+    scanBusy=false; stopCipher(); $('#retryAi').hidden=false;
+    setScanState('AI 重试未完成；扫描结果已保留',error.message,100);
+  }
 };
 
 document.addEventListener('dragover', e => { e.preventDefault(); });
