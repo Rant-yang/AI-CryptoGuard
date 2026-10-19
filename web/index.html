@@ -302,6 +302,10 @@
   .verdict.v-warn{border-left-color:var(--warn)}
   .verdict .why{font-size:12.5px; color:var(--ink2); margin-top:9px; line-height:1.6}
   .verdict .txt{margin-top:9px; font-size:14px}
+  .ai-summary{font-size:13.5px;line-height:1.75;color:var(--ink)}
+  .ai-support{margin-top:12px;border-top:1px solid var(--rule2);padding-top:9px}
+  .ai-support summary{cursor:pointer;color:var(--ink2);font-size:12px;user-select:none}
+  .ai-support .why{margin-top:8px;font-size:12px;line-height:1.65;color:var(--ink2)}
   .refs{display:flex; gap:5px; flex-wrap:wrap; margin-top:11px}
   .ref{
     font-family:var(--mono); font-size:11px; color:var(--ink2);
@@ -907,13 +911,16 @@ function renderDetail(){
     <section class="blk">
       <h3>AI 解释</h3>
       <div class="box">
-        ${f.usage_assessment ? `<div class="why">用途判断：${esc(USAGE_CN[f.usage_assessment.usage]||f.usage_assessment.usage)} · ${esc(f.usage_assessment.reason)}</div>
-          ${(f.usage_assessment.unknowns||[]).map(x=>`<div class="why">待确认：${esc(x)}</div>`).join('')}
-          <div class="refs">用途依据：${(f.usage_assessment.evidence_refs||[]).map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>` : ''}
-        ${ex_or(f.explanation)}
+        <div class="ai-summary">${ex_or(f.explanation)}</div>
         ${(f.evidence_refs||[]).length
           ? `<div class="refs"><span class="loc">引用证据：</span>${f.evidence_refs.map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>`
           : ''}
+        ${f.usage_assessment ? `<details class="ai-support">
+          <summary>查看用途判断依据${(f.usage_assessment.unknowns||[]).length ? ` · ${(f.usage_assessment.unknowns||[]).length} 项待确认` : ''}</summary>
+          <div class="why">用途：${esc(USAGE_CN[f.usage_assessment.usage]||f.usage_assessment.usage)}。${esc(f.usage_assessment.reason)}</div>
+          ${(f.usage_assessment.unknowns||[]).map(x=>`<div class="why">待确认：${esc(x)}</div>`).join('')}
+          <div class="refs">用途依据：${(f.usage_assessment.evidence_refs||[]).map(x=>`<span class="ref">${esc(x)}</span>`).join('')}</div>
+        </details>` : ''}
       </div>
     </section>
 
