@@ -69,7 +69,13 @@ def _fill_cover(doc, number):
     paragraphs[2].text = '作品类别：☑软件设计   □硬件制作   □工程实践'
     paragraphs[3].text = '□密码应用技术   □其它'
     paragraphs[14].text = '作品题目：' + TITLE
-    paragraphs[22].text = '2026 年 10 月'
+    # The 2026 template keeps its issuing body's name immediately after the
+    # date. An older fixed index overwrote that name and rendered two dates on
+    # the cover. Locate the date itself and fail on ambiguous templates.
+    dates = [p for p in paragraphs[:24] if '年' in p.text and '月' in p.text]
+    if len(dates) != 1:
+        raise ValueError('Expected exactly one date line on report cover')
+    dates[0].text = '2026 年 10 月'
     # The official template explicitly instructs entrants to delete this note.
     for p in list(doc.paragraphs):
         if '提交作品时请将此段落文字删除' in p.text:
@@ -232,6 +238,11 @@ def _scrub_package_metadata(source_path, output_path):
 
 def _audit_generated_report(path, number):
     doc = Document(path)
+    cover = doc.paragraphs[:24]
+    if sum('年' in p.text and '月' in p.text for p in cover) != 1:
+        raise ValueError('Report cover must contain exactly one date line')
+    if not any('中国密码学会' in p.text for p in cover):
+        raise ValueError('Official cover issuing body was lost')
     body = '\n'.join(p.text for p in doc.paragraphs)
     body += '\n' + '\n'.join(
         cell.text for table in doc.tables for row in table.rows for cell in row.cells)
