@@ -1,38 +1,6 @@
-# setup/ —— 三个工具怎么装
+# 部署指南
 
-> 🔴 **工具本体不入库。** 这个目录只放"怎么下载"和"踩过的坑"。
-> CrySentry 解包后 **444MB**，塞进仓库就废了，而且历史里删不掉。
-
-## 制作源码提交候选包（仅完整开发仓库）
-
-本节的 `package.py`、`support_bundle.py`、`prepare_submission.py` 及其核查脚本是团队制作提交材料时使用的工具，
-**不包含在匿名源码候选包内**。支撑材料合包和正式核查步骤见[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)。如果你拿到的是解压后的匿名包，请跳过本节，
-直接按下文的“新环境先做只读预检”运行 `setup/preflight.py`；不要运行
-`python -m setup.package_selftest`，否则会因缺少该模块而报错。
-
-仓库根目录运行（Windows cmd；输出路径可换）：
-
-```cmd
-python setup\package.py -o D:\code_competition\AI-CryptoGuard-source.zip
-python setup\package.py --anonymous -o D:\code_competition\AI-CryptoGuard-anonymous-source.zip
-python -m setup.package_selftest
-python -m setup.prepare_submission_selftest
-```
-
-只从**已提交的 HEAD** 读取跟踪文件，不读取本机工作区；压缩包内附
-`RELEASE_MANIFEST.json`（提交号、逐文件 SHA-256），重复构建同一提交得到相同字节。
-缺少 README、统一入口、Web 或第三方来源说明时拒绝打包；路径、符号链接、
-`.env*`、`workspace/`、`out/`、benchmark 派生数据和第三方二进制被拒绝。
-这是**源码候选包**，不含 CryptoScan、cbom-scan、CrySentry、JDK、测试数据或真实凭据。
-`--anonymous` 另生成网络评审候选包：只纳入运行源码、三个选定的技术说明，
-将根 README 换成无团队身份的 `setup/submission_readme.md`；对已知成员账号和
-`C:\Users\<账号>` 路径执行拒绝检查。它不包含历史会议文档或当前内部进度材料。
-**自动检查不能替代人工逐文件、截图及元数据复核**，也不等于报告已按官方模板排版；
-提交前按[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)检查。
-评委机需按本页单独准备第三方工具；不要把候选包说成免安装独立产品。
-正式提交前仍需核对比赛要求、异机部署、最终材料与许可证边界。
-
----
+本项目通过外部进程调用扫描工具，工具本体不包含在主仓库中。首次部署请先阅读下方的“三个工具的实际情况”和“新环境先做只读预检”，按需配置快速扫描、Java 深扫及云端 AI。
 
 ## 三个工具的实际情况
 
@@ -301,3 +269,34 @@ setup/
 ├── README.md              本文件
 └── mirror.init.gradle     阿里云镜像 init script（CrySentry 构建用）
 ```
+
+---
+
+## 制作源码提交候选包（仅完整开发仓库）
+
+本节的 `package.py`、`support_bundle.py`、`prepare_submission.py` 及其核查脚本是团队制作提交材料时使用的工具，
+**不包含在匿名源码候选包内**。支撑材料合包和正式核查步骤见[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)。如果你拿到的是解压后的匿名包，请跳过本节，
+直接按下文的“新环境先做只读预检”运行 `setup/preflight.py`；不要运行
+`python -m setup.package_selftest`，否则会因缺少该模块而报错。
+
+仓库根目录运行（Windows cmd；输出路径可换）：
+
+```cmd
+python setup\package.py -o D:\code_competition\AI-CryptoGuard-source.zip
+python setup\package.py --anonymous -o D:\code_competition\AI-CryptoGuard-anonymous-source.zip
+python -m setup.package_selftest
+python -m setup.prepare_submission_selftest
+```
+
+只从**已提交的 HEAD** 读取跟踪文件，不读取本机工作区；压缩包内附
+`RELEASE_MANIFEST.json`（提交号、逐文件 SHA-256），重复构建同一提交得到相同字节。
+缺少 README、统一入口、Web 或第三方来源说明时拒绝打包；路径、符号链接、
+`.env*`、`workspace/`、`out/`、benchmark 派生数据和第三方二进制被拒绝。
+这是**源码候选包**，不含 CryptoScan、cbom-scan、CrySentry、JDK、测试数据或真实凭据。
+`--anonymous` 另生成网络评审候选包：只纳入运行源码、三个选定的技术说明，
+将根 README 换成无团队身份的 `setup/submission_readme.md`；对已知成员账号和
+`C:\Users\<账号>` 路径执行拒绝检查。它不包含历史会议文档或当前内部进度材料。
+**自动检查不能替代人工逐文件、截图及元数据复核**，也不等于报告已按官方模板排版；
+提交前按[复赛提交核查](../docs/复赛提交核查_2026-10-18.md)检查。
+评委机需按本页单独准备第三方工具；不要把候选包说成免安装独立产品。
+正式提交前仍需核对比赛要求、异机部署、最终材料与许可证边界。
