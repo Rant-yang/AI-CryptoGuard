@@ -52,6 +52,7 @@ jobs:
           cp core/samples/example_finding.json out/ci-fixture.json
           node web/selftest.js ci-fixture.json
           node web/product_selftest.js
+          node web/upload_selftest.js
       - name: Prepare pinned external Linux scanners outside the checkout
         run: |
           set -euo pipefail

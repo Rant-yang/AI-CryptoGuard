@@ -1090,11 +1090,18 @@ function cryptoHex(n){
 function sleep(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
 
 async function api(url, options){
-  const response = await fetch(url, options||{});
-  if(response.status===204) return null;
-  const data = await response.json().catch(()=>({error:'本地服务返回了无法解析的响应'}));
-  if(!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-  return data;
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),60000);
+  try{
+    const response = await fetch(url, {...(options||{}),signal:controller.signal});
+    if(response.status===204) return null;
+    const data = await response.json().catch(()=>({error:'本地服务返回了无法解析的响应'}));
+    if(!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  }catch(error){
+    if(error.name==='AbortError') throw new Error('本地服务请求超过 60 秒；请确认服务仍在运行后重试。');
+    throw error;
+  }finally{clearTimeout(timer);}
 }
 
 function usableProjectFiles(items){
@@ -1197,27 +1204,34 @@ async function uploadProject(rawItems){
                          ai_context:$('#aiContext').value,
                          quantum_timeline_profile:timeline})});
   currentTask=task.task_id;
+  const taskId=task.task_id;
 
-  let cursor=0, uploaded=0;
+  let cursor=0, uploaded=0, completed=0, uploadError=null;
   async function worker(){
-    while(cursor<items.length){
+    while(cursor<items.length && !uploadError){
       const item=items[cursor++];
-      await api(`/api/tasks/${currentTask}/files?path=${encodeURIComponent(item.path)}`,
-                {method:'POST',headers:{'Content-Type':'application/octet-stream'},body:item.file});
+      try{
+        await api(`/api/tasks/${taskId}/files?path=${encodeURIComponent(item.path)}`,
+                  {method:'POST',headers:{'Content-Type':'application/octet-stream'},body:item.file});
+      }catch(error){uploadError=uploadError||error;return;}
       uploaded+=item.file.size;
-      setScanState('正在本地封装项目',`${cursor} / ${items.length} 个文件`,5+20*(uploaded/Math.max(total,1)));
+      completed++;
+      if(!uploadError) setScanState('正在本地封装项目',`${completed} / ${items.length} 个文件`,5+20*(uploaded/Math.max(total,1)));
     }
   }
-  await Promise.all([worker(),worker(),worker()]);
+  const uploads=await Promise.allSettled([worker(),worker(),worker()]);
+  const unexpected=uploads.find(result=>result.status==='rejected');
+  if(unexpected) throw unexpected.reason;
+  if(uploadError) throw new Error(`项目上传未完成（${completed}/${items.length}）：${uploadError.message}`);
   if(scanMode==='deep-java'){
     setScanState('正在本地封装 Java 编译产物',artifact.name,24);
-    await api(`/api/tasks/${currentTask}/artifact`,
+    await api(`/api/tasks/${taskId}/artifact`,
               {method:'POST',headers:{'Content-Type':'application/java-archive'},body:artifact});
   }
   phase('upload','done'); phase('scan','active');
   setScanState('正在识别密码资产与危险用法',`${items.length} 个文件已进入本地扫描器`,28);
-  await api(`/api/tasks/${currentTask}/start`,{method:'POST'});
-  await pollTask(currentTask);
+  await api(`/api/tasks/${taskId}/start`,{method:'POST'});
+  await pollTask(taskId);
 }
 
 async function pollTask(taskId){
@@ -1254,6 +1268,8 @@ async function pollTask(taskId){
 }
 
 async function beginProject(items){
+  if(scanBusy)return;
+  scanBusy=true;
   try{ await uploadProject(items); }
   catch(error){ scanBusy=false; stopCipher(); phase('report','fail');
     $('#projectDrop').hidden=true; $('#scanState').hidden=false;
