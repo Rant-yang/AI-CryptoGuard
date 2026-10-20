@@ -16,7 +16,7 @@ from pathlib import Path
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Pt, Inches
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -109,6 +109,12 @@ def _remove_template_body(doc):
 
 
 def _append_report(doc, source):
+    for name, size in (('Heading 1', 16), ('Heading 2', 12)):
+        style = doc.styles[name]
+        style.font.size = Pt(size)
+        style.font.color.rgb = None
+        style.paragraph_format.space_before = Pt(10)
+        style.paragraph_format.space_after = Pt(5)
     lines = source.read_text(encoding='utf-8').splitlines()
     in_code = False
     code_lines = []
@@ -157,6 +163,25 @@ def _append_report(doc, source):
             flush_paragraph()
             heading = doc.add_heading(clean(line[4:]), level=2)
             heading.paragraph_format.keep_with_next = True
+            i += 1
+            continue
+        picture = re.fullmatch(r'!\[([^]]*)\]\(([^)]+)\)', line)
+        if picture:
+            flush_paragraph()
+            image_path = (source.parent / picture.group(2)).resolve()
+            section = doc.sections[-1]
+            usable_width = section.page_width - section.left_margin - section.right_margin
+            picture_shape = doc.add_picture(str(image_path), width=usable_width)
+            if picture_shape.height > Inches(3.25):
+                ratio = Inches(3.25) / picture_shape.height
+                picture_shape.width = int(picture_shape.width * ratio)
+                picture_shape.height = Inches(3.25)
+            doc.paragraphs[-1].alignment = 1
+            doc.paragraphs[-1].paragraph_format.keep_with_next = True
+            caption = doc.add_paragraph(picture.group(1))
+            caption.alignment = 1
+            for run in caption.runs:
+                run.font.size = Pt(9)
             i += 1
             continue
         if line.startswith('|'):
@@ -269,14 +294,14 @@ def _audit_generated_report(path, number):
             raise ValueError('Company/manager metadata in report')
 
 
-def build(template, output, number):
+def build(template, output, number, source=None):
     template, output = Path(template), Path(output)
     if output.exists():
         raise FileExistsError('Refusing to overwrite report: ' + str(output))
     doc = Document(template)
     _fill_cover(doc, number)
     _remove_template_body(doc)
-    _append_report(doc, SOURCE)
+    _append_report(doc, Path(source) if source else SOURCE)
     props = doc.core_properties
     props.author = ''
     props.last_modified_by = ''
@@ -307,13 +332,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--template', required=True, help='Official 2026 report DOCX, kept outside Git')
     parser.add_argument('-o', '--output', required=True)
+    parser.add_argument('--source', help='Reviewed Markdown content; defaults to the original candidate')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--draft', action='store_true', help='Use a conspicuous number placeholder')
     group.add_argument('--number', help='Platform-assigned work number for the final report')
     args = parser.parse_args()
     if args.number and not re.fullmatch(r'[A-Za-z0-9-]{1,40}', args.number):
         parser.error('number must be 1-40 letters, digits or hyphens')
-    print(build(args.template, args.output, args.number or PLACEHOLDER))
+    print(build(args.template, args.output, args.number or PLACEHOLDER, args.source))
 
 
 if __name__ == '__main__':
