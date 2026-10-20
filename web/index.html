@@ -75,6 +75,19 @@
   .scan-shell{position:relative; max-width:1240px; margin:auto; display:grid;
               grid-template-columns:minmax(280px,.85fr) minmax(420px,1.35fr); gap:28px; align-items:stretch}
   .scan-copy{padding:8px 0}
+  .scan-workspace{min-width:0;display:grid}
+  .scan-workspace > .scan-drop,.scan-workspace > .scan-state{grid-area:1 / 1;min-height:360px}
+  .scan-drop[hidden]{display:none}
+  .ai-feature{display:block;margin:20px 0 16px;padding:18px;border:1px solid #426d65;
+    border-radius:8px;background:linear-gradient(120deg,rgba(64,168,133,.14),rgba(31,63,76,.15));cursor:pointer}
+  .ai-feature:has(input:checked){border-color:#63d5ad;box-shadow:0 0 24px rgba(99,213,173,.1)}
+  .ai-feature:focus-within{outline:2px solid #63d5ad;outline-offset:3px}
+  .ai-feature-head{display:flex;align-items:center;gap:12px}
+  .ai-feature input{width:22px;height:22px;margin:0;accent-color:#63d5ad;flex:none}
+  .ai-feature strong{font:700 19px/1.4 var(--sans);color:#effff8}
+  .ai-feature .ai-value{display:block;margin:10px 0;color:#aed6c8;font:12px/1.8 var(--sans)}
+  .ai-feature .ai-notice{display:block;color:#91a4b8;font:11.5px/1.65 var(--sans)}
+  .scan-options{display:grid;gap:9px;margin-top:14px}
   .scan-kicker{font:11px var(--mono); letter-spacing:2px; color:#63d5ad; text-transform:uppercase}
   .scan-copy h2{font:700 clamp(22px,3vw,34px)/1.18 var(--mono); margin:9px 0 10px; color:#f5f9fd}
   .scan-copy p{margin:0; max-width:520px; color:#91a4b8; font-size:13px}
@@ -98,12 +111,6 @@
   .scan-drop button,.scan-action{margin-top:16px;border:1px solid #426276;background:#172633;color:#dbeaf5;
                     border-radius:4px;padding:7px 13px;font:12px var(--mono);cursor:pointer}
   .scan-drop button:hover,.scan-action:hover{border-color:#63d5ad;color:#fff}
-  .scan-examples{margin-top:16px;padding-top:13px;border-top:1px solid rgba(120,144,165,.22);
-                 color:#7890a5;font-size:11.5px;line-height:1.75}
-  .scan-examples b{color:#b8cbd9;font-weight:600}
-  .scan-example{display:flex;flex-wrap:wrap;column-gap:8px;align-items:baseline}
-  .scan-examples code{color:#8ee3c2;font-family:var(--mono);font-size:11px;
-                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .timeline-config{margin-top:12px;border-top:1px solid rgba(120,144,165,.22);padding-top:10px}
   .timeline-config summary{cursor:pointer;color:#b8cbd9;font:600 11.5px var(--mono)}
   .timeline-help{margin:7px 0!important;color:#6f8497!important;font-size:11px!important}
@@ -136,6 +143,7 @@
   .scan-phase.skip{color:#617180}.scan-phase.skip i{background:#617180}
   .scan-phase.fail{color:#ef8a7e}.scan-phase.fail i{background:#e65e50}
   @media(max-width:850px){.scan-shell{grid-template-columns:1fr}.scan-state{grid-template-columns:130px 1fr}.cipher-viz{height:130px}.rotor{left:21px;top:21px}}
+  @media(max-width:480px){.scan-state{grid-template-columns:1fr}.cipher-viz{display:none}.scan-workspace > .scan-drop,.scan-workspace > .scan-state{min-height:300px}.scan-copy{min-width:0}.timeline-field select{width:100%}}
 
   /* ============================ 报头 ============================ */
   header{
@@ -397,12 +405,12 @@
       <div class="scan-kicker">local-first cryptographic audit</div>
       <h2>把代码放进审计引擎</h2>
       <p>拖入一个项目文件夹。系统会在本机完成密码资产发现、证据融合与前置量子风险评估，完成后自动进入报告视图。</p>
-      <div class="privacy"><i></i><span>仅发送到本机 127.0.0.1；默认不保留第三方原始输出。临时任务 24 小时后自动清理。</span></div>
-      <div class="scan-examples">
-        <b>第一次体验：在本仓库中选择公开源码样例文件夹</b>
-        <div class="scan-example"><code>examples/repair_demo</code><span>凭据与弱算法</span></div>
-        <div class="scan-example"><code>examples/pqc_demo</code><span>抗量子用途分派</span></div>
-      </div>
+      <div class="privacy"><i></i><span>项目上传至本机处理；启用 AI 后按下方说明发送脱敏上下文。临时任务 24 小时后自动清理。</span></div>
+      <label class="ai-feature">
+        <span class="ai-feature-head"><input id="aiEnabled" type="checkbox" aria-describedby="aiNotice"><strong>启用 AI 用途分析与整改建议</strong></span>
+        <span class="ai-value">识别实际用途 · 结合证据解释风险 · 给出具体整改步骤</span>
+        <span class="ai-notice" id="aiNotice">勾选后，向配置的云端模型发送脱敏代码上下文与量子评估摘要；凭据问题留在本地。未启用时仍可完成本地扫描与规则评估。</span>
+      </label>
       <details class="timeline-config" open>
         <summary>量子危机时间窗口（可选，不填则不下结论）</summary>
         <p class="timeline-help">X 是数据还需保密多久，Y 是预计完成迁移需要多久，Z 是组织采用的量子威胁情景假设。三项都由你填写；不确定可留空。系统不会预测 Q-Day，X + Y ≥ Z 表示该情景下应尽快启动迁移准备，具体仍需结合用途与暴露情况。</p>
@@ -413,10 +421,7 @@
           <label class="timeline-field">先收集后解密暴露<select id="qtHndl"><option value="unknown">尚未确认</option><option value="yes">存在暴露</option><option value="no">无已知暴露</option></select></label>
         </div>
       </details>
-      <label class="privacy" style="cursor:pointer;display:flex;gap:10px;align-items:flex-start">
-        <input id="aiEnabled" type="checkbox" style="margin-top:3px">
-        <span>启用 AI 用途解释与整改步骤（可选）。勾选后向配置的云端模型发送脱敏后的代码上下文与量子评估摘要；凭据问题留在本地。未勾选时只运行本地扫描。</span>
-      </label>
+      <div class="scan-options">
       <label class="timeline-field">AI 上下文范围
         <select id="aiContext">
           <option value="full">脱敏代码上下文（自有/公开项目，解释更充分）</option>
@@ -429,12 +434,14 @@
           <option value="deep-java">Java 深度证据（需要已编译 jar）</option>
         </select>
       </label>
+      </div>
       <div id="javaArtifactConfig" class="timeline-config" hidden>
         <p class="timeline-help">先选择包含 Java 源码的项目文件夹，再单独选择由同一份源码编译出的 jar。服务端需设置 CrySentry 与 JDK 17 路径；不会自动执行项目构建脚本。</p>
         <input id="javaArtifact" type="file" accept=".jar" aria-label="选择已编译的 Java jar">
         <p class="timeline-help" id="javaArtifactName">尚未选择 jar · 最多 128 MiB</p>
       </div>
     </div>
+    <div class="scan-workspace" aria-label="项目上传与扫描进度">
     <div class="scan-drop" id="projectDrop" tabindex="0" role="button">
       <div class="lockmark"></div>
       <b>拖入项目文件夹开始扫描</b>
@@ -459,6 +466,7 @@
         <button class="scan-action" id="scanReset" type="button">扫描另一个项目</button>
         <button class="scan-action" id="retryAi" type="button" hidden>仅重试 AI（保留扫描结果）</button>
       </div>
+    </div>
     </div>
   </div>
 </section>
